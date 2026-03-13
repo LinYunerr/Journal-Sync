@@ -8,6 +8,8 @@ logs/
 # Data files
 data/config.json
 data/history.json
+data/tasks.json
+data/mem0_insights.json
 
 # Plugin configs (sensitive information)
 Plugin/*/config.json

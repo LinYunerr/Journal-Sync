@@ -33,6 +33,10 @@ function savePendingSaves() {
     }
 }
 
+// 追踪当前发布内容，用于在多次分发时保持同一条历史记录
+let currentSaveId = null;
+let currentSavedContent = '';
+
 // 内容缓存
 let contentCache = {
     diary: '',
@@ -73,6 +77,12 @@ const statToday = document.getElementById('stat-today');
 if (contentInput) {
     contentInput.addEventListener('input', () => {
         contentCache[currentType] = contentInput.value;
+
+        // 重置当前发布ID，说明内容发生了修改，这应该新起一条记录
+        if (contentInput.value.trim() !== currentSavedContent) {
+            currentSaveId = null;
+        }
+
         try {
             if (currentType === 'diary') {
                 localStorage.setItem('journal-sync-diary-draft', contentInput.value);
@@ -227,8 +237,12 @@ saveBtn.addEventListener('click', async () => {
         return;
     }
 
-    // 生成唯一 ID
-    const saveId = Date.now().toString();
+    // 复用或生成唯一 ID
+    if (!currentSaveId || currentSavedContent !== content) {
+        currentSaveId = Date.now().toString();
+        currentSavedContent = content;
+    }
+    const saveId = currentSaveId;
 
     // 立即添加到历史记录（pending 状态）
     const pendingEntry = {
@@ -242,19 +256,27 @@ saveBtn.addEventListener('click', async () => {
             mastodon: (pluginStates.mastodon && mastodonEnabled[currentType]) ? 'pending' : 'skipped',
             nmem: pluginStates.nmem ? 'pending' : 'skipped',
             memu: pluginStates.memu ? 'pending' : 'skipped',
-            telegram: 'skipped', // Telegram 现在独立发布，不在保存流程中
             mem0: (pluginStates.mem0 && currentType === 'diary') ? 'pending' : 'skipped'
         },
+        telegramSends: [],
         pending: true
     };
 
-    timeline.unshift(pendingEntry);
-    pendingSaves.set(saveId, pendingEntry); // 添加到待完成任务
+    // 如果已经在 timeline 存在，则合并更新；不存在则插入
+    const existingIndex = timeline.findIndex(item => item.id === saveId);
+    if (existingIndex !== -1) {
+        timeline[existingIndex] = { ...timeline[existingIndex], ...pendingEntry, status: { ...timeline[existingIndex].status, ...pendingEntry.status } };
+    } else {
+        timeline.unshift(pendingEntry);
+    }
+
+    pendingSaves.set(saveId, timeline[existingIndex !== -1 ? existingIndex : 0]);
     savePendingSaves(); // 持久化
     renderTimeline();
 
-    // 清空输入框，允许立即输入下一条
-    contentInput.value = '';
+    // 清空输入框，允许立即输入下一条 (注意: 不清空内容以便能继续发布 TG，只清草稿)
+    // 根据需求，发往其他平台不清空内容
+    // contentInput.value = '';
 
     try {
         const options = {
@@ -596,6 +618,14 @@ function createCard(item) {
             }
         }
 
+        // 新增：渲染独立记录的 Telegram 发送
+        if (item.telegramSends && Array.isArray(item.telegramSends)) {
+            item.telegramSends.forEach(channel => {
+                const shortName = channel.substring(0, 5);
+                statuses.push(`<span class="status-item telegram-tag">✓ Telegram: ${escapeHtml(shortName)}</span>`);
+            });
+        }
+
         if (statuses.length > 0) {
             statusHTML = `<div class="timeline-card-status">${statuses.join('')}</div>`;
         }
@@ -874,13 +904,27 @@ if (publishTgBtn) {
         publishTgBtn.disabled = true;
         publishTgBtn.textContent = '⏳ 发布中...';
 
+        let channelNameText = '';
+        if (tgChannelSelect.selectedIndex >= 0) {
+            channelNameText = tgChannelSelect.options[tgChannelSelect.selectedIndex].text;
+        }
+
+        if (!currentSaveId || currentSavedContent !== contentToPublish) {
+            currentSaveId = Date.now().toString();
+            currentSavedContent = contentToPublish;
+        }
+        const saveId = currentSaveId;
+
         try {
             const response = await fetch('/api/telegram/publish', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     content: contentToPublish,
-                    channel: channel
+                    channel: channel,
+                    saveId: saveId,
+                    type: 'note',
+                    channelName: channelNameText
                 })
             });
 
@@ -888,10 +932,29 @@ if (publishTgBtn) {
 
             if (data.ok) {
                 alert('✅ 发布成功！');
-                // 清空预览
-                tgPreviewSection.style.display = 'none';
-                tgPreviewContent.value = '';
-                tgOptimizedContent = '';
+
+                // 查找或创建历史记录项目，并同步本地状态更新 UI
+                let existingItem = timeline.find(item => item.id === saveId);
+                if (!existingItem) {
+                    existingItem = {
+                        id: saveId,
+                        timestamp: new Date().toISOString(),
+                        type: 'note',
+                        content: contentToPublish,
+                        status: {},
+                        telegramSends: [channelNameText],
+                        pending: false
+                    };
+                    timeline.unshift(existingItem);
+                } else {
+                    if (!existingItem.telegramSends) existingItem.telegramSends = [];
+                    if (!existingItem.telegramSends.includes(channelNameText)) {
+                        existingItem.telegramSends.push(channelNameText);
+                    }
+                }
+
+                // 局部渲染更新
+                renderTimeline();
             } else {
                 alert('发布失败: ' + (data.error || '未知错误'));
             }
@@ -924,13 +987,27 @@ if (publishTgDiaryBtn) {
         publishTgDiaryBtn.disabled = true;
         publishTgDiaryBtn.textContent = '⏳ 发布中...';
 
+        let channelNameText = '';
+        if (tgChannelSelectDiary.selectedIndex >= 0) {
+            channelNameText = tgChannelSelectDiary.options[tgChannelSelectDiary.selectedIndex].text;
+        }
+
+        if (!currentSaveId || currentSavedContent !== content) {
+            currentSaveId = Date.now().toString();
+            currentSavedContent = content;
+        }
+        const saveId = currentSaveId;
+
         try {
             const response = await fetch('/api/telegram/publish', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     content: content,
-                    channel: channel
+                    channel: channel,
+                    saveId: saveId,
+                    type: 'diary',
+                    channelName: channelNameText
                 })
             });
 
@@ -938,6 +1015,29 @@ if (publishTgDiaryBtn) {
 
             if (data.ok) {
                 alert('✅ 发布成功！');
+
+                // 查找或创建历史记录项目，并同步本地状态更新 UI
+                let existingItem = timeline.find(item => item.id === saveId);
+                if (!existingItem) {
+                    existingItem = {
+                        id: saveId,
+                        timestamp: new Date().toISOString(),
+                        type: 'diary',
+                        content: content,
+                        status: {},
+                        telegramSends: [channelNameText],
+                        pending: false
+                    };
+                    timeline.unshift(existingItem);
+                } else {
+                    if (!existingItem.telegramSends) existingItem.telegramSends = [];
+                    if (!existingItem.telegramSends.includes(channelNameText)) {
+                        existingItem.telegramSends.push(channelNameText);
+                    }
+                }
+
+                // 局部渲染更新
+                renderTimeline();
             } else {
                 alert('发布失败: ' + (data.error || '未知错误'));
             }

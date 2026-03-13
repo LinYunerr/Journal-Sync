@@ -7,11 +7,42 @@ import { promises as fsPromises } from 'fs';
 import ConfigManager from '../utils/config-manager.js';
 import PluginManager from '../sync/plugin-manager.js';
 
-// 启动时加载插件
-PluginManager.loadPlugins();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// 初始化数据目录和基础配置
+async function initDataFiles() {
+  const dataDir = path.join(__dirname, '../../data');
+  try {
+    await fsPromises.mkdir(dataDir, { recursive: true });
+
+    const defaults = {
+      'config.json': {
+        "obsidianPath": "/path/to/obsidian/notes",
+        "plugins": {}
+      },
+      'history.json': [],
+      'tasks.json': [],
+      'mem0_insights.json': {}
+    };
+
+    for (const [file, defaultData] of Object.entries(defaults)) {
+      const filePath = path.join(dataDir, file);
+      try {
+        await fsPromises.access(filePath);
+      } catch (e) {
+        await fsPromises.writeFile(filePath, JSON.stringify(defaultData, null, 2), 'utf-8');
+        console.log(`[Init] Created default ${file}`);
+      }
+    }
+  } catch (error) {
+    console.error('[Init] Error initializing data files:', error);
+  }
+}
+
+// 启动时初始化文件然后加载插件
+await initDataFiles();
+PluginManager.loadPlugins();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,11 +83,31 @@ async function saveHistory(history) {
 }
 
 /**
- * 添加到历史记录
+ * 添加或更新历史记录
  */
-async function addToHistory(entry) {
+async function updateOrAddToHistory(entry) {
   const history = await loadHistory();
-  history.unshift(entry); // 最新的在前面
+  const existingIndex = history.findIndex(item => item.id === entry.id);
+
+  if (existingIndex !== -1) {
+    // 存在则更新状态
+    history[existingIndex] = {
+      ...history[existingIndex],
+      ...entry,
+      status: {
+        ...history[existingIndex].status,
+        ...(entry.status || {})
+      },
+      // 特殊处理 telegramSends
+      telegramSends: Array.from(new Set([
+        ...(history[existingIndex].telegramSends || []),
+        ...(entry.telegramSends || [])
+      ]))
+    };
+  } else {
+    // 不存在则新增
+    history.unshift(entry);
+  }
 
   // 只保留最近 100 条
   if (history.length > 100) {
@@ -105,7 +156,7 @@ app.post('/api/save-stream', async (req, res) => {
       else historyStatus[key] = result.success ? 'success' : 'failed';
     }
 
-    await addToHistory({
+    await updateOrAddToHistory({
       id: saveId,
       timestamp: new Date().toISOString(),
       type,
@@ -142,7 +193,7 @@ app.post('/api/save', async (req, res) => {
       historyStatus[key] = result.success || false;
     }
 
-    await addToHistory({
+    await updateOrAddToHistory({
       id: Date.now().toString(),
       timestamp: new Date().toISOString(),
       type,
@@ -1155,7 +1206,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
  */
 app.post('/api/telegram/publish', async (req, res) => {
   try {
-    const { content, channel } = req.body;
+    const { content, channel, saveId, type = 'diary', channelName } = req.body;
 
     if (!content) {
       return res.status(400).json({
@@ -1217,16 +1268,35 @@ app.post('/api/telegram/publish', async (req, res) => {
       }
     });
 
-    pythonProcess.on('close', (code) => {
+    pythonProcess.on('close', async (code) => {
       if (isResolved) return;
       isResolved = true;
 
       if (code === 0) {
+        if (saveId && channelName) {
+          await updateOrAddToHistory({
+            id: saveId,
+            timestamp: new Date().toISOString(),
+            type: type,
+            content: content,
+            telegramSends: [channelName],
+            status: { telegram: 'success' }
+          });
+        }
         res.json({
           ok: true,
           message: '发布成功'
         });
       } else {
+        if (saveId) {
+          await updateOrAddToHistory({
+            id: saveId,
+            timestamp: new Date().toISOString(),
+            type: type,
+            content: content,
+            status: { telegram: 'failed' }
+          });
+        }
         res.json({
           ok: false,
           error: `发布失败(退出码 ${code}): ${stderr || stdout} `
