@@ -1108,16 +1108,18 @@ async function loadTasks() {
 // 渲染任务列表
 function renderTasks(tasks) {
     const tasksContainer = document.getElementById('tasksContainer');
-    const tasksSidebar = document.getElementById('tasksSidebar');
+    const tasksCard = tasksContainer ? tasksContainer.closest('.tasks-card') : null;
 
     if (!tasks || tasks.length === 0) {
         tasksContainer.innerHTML = '<div class="tasks-empty">暂无任务</div>';
-        tasksSidebar.style.display = 'none';
+        // 只隐藏任务卡片本身，不影响侧边栏中的其他卡片
+        if (tasksCard) tasksCard.style.display = 'none';
+        updateSidebarVisibility();
         return;
     }
 
-    // 显示侧边栏
-    tasksSidebar.style.display = 'block';
+    // 显示任务卡片
+    if (tasksCard) tasksCard.style.display = 'block';
 
     const tasksHTML = tasks.map(task => `
         <div class="task-item">
@@ -1130,6 +1132,17 @@ function renderTasks(tasks) {
     `).join('');
 
     tasksContainer.innerHTML = tasksHTML;
+    updateSidebarVisibility();
+}
+
+// 统一管理侧边栏显隐：只要侧边栏内有任何可见的 .tasks-card 就显示，否则隐藏
+function updateSidebarVisibility() {
+    const tasksSidebar = document.getElementById('tasksSidebar');
+    if (!tasksSidebar) return;
+
+    const cards = tasksSidebar.querySelectorAll('.tasks-card');
+    const anyVisible = Array.from(cards).some(card => card.style.display !== 'none');
+    tasksSidebar.style.display = anyVisible ? 'block' : 'none';
 }
 
 // 删除任务
@@ -1179,8 +1192,6 @@ async function loadInsights() {
 
 // 渲染洞察数据
 function renderInsights(insights, config = {}) {
-    const tasksSidebar = document.getElementById('tasksSidebar');
-
     // 渲染情绪卡片（如果启用）
     if (config.emotions !== false) {
         renderEmotions(insights.emotions);
@@ -1209,15 +1220,8 @@ function renderInsights(insights, config = {}) {
         document.getElementById('lifeCard').style.display = 'none';
     }
 
-    // 如果有任何数据，显示侧边栏
-    const hasData = insights.emotions.weeklyKeywords.length > 0 ||
-        insights.media.items.length > 0 ||
-        insights.work.items.length > 0 ||
-        insights.life.items.length > 0;
-
-    if (hasData) {
-        tasksSidebar.style.display = 'block';
-    }
+    // 统一更新侧边栏显隐（由各卡片的实际可见性决定）
+    updateSidebarVisibility();
 }
 
 // 渲染情绪卡片
