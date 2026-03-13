@@ -10,6 +10,7 @@ data/config.json
 data/history.json
 data/tasks.json
 data/mem0_insights.json
+data/mem0_vectors/
 
 # Plugin configs (sensitive information)
 Plugin/*/config.json
