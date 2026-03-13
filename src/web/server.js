@@ -285,6 +285,8 @@ app.get('/api/config/diary', async (req, res) => {
     const telegramConfig = await telegramConfigMod.loadConfig();
     const flomoConfigMod = await import('../../Plugin/Flomo/index.js');
     const flomoConfig = await flomoConfigMod.loadConfig();
+    const mastodonConfigMod = await import('../../Plugin/Mastodon/index.js');
+    const mastodonConfig = await mastodonConfigMod.loadConfig();
 
     // 默认值（从 journal-sync.js 中的常量）
     const defaults = {
@@ -308,7 +310,10 @@ app.get('/api/config/diary', async (req, res) => {
         tgDiaryChannel: telegramConfig?.defaultChannel || defaults.tgDiaryChannel,
         tgBotToken: telegramConfig?.botToken || defaults.tgBotToken,
         tgChannels: JSON.stringify(telegramConfig?.channels || []),
-        tgOptimizePrompt: telegramConfig?.optimizePrompt || defaults.tgOptimizePrompt
+        tgOptimizePrompt: telegramConfig?.optimizePrompt || defaults.tgOptimizePrompt,
+        mastodonInstanceUrl: mastodonConfig?.instanceUrl || '',
+        mastodonAccessToken: mastodonConfig?.accessToken || '',
+        mastodonVisibility: mastodonConfig?.visibility || 'unlisted'
       }
     });
   } catch (error) {
@@ -447,6 +452,32 @@ app.post('/api/config/set', async (req, res) => {
       res.json({
         ok: true,
         message: 'Flomo 配置已更新'
+      });
+      return;
+    }
+
+    // 特殊处理 Mastodon 配置
+    if (configPath.startsWith('diary.mastodon')) {
+      const mastodonConfigMod = await import('../../Plugin/Mastodon/index.js');
+      const mastodonConfig = await mastodonConfigMod.loadConfig() || {
+        instanceUrl: '',
+        accessToken: '',
+        visibility: 'unlisted'
+      };
+
+      if (configPath === 'diary.mastodonInstanceUrl') {
+        mastodonConfig.instanceUrl = value;
+      } else if (configPath === 'diary.mastodonAccessToken') {
+        mastodonConfig.accessToken = value;
+      } else if (configPath === 'diary.mastodonVisibility') {
+        mastodonConfig.visibility = value;
+      }
+
+      await mastodonConfigMod.saveConfig(mastodonConfig);
+
+      res.json({
+        ok: true,
+        message: 'Mastodon 配置已更新'
       });
       return;
     }
@@ -749,7 +780,8 @@ app.get('/api/plugins', async (req, res) => {
       nmem: true,
       memu: true,
       telegram: false,
-      mem0: false
+      mem0: false,
+      mastodon: false
     };
 
     res.json({
@@ -786,7 +818,8 @@ app.post('/api/plugins/toggle', async (req, res) => {
         nmem: true,
         memu: true,
         telegram: false,
-        mem0: false
+        mem0: false,
+        mastodon: false
       };
     }
 
@@ -1303,6 +1336,49 @@ app.post('/api/mem0/test', async (req, res) => {
     res.status(500).json({
       ok: false,
       error: error.message
+    });
+  }
+});
+
+// 测试长毛象连接
+app.post('/api/mastodon/test', async (req, res) => {
+  try {
+    const { instanceUrl, accessToken } = req.body;
+
+    if (!instanceUrl || !accessToken) {
+      return res.status(400).json({
+        ok: false,
+        error: 'API 参数不完整'
+      });
+    }
+
+    const url = new URL('/api/v1/accounts/verify_credentials', instanceUrl).href;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      res.json({
+        ok: true,
+        message: '长毛象连接成功!',
+        username: data.username,
+        display_name: data.display_name
+      });
+    } else {
+      const result = await response.json();
+      res.json({
+        ok: false,
+        error: result.error || '验证失败'
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: '连接出现异常: ' + error.message
     });
   }
 });

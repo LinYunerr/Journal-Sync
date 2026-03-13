@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -65,7 +66,7 @@
         .header h1 {
             font-size: 2.5em;
             margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
         }
 
         .header p {
@@ -193,7 +194,7 @@
             height: 22px;
             background: white;
             border-radius: 11px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
             transition: all 0.3s;
         }
 
@@ -219,7 +220,7 @@
             height: 28px;
             background: white;
             border-radius: 14px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
             transition: all 0.3s;
             display: flex;
             align-items: center;
@@ -363,7 +364,7 @@
             font-size: 1.8em;
             margin-bottom: 20px;
             text-align: center;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
         }
 
         .timeline-card {
@@ -380,6 +381,7 @@
                 opacity: 0;
                 transform: translateY(-20px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -560,8 +562,13 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         .stats {
@@ -735,10 +742,11 @@
 
         .history-item-btn:hover {
             transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -770,96 +778,103 @@
             <!-- 左侧主内容 -->
             <div class="main-content">
                 <div class="main-card">
-            <div class="tabs">
-                <button class="tab active" data-type="diary">📔 日记</button>
-                <button class="tab" data-type="note">📄 笔记</button>
-                <div class="button-group-right">
-                    <a href="/plugins.html" class="settings-btn">🔌 插件</a>
-                    <a href="/settings.html" class="settings-btn">⚙️ 设置</a>
-                </div>
-            </div>
-
-            <div class="input-section">
-                <label for="contentInput">
-                    <span>输入内容</span>
-                    <div class="mode-toggle">
-                        <!-- flomo 开关 -->
-                        <div class="flomo-toggle" id="flomoToggle" style="display: none;">
-                            <span class="flomo-toggle-label">flomo</span>
-                            <div class="flomo-slider" id="flomoSlider">
-                                <div class="flomo-slider-button"></div>
-                            </div>
-                        </div>
-                        <!-- 原文/总结开关 -->
-                        <div id="modeToggle" style="display: none;">
-                            <div class="mode-slider" id="modeSlider">
-                                <div class="mode-slider-button" id="modeSliderButton">原文</div>
-                            </div>
+                    <div class="tabs">
+                        <button class="tab active" data-type="diary">📔 日记</button>
+                        <button class="tab" data-type="note">📄 笔记</button>
+                        <div class="button-group-right">
+                            <a href="/plugins.html" class="settings-btn">🔌 插件</a>
+                            <a href="/settings.html" class="settings-btn">⚙️ 设置</a>
                         </div>
                     </div>
-                </label>
-                <textarea
-                    id="contentInput"
-                    placeholder="在这里输入你的日记或笔记...&#10;&#10;支持多行输入，粘贴长文本也没问题 😊"
-                ></textarea>
-            </div>
 
-            <!-- Telegram 发布区域（仅笔记模式显示） -->
-            <div id="telegramPublishSection" style="display: none; margin-bottom: 20px;">
-                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
-                    <button class="btn" id="generateTgBtn" style="flex: 1; background: #0088cc; color: white;">
-                        ✨ 生成 TG 发布格式
-                    </button>
-                    <button class="btn" id="publishTgBtn" style="flex: 1; background: #0088cc; color: white;">
-                        📤 发布 TG
-                    </button>
-                    <select id="tgChannelSelect" style="flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-weight: 600;">
-                        <option value="">选择频道</option>
-                    </select>
+                    <div class="input-section">
+                        <label for="contentInput">
+                            <span>输入内容</span>
+                            <div class="mode-toggle">
+                                <!-- flomo 开关 -->
+                                <div class="flomo-toggle" id="flomoToggle" style="display: none;">
+                                    <span class="flomo-toggle-label">flomo</span>
+                                    <div class="flomo-slider" id="flomoSlider">
+                                        <div class="flomo-slider-button"></div>
+                                    </div>
+                                </div>
+                                <!-- CMX 开关 -->
+                                <div class="flomo-toggle" id="mastodonToggle" style="display: none;">
+                                    <span class="flomo-toggle-label">CMX</span>
+                                    <div class="flomo-slider" id="mastodonSlider">
+                                        <div class="flomo-slider-button"></div>
+                                    </div>
+                                </div>
+                                <!-- 原文/总结开关 -->
+                                <div id="modeToggle" style="display: none;">
+                                    <div class="mode-slider" id="modeSlider">
+                                        <div class="mode-slider-button" id="modeSliderButton">原文</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </label>
+                        <textarea id="contentInput"
+                            placeholder="在这里输入你的日记或笔记...&#10;&#10;支持多行输入，粘贴长文本也没问题 😊"></textarea>
+                    </div>
+
+                    <!-- Telegram 发布区域（仅笔记模式显示） -->
+                    <div id="telegramPublishSection" style="display: none; margin-bottom: 20px;">
+                        <div style="display: flex; gap: 12px; margin-bottom: 12px;">
+                            <button class="btn" id="generateTgBtn" style="flex: 1; background: #0088cc; color: white;">
+                                ✨ 生成 TG 发布格式
+                            </button>
+                            <button class="btn" id="publishTgBtn" style="flex: 1; background: #0088cc; color: white;">
+                                📤 发布 TG
+                            </button>
+                            <select id="tgChannelSelect"
+                                style="flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-weight: 600;">
+                                <option value="">选择频道</option>
+                            </select>
+                        </div>
+
+                        <!-- TG 优化内容预览框 -->
+                        <div id="tgPreviewSection" style="display: none;">
+                            <label
+                                style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: #333;">
+                                TG 发布内容（可编辑）
+                            </label>
+                            <textarea id="tgPreviewContent"
+                                style="width: 100%; min-height: 150px; padding: 15px; border: 2px solid #0088cc; border-radius: 10px; font-size: 15px; font-family: inherit; resize: vertical;"
+                                placeholder="点击" 生成 TG 发布格式"后，AI 优化的内容将显示在这里..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Telegram 选项（仅日记模式显示） -->
+                    <div id="telegramOptionsSection" style="display: none; margin-bottom: 20px;">
+                        <div style="display: flex; gap: 12px;">
+                            <button class="btn" id="publishTgDiaryBtn"
+                                style="flex: 1; background: #0088cc; color: white;">
+                                📤 发布到 Telegram
+                            </button>
+                            <select id="tgChannelSelectDiary"
+                                style="flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-weight: 600;">
+                                <option value="">选择频道</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="button-group">
+                        <button class="btn btn-primary" id="saveBtn">
+                            💾 保存到 Obsidian
+                        </button>
+                    </div>
                 </div>
 
-                <!-- TG 优化内容预览框 -->
-                <div id="tgPreviewSection" style="display: none;">
-                    <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: #333;">
-                        TG 发布内容（可编辑）
-                    </label>
-                    <textarea
-                        id="tgPreviewContent"
-                        style="width: 100%; min-height: 150px; padding: 15px; border: 2px solid #0088cc; border-radius: 10px; font-size: 15px; font-family: inherit; resize: vertical;"
-                        placeholder="点击"生成 TG 发布格式"后，AI 优化的内容将显示在这里..."
-                    ></textarea>
+                <div class="timeline-section">
+                    <h2 class="timeline-header">⏱️ 保存历史</h2>
+                    <div id="timelineContainer">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>加载历史记录...</p>
+                        </div>
+                    </div>
+                    <a href="/history.html" class="view-all-btn">📋 查看所有记录</a>
                 </div>
-            </div>
-
-            <!-- Telegram 选项（仅日记模式显示） -->
-            <div id="telegramOptionsSection" style="display: none; margin-bottom: 20px;">
-                <div style="display: flex; gap: 12px;">
-                    <button class="btn" id="publishTgDiaryBtn" style="flex: 1; background: #0088cc; color: white;">
-                        📤 发布到 Telegram
-                    </button>
-                    <select id="tgChannelSelectDiary" style="flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-weight: 600;">
-                        <option value="">选择频道</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="button-group">
-                <button class="btn btn-primary" id="saveBtn">
-                    💾 保存到 Obsidian
-                </button>
-            </div>
-        </div>
-
-        <div class="timeline-section">
-            <h2 class="timeline-header">⏱️ 保存历史</h2>
-            <div id="timelineContainer">
-                <div class="loading">
-                    <div class="spinner"></div>
-                    <p>加载历史记录...</p>
-                </div>
-            </div>
-            <a href="/history.html" class="view-all-btn">📋 查看所有记录</a>
-        </div>
             </div>
 
             <!-- 右侧任务列表 -->
@@ -881,9 +896,12 @@
 
                 <!-- 书影音卡片 -->
                 <div class="tasks-card" id="mediaCard" style="margin-top: 20px; display: none;">
-                    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="tasks-header"
+                        style="display: flex; justify-content: space-between; align-items: center;">
                         <span>📚 最近关注的书影音</span>
-                        <button id="mediaHistoryBtn" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;" title="查看历史">📜</button>
+                        <button id="mediaHistoryBtn"
+                            style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;"
+                            title="查看历史">📜</button>
                     </div>
                     <div id="mediaContainer">
                         <div class="tasks-empty">暂无数据</div>
@@ -892,9 +910,12 @@
 
                 <!-- 工作卡片 -->
                 <div class="tasks-card" id="workCard" style="margin-top: 20px; display: none;">
-                    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="tasks-header"
+                        style="display: flex; justify-content: space-between; align-items: center;">
                         <span>💼 工作</span>
-                        <button id="workHistoryBtn" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;" title="查看历史">📜</button>
+                        <button id="workHistoryBtn"
+                            style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;"
+                            title="查看历史">📜</button>
                     </div>
                     <div id="workContainer">
                         <div class="tasks-empty">暂无数据</div>
@@ -903,9 +924,12 @@
 
                 <!-- 生活卡片 -->
                 <div class="tasks-card" id="lifeCard" style="margin-top: 20px; display: none;">
-                    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="tasks-header"
+                        style="display: flex; justify-content: space-between; align-items: center;">
                         <span>🏡 生活</span>
-                        <button id="lifeHistoryBtn" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;" title="查看历史">📜</button>
+                        <button id="lifeHistoryBtn"
+                            style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;"
+                            title="查看历史">📜</button>
                     </div>
                     <div id="lifeContainer">
                         <div class="tasks-empty">暂无数据</div>
@@ -916,11 +940,14 @@
     </div>
 
     <!-- 历史记录模态框 -->
-    <div id="historyModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; overflow: auto;">
-        <div style="background: white; max-width: 800px; margin: 50px auto; border-radius: 15px; padding: 30px; max-height: 80vh; overflow-y: auto;">
+    <div id="historyModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; overflow: auto;">
+        <div
+            style="background: white; max-width: 800px; margin: 50px auto; border-radius: 15px; padding: 30px; max-height: 80vh; overflow-y: auto;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h2 id="historyModalTitle" style="margin: 0;">历史记录</h2>
-                <button id="closeHistoryModal" style="background: none; border: none; font-size: 2em; cursor: pointer; color: #999;">&times;</button>
+                <button id="closeHistoryModal"
+                    style="background: none; border: none; font-size: 2em; cursor: pointer; color: #999;">&times;</button>
             </div>
             <div id="historyModalContent"></div>
         </div>
@@ -928,4 +955,5 @@
 
     <script src="app.js?v=20260312-1"></script>
 </body>
+
 </html>

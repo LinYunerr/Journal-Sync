@@ -221,6 +221,17 @@
           <span class="slider"></span>
         </label>
       </div>
+
+      <div class="plugin-item">
+        <div class="plugin-info">
+          <div class="plugin-name">🐘 长毛象 (Mastodon)</div>
+          <div class="plugin-desc">同步日记到长毛象实例</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="plugin-mastodon" onchange="togglePlugin('mastodon', this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
   </div>
 
@@ -236,6 +247,7 @@
           document.getElementById('plugin-memu').checked = data.plugins.memu || false;
           document.getElementById('plugin-telegram').checked = data.plugins.telegram || false;
           document.getElementById('plugin-mem0').checked = data.plugins.mem0 || false;
+          document.getElementById('plugin-mastodon').checked = data.plugins.mastodon || false;
         }
       } catch (error) {
         console.error('加载插件状态失败:', error);

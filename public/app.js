@@ -3,8 +3,9 @@ let currentType = 'diary';
 let timeline = [];
 let pendingSaves = new Map(); // 存储待完成的保存任务
 let summarizeMode = false; // 总结模式
-let pluginStates = { flomo: true, nmem: true, memu: true, telegram: false }; // 插件状态
+let pluginStates = { flomo: true, nmem: true, memu: true, telegram: false, mastodon: false }; // 插件状态
 let flomoEnabled = { diary: true, note: true }; // flomo 发布开关（独立于插件状态）
+let mastodonEnabled = { diary: true, note: true }; // mastodon 发布开关
 let tgOptimizedContent = ''; // TG 优化后的内容
 let availableChannels = []; // 可用的 Telegram 频道列表
 
@@ -46,6 +47,8 @@ const modeSlider = document.getElementById('modeSlider');
 const modeSliderButton = document.getElementById('modeSliderButton');
 const flomoToggle = document.getElementById('flomoToggle');
 const flomoSlider = document.getElementById('flomoSlider');
+const mastodonToggle = document.getElementById('mastodonToggle');
+const mastodonSlider = document.getElementById('mastodonSlider');
 const saveBtn = document.getElementById('saveBtn');
 const timelineContainer = document.getElementById('timelineContainer');
 
@@ -108,6 +111,14 @@ tabs.forEach(tab => {
                 flomoToggle.style.display = 'none';
             }
 
+            // 显示/隐藏 mastodon 开关（根据插件状态）
+            if (pluginStates.mastodon) {
+                mastodonToggle.style.display = 'flex';
+                updateMastodonSlider();
+            } else {
+                mastodonToggle.style.display = 'none';
+            }
+
             // 显示日记的 Telegram 选项，隐藏笔记的 Telegram 发布区域
             if (pluginStates.telegram) {
                 telegramOptionsSection.style.display = 'block';
@@ -123,6 +134,14 @@ tabs.forEach(tab => {
                 updateFlomoSlider();
             } else {
                 flomoToggle.style.display = 'none';
+            }
+
+            // 显示/隐藏 mastodon 开关（根据插件状态）
+            if (pluginStates.mastodon) {
+                mastodonToggle.style.display = 'flex';
+                updateMastodonSlider();
+            } else {
+                mastodonToggle.style.display = 'none';
             }
 
             // 显示笔记的 Telegram 发布区域，隐藏日记的 Telegram 选项
@@ -176,6 +195,29 @@ function updateFlomoSlider() {
     }
 }
 
+// mastodon 滑块点击切换
+if (mastodonSlider) {
+    mastodonSlider.addEventListener('click', () => {
+        mastodonEnabled[currentType] = !mastodonEnabled[currentType];
+        updateMastodonSlider();
+        // 保存到 localStorage
+        try {
+            localStorage.setItem('journal-sync-mastodon-enabled', JSON.stringify(mastodonEnabled));
+        } catch (e) {
+            console.error('保存 mastodon 开关状态失败:', e);
+        }
+    });
+}
+
+// 更新 mastodon 滑块状态
+function updateMastodonSlider() {
+    if (mastodonEnabled[currentType]) {
+        mastodonSlider.classList.add('active');
+    } else {
+        mastodonSlider.classList.remove('active');
+    }
+}
+
 // 保存按钮
 saveBtn.addEventListener('click', async () => {
     const content = contentInput.value.trim();
@@ -197,6 +239,7 @@ saveBtn.addEventListener('click', async () => {
         status: {
             obsidian: 'pending',
             flomo: (pluginStates.flomo && flomoEnabled[currentType]) ? 'pending' : 'skipped',
+            mastodon: (pluginStates.mastodon && mastodonEnabled[currentType]) ? 'pending' : 'skipped',
             nmem: pluginStates.nmem ? 'pending' : 'skipped',
             memu: pluginStates.memu ? 'pending' : 'skipped',
             telegram: 'skipped', // Telegram 现在独立发布，不在保存流程中
@@ -217,7 +260,8 @@ saveBtn.addEventListener('click', async () => {
         const options = {
             sendToTelegram: false, // Telegram 现在独立发布
             summarize: currentType === 'note' && summarizeMode,
-            enableFlomo: flomoEnabled[currentType] // 传递 flomo 开关状态
+            enableFlomo: flomoEnabled[currentType], // 传递 flomo 开关状态
+            enableMastodon: mastodonEnabled[currentType] // 传递 mastodon 开关状态
         };
 
         // 异步保存，使用实时更新
@@ -370,6 +414,14 @@ async function loadPluginStates() {
                 flomoToggle.style.display = 'none';
             }
 
+            // 根据 mastodon 插件状态显示/隐藏 mastodon 开关
+            if (pluginStates.mastodon) {
+                mastodonToggle.style.display = 'flex';
+                updateMastodonSlider();
+            } else {
+                mastodonToggle.style.display = 'none';
+            }
+
             // 根据 telegram 插件状态和当前类型显示/隐藏 Telegram 区域
             if (pluginStates.telegram) {
                 if (currentType === 'diary') {
@@ -481,6 +533,18 @@ function createCard(item) {
                 statuses.push('<span class="status-item success">✓ flomo</span>');
             } else if (flomoStatus === 'failed' || flomoStatus === false) {
                 statuses.push('<span class="status-item failed">✗ flomo</span>');
+            }
+        }
+
+        // mastodon (跳过则不显示)
+        const mastodonStatus = item.status.mastodon;
+        if (mastodonStatus !== 'skipped') {
+            if (mastodonStatus === 'pending') {
+                statuses.push('<span class="status-item pending">⏳ 长毛象</span>');
+            } else if (mastodonStatus === 'success' || mastodonStatus === true) {
+                statuses.push('<span class="status-item success">✓ 长毛象</span>');
+            } else if (mastodonStatus === 'failed' || mastodonStatus === false) {
+                statuses.push('<span class="status-item failed">✗ 长毛象</span>');
             }
         }
 
@@ -612,6 +676,12 @@ async function init() {
         const savedFlomoEnabled = localStorage.getItem('journal-sync-flomo-enabled');
         if (savedFlomoEnabled) {
             flomoEnabled = JSON.parse(savedFlomoEnabled);
+        }
+
+        // 恢复 mastodon 开关状态
+        const savedMastodonEnabled = localStorage.getItem('journal-sync-mastodon-enabled');
+        if (savedMastodonEnabled) {
+            mastodonEnabled = JSON.parse(savedMastodonEnabled);
         }
     } catch (e) {
         console.error('恢复草稿失败:', e);
@@ -1002,9 +1072,9 @@ function renderInsights(insights, config = {}) {
 
     // 如果有任何数据，显示侧边栏
     const hasData = insights.emotions.weeklyKeywords.length > 0 ||
-                    insights.media.items.length > 0 ||
-                    insights.work.items.length > 0 ||
-                    insights.life.items.length > 0;
+        insights.media.items.length > 0 ||
+        insights.work.items.length > 0 ||
+        insights.life.items.length > 0;
 
     if (hasData) {
         tasksSidebar.style.display = 'block';

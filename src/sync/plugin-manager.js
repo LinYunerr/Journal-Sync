@@ -96,6 +96,7 @@ export async function executePlugins(content, type, options, coreConfig, onUpdat
 
         // 如果属于前端控制的屏蔽，则跳过
         if (key === 'flomo' && options.enableFlomo === false) shouldExecute = false;
+        if (key === 'mastodon' && options.enableMastodon === false) shouldExecute = false;
         if (key === 'telegram' && !options.sendToTelegram) shouldExecute = false;
         if (key === 'telegram-send' && !options.sendToTelegram) shouldExecute = false;
 
