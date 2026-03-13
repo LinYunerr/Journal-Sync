@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const CONFIG_FILE = path.join(__dirname, '../../../data/config.json');
+const CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 
 // Memory cache for config
 let cachedConfig = null;

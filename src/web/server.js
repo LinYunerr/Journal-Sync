@@ -281,8 +281,10 @@ app.get('/api/config/obsidian', async (req, res) => {
 app.get('/api/config/diary', async (req, res) => {
   try {
     const config = await ConfigManager.loadConfig();
-    const telegramConfig = await loadTelegramConfig();
-    const flomoConfig = await loadFlomoConfig();
+    const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
+    const telegramConfig = await telegramConfigMod.loadConfig();
+    const flomoConfigMod = await import('../../Plugin/Flomo/index.js');
+    const flomoConfig = await flomoConfigMod.loadConfig();
 
     // 默认值（从 journal-sync.js 中的常量）
     const defaults = {
@@ -408,7 +410,8 @@ app.post('/api/config/set', async (req, res) => {
 
     // 特殊处理 Telegram 配置，保存到插件配置文件
     if (configPath.startsWith('diary.tg')) {
-      const telegramConfig = await loadTelegramConfig() || {
+      const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
+      const telegramConfig = await telegramConfigMod.loadConfig() || {
         botToken: '',
         channels: [],
         defaultChannel: '',
@@ -421,9 +424,11 @@ app.post('/api/config/set', async (req, res) => {
         telegramConfig.defaultChannel = value;
       } else if (configPath === 'diary.tgOptimizePrompt') {
         telegramConfig.optimizePrompt = value;
+      } else if (configPath === 'diary.tgChannels') {
+        telegramConfig.channels = JSON.parse(value);
       }
 
-      await saveTelegramConfig(telegramConfig);
+      await telegramConfigMod.saveConfig(telegramConfig);
 
       res.json({
         ok: true,
@@ -434,9 +439,10 @@ app.post('/api/config/set', async (req, res) => {
 
     // 特殊处理 Flomo 配置，保存到插件配置文件
     if (configPath === 'diary.flomoApi') {
-      const flomoConfig = await loadFlomoConfig() || { apiUrl: '' };
+      const flomoConfigMod = await import('../../Plugin/Flomo/index.js');
+      const flomoConfig = await flomoConfigMod.loadConfig() || { apiUrl: '' };
       flomoConfig.apiUrl = value;
-      await saveFlomoConfig(flomoConfig);
+      await flomoConfigMod.saveConfig(flomoConfig);
 
       res.json({
         ok: true,
@@ -1250,40 +1256,33 @@ async function scanFolders(basePath) {
 // 获取 Mem0 配置
 app.get('/api/mem0/config', async (req, res) => {
   try {
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
     res.json({
       ok: true,
       config
     });
   } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
 // 保存 Mem0 配置
 app.post('/api/mem0/config', async (req, res) => {
   try {
-    const result = await saveMem0Config(req.body);
-    if (result.success) {
-      res.json({ ok: true });
-    } else {
-      res.status(500).json({ ok: false, error: result.error });
-    }
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    await mem0ConfigMod.saveConfig(req.body);
+    res.json({ ok: true });
   } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
 // 测试 Mem0 连接
 app.post('/api/mem0/test', async (req, res) => {
   try {
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
     if (!config) {
       return res.json({
         ok: false,
@@ -1291,6 +1290,8 @@ app.post('/api/mem0/test', async (req, res) => {
       });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const result = await client.testConnection();
 
@@ -1309,11 +1310,14 @@ app.post('/api/mem0/test', async (req, res) => {
 // 获取任务列表
 app.get('/api/mem0/tasks', async (req, res) => {
   try {
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
     if (!config) {
       return res.json({ ok: true, tasks: [] });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const tasks = await client.getTasks();
 
@@ -1333,7 +1337,8 @@ app.get('/api/mem0/tasks', async (req, res) => {
 app.delete('/api/mem0/tasks/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
 
     if (!config) {
       return res.status(404).json({
@@ -1342,6 +1347,8 @@ app.delete('/api/mem0/tasks/:id', async (req, res) => {
       });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const result = await client.deleteTask(id);
 
@@ -1361,11 +1368,14 @@ app.delete('/api/mem0/tasks/:id', async (req, res) => {
 // 获取洞察数据
 app.get('/api/mem0/insights', async (req, res) => {
   try {
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
     if (!config) {
       return res.json({ ok: true, insights: null });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const insights = await client.getInsights();
 
@@ -1381,7 +1391,8 @@ app.get('/api/mem0/insights', async (req, res) => {
 // 分析情绪
 app.post('/api/mem0/analyze-emotions', async (req, res) => {
   try {
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
     if (!config) {
       return res.status(404).json({
         ok: false,
@@ -1389,6 +1400,8 @@ app.post('/api/mem0/analyze-emotions', async (req, res) => {
       });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const result = await client.analyzeEmotions();
 
@@ -1406,7 +1419,8 @@ app.post('/api/mem0/media/:id/visibility', async (req, res) => {
   try {
     const { id } = req.params;
     const { visible } = req.body;
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
 
     if (!config) {
       return res.status(404).json({
@@ -1415,6 +1429,8 @@ app.post('/api/mem0/media/:id/visibility', async (req, res) => {
       });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const result = await client.updateMediaVisibility(id, visible);
 
@@ -1436,7 +1452,8 @@ app.post('/api/mem0/:category/:id/visibility', async (req, res) => {
   try {
     const { category, id } = req.params;
     const { visible } = req.body;
-    const config = await loadMem0Config();
+    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
+    const config = await mem0ConfigMod.loadConfig();
 
     if (!config) {
       return res.status(404).json({
@@ -1445,6 +1462,8 @@ app.post('/api/mem0/:category/:id/visibility', async (req, res) => {
       });
     }
 
+    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
+    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
     const client = new Mem0Client(config);
     const result = await client.updateItemVisibility(category, id, visible);
 
