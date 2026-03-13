@@ -343,13 +343,20 @@ def main():
         }, ensure_ascii=False))
         return 0
 
+    has_stdin = not sys.stdin.isatty()
+
     if len(args) >= 2:
         channel_arg = args[0]
         message_arg = args[1]
     elif len(args) == 1:
-        # 只有一个参数：可能是消息（需要询问频道）或频道名（缺少消息）
-        # 优先当作消息处理，触发频道选择
-        message_arg = args[0]
+        # 如果存在来自 stdin 的数据（如 Node 端传入正文），则唯一参数被视为频道名
+        if has_stdin:
+            channel_arg = args[0]
+            message_arg = None
+        else:
+            # 只有一个参数又没有 stdin 输入：可能是消息（需要询问频道）或频道名（缺少消息）
+            # 优先当作消息处理，触发频道选择
+            message_arg = args[0]
 
     # 步骤 1: 自动刷新频道列表
     print("Refreshing channel list...", file=sys.stderr)

@@ -143,10 +143,19 @@ ${content}
         .substring(0, 100); // 限制长度
       const fileName = `${safeTitle}.md`;
 
-      // 确定保存路径
-      const targetDir = classification.folder
-        ? path.join(OBSIDIAN_DIR, classification.folder)
-        : OBSIDIAN_DIR;
+      // 确定保存路径防范 AI 幻觉引发的路径穿越
+      let targetDir = OBSIDIAN_DIR;
+      if (classification.folder) {
+        // 移除非法的回溯符及盘符，确保只是相对子路径
+        const safeFolder = classification.folder
+          .replace(/\.\.[\/\\]/g, '') // 移除 ../
+          .replace(/^[\/\\]+/, '');   // 移除开头斜杠
+
+        const resolvedPath = path.resolve(OBSIDIAN_DIR, safeFolder);
+        if (resolvedPath.startsWith(path.resolve(OBSIDIAN_DIR))) {
+          targetDir = resolvedPath;
+        }
+      }
 
       // 确保目标目录存在
       await fs.mkdir(targetDir, { recursive: true });
@@ -341,7 +350,7 @@ async function sendToTelegram(content, channel) {
   return new Promise((resolve) => {
     // 设置环境变量传递 bot token
     const env = { ...process.env, TELEGRAM_BOT_TOKEN: tgBotToken };
-    const tgProcess = spawn('python3', [tgSendScript, tgChannel, content], { env });
+    const tgProcess = spawn('python3', [tgSendScript, tgChannel], { env });
 
     let output = '';
 
@@ -359,6 +368,12 @@ async function sendToTelegram(content, channel) {
         error: `Telegram process error: ${err.message}`
       });
     });
+
+    // 将内容通过 stdin 发送，避免命令行参数过长导致 E2BIG 错误
+    if (content) {
+      tgProcess.stdin.write(content);
+    }
+    tgProcess.stdin.end();
 
     tgProcess.on('close', (code) => {
       resolve({ success: code === 0, output });

@@ -16,7 +16,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 中间件
-app.use(cors());
+// 限制 CORS，防止跨站请求伪造利用本地服务 RCE
+app.use(cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../../public')));
 
@@ -537,8 +538,13 @@ app.get('/api/stats', async (req, res) => {
  */
 app.post('/api/browse-folder', async (req, res) => {
   try {
-    const { startPath } = req.body;
-    const basePath = startPath || require('os').homedir();
+    let { startPath } = req.body;
+    
+    // 路径规范化，防止类似于 startPath=../../../../ 形式的不受限遍历
+    let basePath = require('os').homedir();
+    if (startPath && typeof startPath === 'string') {
+      basePath = path.resolve(startPath);
+    }
 
     const entries = await fs.readdir(basePath, { withFileTypes: true });
     const folders = entries
@@ -755,8 +761,12 @@ app.post('/api/config/set', async (req, res) => {
     // 其他配置保存到主配置文件
     const config = await loadConfig();
 
-    // 解析路径并设置值
+    // 解析路径并设置值，防御原型污染
     const keys = configPath.split('.');
+    if (keys.some(k => k === '__proto__' || k === 'constructor' || k === 'prototype')) {
+      return res.status(400).json({ ok: false, error: '非法的配置安全范围' });
+    }
+
     let current = config;
     for (let i = 0; i < keys.length - 1; i++) {
       if (!current[keys[i]]) {
