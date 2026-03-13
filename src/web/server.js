@@ -2,12 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { syncJournal } from '../sync/journal-sync.js';
-import { promises as fs } from 'fs';
-import { loadTelegramConfig, saveTelegramConfig, updateChannels } from '../../Plugin/Telegram-Send/loader.js';
-import { loadFlomoConfig, saveFlomoConfig } from '../../Plugin/Flomo/loader.js';
-import { loadMem0Config, saveMem0Config } from '../../Plugin/Mem0/loader.js';
-import Mem0Client from '../../Plugin/Mem0/mem0_client.js';
+import { saveToObsidian, optimizeContent } from '../sync/journal-sync.js';
+import { promises as fsPromises } from 'fs';
+import ConfigManager from '../utils/config-manager.js';
+import PluginManager from '../sync/plugin-manager.js';
+
+// 启动时加载插件
+PluginManager.loadPlugins();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,38 +26,14 @@ app.use(express.static(path.join(__dirname, '../../public')));
 const HISTORY_FILE = path.join(__dirname, '../../data/history.json');
 const CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 
-/**
- * 加载配置
- */
-async function loadConfig() {
-  try {
-    const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    // 返回默认配置
-    return {
-      obsidianPath: '/path/to/obsidian/notes'
-    };
-  }
-}
 
-/**
- * 保存配置
- */
-async function saveConfig(config) {
-  try {
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
-  } catch (error) {
-    console.error('Failed to save config:', error);
-  }
-}
 
 /**
  * 加载历史记录
  */
 async function loadHistory() {
   try {
-    const data = await fs.readFile(HISTORY_FILE, 'utf-8');
+    const data = await fsPromises.readFile(HISTORY_FILE, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
     return [];
@@ -68,7 +45,7 @@ async function loadHistory() {
  */
 async function saveHistory(history) {
   try {
-    await fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf-8');
+    await fsPromises.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf-8');
   } catch (error) {
     console.error('Failed to save history:', error);
   }
@@ -105,225 +82,45 @@ app.post('/api/save-stream', async (req, res) => {
   try {
     const { content, type = 'diary', options = {}, saveId } = req.body;
 
-    if (!content || !content.trim()) {
-      return res.status(400).json({ error: '内容不能为空' });
-    }
+    if (!content || !content.trim()) return res.status(400).json({ error: '内容不能为空' });
+    if (!['diary', 'note'].includes(type)) return res.status(400).json({ error: '类型必须是 diary 或 note' });
 
-    if (!['diary', 'note'].includes(type)) {
-      return res.status(400).json({ error: '类型必须是 diary 或 note' });
-    }
-
-    // 设置 SSE 响应头
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    console.log(`[${new Date().toISOString()}] Saving ${type}:`, content.substring(0, 50) + '...');
-    console.log(`[${new Date().toISOString()}] Options:`, JSON.stringify(options));
+    const optimized = optimizeContent(content);
+    const config = await ConfigManager.loadConfig();
 
-    // 执行同步，使用流式更新
-    // 注意：笔记的 AI 处理（分类、标签、总结）现在在 saveToObsidian 中完成
-    const results = await syncJournalWithStream(content, type, options, (plugin, success) => {
-      // 发送状态更新
+    const obsidianResult = await saveToObsidian(optimized, type, options);
+    res.write(`data: ${JSON.stringify({ type: 'status', plugin: 'obsidian', success: obsidianResult.success })}\n\n`);
+
+    const pluginResults = await PluginManager.executePlugins(optimized, type, options, config, (plugin, success) => {
       res.write(`data: ${JSON.stringify({ type: 'status', plugin, success })}\n\n`);
     });
 
-    // 添加到历史记录（使用实际结果）
-    const historyStatus = {};
-
-    // Obsidian 总是显示
-    historyStatus.obsidian = results.obsidian?.success ? 'success' : 'failed';
-
-    // 其他插件：如果被跳过则标记为 'skipped'，否则显示实际结果
-    if (results.flomo?.skipped) {
-      historyStatus.flomo = 'skipped';
-    } else if (results.flomo) {
-      historyStatus.flomo = results.flomo.success ? 'success' : 'failed';
-    }
-
-    if (results.nmem?.skipped) {
-      historyStatus.nmem = 'skipped';
-    } else if (results.nmem) {
-      historyStatus.nmem = results.nmem.success ? 'success' : 'failed';
-    }
-
-    if (results.memu?.skipped) {
-      historyStatus.memu = 'skipped';
-    } else if (results.memu) {
-      historyStatus.memu = results.memu.success ? 'success' : 'failed';
-    }
-
-    if (results.telegram?.skipped) {
-      historyStatus.telegram = 'skipped';
-    } else if (results.telegram) {
-      historyStatus.telegram = results.telegram.success ? 'success' : 'failed';
-    }
-
-    if (results.mem0?.skipped) {
-      historyStatus.mem0 = 'skipped';
-    } else if (results.mem0) {
-      historyStatus.mem0 = results.mem0.success ? 'success' : 'failed';
+    const historyStatus = { obsidian: obsidianResult.success ? 'success' : 'failed' };
+    for (const [key, result] of Object.entries(pluginResults)) {
+      if (result.skipped) historyStatus[key] = 'skipped';
+      else historyStatus[key] = result.success ? 'success' : 'failed';
     }
 
     await addToHistory({
       id: saveId,
       timestamp: new Date().toISOString(),
       type,
-      content: content, // 保存完整内容，前端负责截断显示
+      content,
       status: historyStatus,
-      suggestion: results.memu?.suggestion || null
+      suggestion: pluginResults.memu?.suggestion || null
     });
 
-    // 发送完成信号
-    res.write(`data: ${JSON.stringify({ type: 'complete', suggestion: results.memu?.suggestion })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'complete', suggestion: pluginResults.memu?.suggestion })}\n\n`);
     res.end();
-
-    console.log(`[${new Date().toISOString()}] Save completed`);
-
   } catch (error) {
-    console.error('Save error:', error);
     res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
     res.end();
   }
 });
-
-/**
- * 同步日记（带流式更新）- 并行执行，实时反馈
- */
-async function syncJournalWithStream(content, type, options, onUpdate) {
-  const journalSync = await import('../sync/journal-sync.js');
-  const {
-    saveToObsidian,
-    syncToFlomo,
-    syncToNmem,
-    syncToMemU,
-    sendToTelegram
-  } = journalSync.default;
-
-  const optimized = content.trim();
-  const today = new Date().toISOString().split('T')[0];
-  const title = type === 'diary' ? `${today} 日记` : `${today} 笔记`;
-
-  // 加载配置和插件状态
-  const config = await loadConfig();
-  const plugins = config?.plugins || {
-    flomo: true,
-    nmem: true,
-    memu: true,
-    telegram: false,
-    mem0: false
-  };
-
-  const results = {
-    timestamp: new Date().toISOString(),
-    type,
-    content: optimized
-  };
-
-  // 1. 立即保存到 Obsidian（最快，优先执行）
-  // 对于笔记，options.summarize 控制是否使用 AI 总结
-  const obsidianPromise = saveToObsidian(optimized, type, options).then(result => {
-    results.obsidian = result;
-    onUpdate('obsidian', result.success);
-    return result;
-  });
-
-  // 2. 并行执行其他插件
-  const promises = [obsidianPromise];
-
-  // flomo（检查全局插件开关和单独的 flomo 开关）
-  if (plugins.flomo && options.enableFlomo !== false) {
-    promises.push(
-      syncToFlomo(optimized).then(result => {
-        results.flomo = result;
-        onUpdate('flomo', result.success);
-        return result;
-      })
-    );
-  } else {
-    results.flomo = { success: false, skipped: true };
-  }
-
-  // nmem
-  if (plugins.nmem) {
-    promises.push(
-      syncToNmem(optimized, title).then(result => {
-        results.nmem = result;
-        onUpdate('nmem', result.success);
-        return result;
-      })
-    );
-  } else {
-    results.nmem = { success: false, skipped: true };
-  }
-
-  // memU
-  if (plugins.memu) {
-    promises.push(
-      syncToMemU(optimized).then(result => {
-        results.memu = result;
-        onUpdate('memu', result.success);
-        return result;
-      })
-    );
-  } else {
-    results.memu = { success: false, skipped: true };
-  }
-
-  // 等待所有插件完成
-  await Promise.allSettled(promises);
-
-  // mem0（仅日记模式）
-  if (type === 'diary' && plugins.mem0) {
-    try {
-      const { loadMem0Config } = await import('../../Plugin/Mem0/loader.js');
-      const { Mem0Client } = await import('../../Plugin/Mem0/mem0_client.js');
-
-      const mem0Config = await loadMem0Config();
-      if (mem0Config) {
-        const client = new Mem0Client(mem0Config);
-        const mem0Result = await client.storeMemory(optimized, {
-          type: 'diary',
-          date: today
-        });
-
-        // 更新洞察数据（书影音、工作、生活）
-        await client.updateInsights(optimized, {
-          type: 'diary',
-          date: today
-        });
-
-        results.mem0 = {
-          success: mem0Result.success,
-          tasks: mem0Result.tasks || [],
-          tags: mem0Result.memory?.tags || [],
-          entities: mem0Result.memory?.entities || []
-        };
-        onUpdate('mem0', mem0Result.success);
-      } else {
-        results.mem0 = { success: false, skipped: true, message: '配置未找到' };
-      }
-    } catch (error) {
-      console.error('[Mem0] 同步失败:', error);
-      results.mem0 = { success: false, error: error.message };
-      onUpdate('mem0', false);
-    }
-  } else if (!plugins.mem0) {
-    results.mem0 = { success: false, skipped: true };
-  }
-
-  // telegram（依赖 memU 的建议，所以在最后执行）
-  if (plugins.telegram && options.sendToTelegram) {
-    const tgContent = results.memu?.suggestion || optimized;
-    const channel = options.telegramChannel || config?.diary?.tgDiaryChannel;
-    results.telegram = await sendToTelegram(tgContent, channel);
-    onUpdate('telegram', results.telegram.success);
-  } else if (!plugins.telegram) {
-    results.telegram = { success: false, skipped: true };
-  }
-
-  return results;
-}
 
 /**
  * 保存日记/笔记（原有端点，保持兼容）
@@ -331,144 +128,34 @@ async function syncJournalWithStream(content, type, options, onUpdate) {
 app.post('/api/save', async (req, res) => {
   try {
     const { content, type = 'diary', options = {} } = req.body;
+    if (!content || !content.trim()) return res.status(400).json({ error: '内容不能为空' });
+    if (!['diary', 'note'].includes(type)) return res.status(400).json({ error: '类型必须是 diary 或 note' });
 
-    if (!content || !content.trim()) {
-      return res.status(400).json({ error: '内容不能为空' });
+    const optimized = optimizeContent(content);
+    const config = await ConfigManager.loadConfig();
+
+    const obsidianResult = await saveToObsidian(optimized, type, options);
+    const pluginResults = await PluginManager.executePlugins(optimized, type, options, config, null);
+
+    const historyStatus = { obsidian: obsidianResult.success };
+    for (const [key, result] of Object.entries(pluginResults)) {
+      historyStatus[key] = result.success || false;
     }
 
-    if (!['diary', 'note'].includes(type)) {
-      return res.status(400).json({ error: '类型必须是 diary 或 note' });
-    }
-
-    console.log(`[${new Date().toISOString()}] Saving ${type}:`, content.substring(0, 50) + '...');
-
-    // 如果是笔记且需要总结，调用 AI 总结
-    let processedContent = content;
-    if (type === 'note' && options.summarize) {
-      try {
-        processedContent = await summarizeNote(content);
-        console.log(`[${new Date().toISOString()}] Note summarized`);
-      } catch (error) {
-        console.error('Summarization error:', error);
-        // 总结失败时使用原文
-        processedContent = content;
-      }
-    }
-
-    // 执行同步
-    const results = await syncJournal(processedContent, type, options);
-
-    // 添加到历史记录
     await addToHistory({
       id: Date.now().toString(),
-      timestamp: results.timestamp,
+      timestamp: new Date().toISOString(),
       type,
-      content: content, // 保存完整内容，前端负责截断显示
-      status: {
-        obsidian: results.obsidian?.success || false,
-        flomo: results.flomo?.success || false,
-        nmem: results.nmem?.success || false,
-        memu: results.memu?.success || false,
-        telegram: results.telegram?.success || false
-      },
-      suggestion: results.memu?.suggestion || null
+      content,
+      status: historyStatus,
+      suggestion: pluginResults.memu?.suggestion || null
     });
 
-    console.log(`[${new Date().toISOString()}] Save completed:`, {
-      obsidian: results.obsidian?.success,
-      flomo: results.flomo?.success,
-      nmem: results.nmem?.success,
-      memu: results.memu?.success,
-      telegram: results.telegram?.success
-    });
-
-    res.json({
-      success: true,
-      results,
-      message: '保存成功'
-    });
-
+    res.json({ success: true, results: { obsidian: obsidianResult, ...pluginResults }, message: '保存成功' });
   } catch (error) {
-    console.error('Save error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
-
-/**
- * AI 总结笔记内容
- */
-async function summarizeNote(content) {
-  const config = await loadConfig();
-
-  if (!config?.ai?.baseUrl || !config?.ai?.apiKey || !config?.ai?.model) {
-    throw new Error('AI 配置不完整');
-  }
-
-  const systemPrompt = `你是一个专业的笔记整理助手。你的任务是将用户提供的网页、文章或长文本内容整理成结构化的笔记。
-
-## 输出要求
-
-1. **提取标题**：识别文章的主标题
-2. **生成摘要**：用 2-3 句话概括核心内容
-3. **提取关键要点**：
-   - 正文 < 1000 字：提取 3 条关键要点
-   - 正文 1000-3000 字：提取 4-5 条关键要点
-   - 正文 > 3000 字：提取 5-7 条关键要点
-4. **结构化整理**：
-   - 保留原文的逻辑结构
-   - 使用小标题分段
-   - 去除广告、导航等无关内容
-   - 保留重要的数据、引用和例子
-
-## 输出格式
-
-使用 Markdown 格式，结构如下：
-
-\`\`\`markdown
-# [文章标题]
-
-## 摘要
-[2-3 句话的核心概括]
-
-## 关键要点
-- [要点 1]
-- [要点 2]
-- [要点 3]
-...
-
-## 详细内容
-[结构化的正文内容，使用小标题分段]
-\`\`\`
-
-请直接输出整理后的笔记，不要添加任何解释性文字。`;
-
-  const response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.ai.apiKey}`
-    },
-    body: JSON.stringify({
-      model: config.ai.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: content }
-      ],
-      temperature: 0.3,
-      max_tokens: 4000
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`AI API error: ${response.statusText}`);
-  }
-
-  const result = await response.json();
-  return result.choices[0].message.content;
-}
 
 /**
  * 获取历史记录
@@ -539,14 +226,14 @@ app.get('/api/stats', async (req, res) => {
 app.post('/api/browse-folder', async (req, res) => {
   try {
     let { startPath } = req.body;
-    
+
     // 路径规范化，防止类似于 startPath=../../../../ 形式的不受限遍历
     let basePath = require('os').homedir();
     if (startPath && typeof startPath === 'string') {
       basePath = path.resolve(startPath);
     }
 
-    const entries = await fs.readdir(basePath, { withFileTypes: true });
+    const entries = await fsPromises.readdir(basePath, { withFileTypes: true });
     const folders = entries
       .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
       .map(entry => ({
@@ -574,7 +261,7 @@ app.post('/api/browse-folder', async (req, res) => {
  */
 app.get('/api/config/obsidian', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     res.json({
       success: true,
       path: config.obsidianPath
@@ -593,7 +280,7 @@ app.get('/api/config/obsidian', async (req, res) => {
  */
 app.get('/api/config/diary', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const telegramConfig = await loadTelegramConfig();
     const flomoConfig = await loadFlomoConfig();
 
@@ -635,7 +322,7 @@ app.get('/api/config/diary', async (req, res) => {
  */
 app.get('/api/config/note', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     res.json({
       ok: true,
       config: {
@@ -664,9 +351,9 @@ app.post('/api/config/obsidian', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     config.obsidianPath = obsidianPath.trim();
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       success: true,
@@ -686,7 +373,7 @@ app.post('/api/config/obsidian', async (req, res) => {
  */
 app.get('/api/config/full', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     res.json({
       ok: true,
       config: {
@@ -759,7 +446,7 @@ app.post('/api/config/set', async (req, res) => {
     }
 
     // 其他配置保存到主配置文件
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
 
     // 解析路径并设置值，防御原型污染
     const keys = configPath.split('.');
@@ -776,7 +463,7 @@ app.post('/api/config/set', async (req, res) => {
     }
     current[keys[keys.length - 1]] = value;
 
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -795,7 +482,7 @@ app.post('/api/config/set', async (req, res) => {
  */
 app.post('/api/config/test-ai', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
 
     if (!config?.ai?.baseUrl || !config?.ai?.apiKey || !config?.ai?.model) {
       return res.status(400).json({
@@ -806,7 +493,7 @@ app.post('/api/config/test-ai', async (req, res) => {
 
     // 简单的测试请求
     const startTime = Date.now();
-    const response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
+    const response = await fetch(`${config.ai.baseUrl} / chat / completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -855,7 +542,7 @@ app.post('/api/config/test-ai', async (req, res) => {
  */
 app.get('/api/classification-rules', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const rules = config?.classification?.rules || [];
     res.json({
       ok: true,
@@ -883,14 +570,14 @@ app.post('/api/classification-rules', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
 
     if (!config.classification) {
       config.classification = {};
     }
     config.classification.rules = rules;
 
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -909,7 +596,7 @@ app.post('/api/classification-rules', async (req, res) => {
  */
 app.get('/api/folders', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const folders = config?.folders || [];
 
     res.json({
@@ -931,7 +618,7 @@ app.get('/api/folders', async (req, res) => {
  */
 app.post('/api/folders/rebuild', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const vaultPath = config?.note?.vaultPath;
 
     if (!vaultPath) {
@@ -945,7 +632,7 @@ app.post('/api/folders/rebuild', async (req, res) => {
     const folders = await scanFolders(vaultPath);
 
     config.folders = folders;
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -974,7 +661,7 @@ app.post('/api/folders/add', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const folders = config?.folders || [];
 
     if (folders.includes(folder)) {
@@ -988,7 +675,7 @@ app.post('/api/folders/add', async (req, res) => {
     folders.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
 
     config.folders = folders;
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -1017,7 +704,7 @@ app.post('/api/folders/delete', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const folders = config?.folders || [];
 
     const index = folders.indexOf(folder);
@@ -1030,7 +717,7 @@ app.post('/api/folders/delete', async (req, res) => {
 
     folders.splice(index, 1);
     config.folders = folders;
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -1050,7 +737,7 @@ app.post('/api/folders/delete', async (req, res) => {
  */
 app.get('/api/plugins', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const plugins = config?.plugins || {
       flomo: true,
       nmem: true,
@@ -1085,7 +772,7 @@ app.post('/api/plugins/toggle', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
 
     if (!config.plugins) {
       config.plugins = {
@@ -1098,7 +785,7 @@ app.post('/api/plugins/toggle', async (req, res) => {
     }
 
     config.plugins[plugin] = enabled;
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -1117,7 +804,7 @@ app.post('/api/plugins/toggle', async (req, res) => {
  */
 app.get('/api/classification-method', async (req, res) => {
   try {
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const method = config?.classification?.method || '中图法分类';
 
     res.json({
@@ -1146,14 +833,14 @@ app.post('/api/classification-method', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
 
     if (!config.classification) {
       config.classification = {};
     }
     config.classification.method = method;
 
-    await saveConfig(config);
+    await ConfigManager.saveConfig(config);
 
     res.json({
       ok: true,
@@ -1228,7 +915,7 @@ app.post('/api/telegram/test', async (req, res) => {
       if (code !== 0) {
         res.json({
           ok: false,
-          error: `脚本执行失败 (退出码 ${code}): ${stderr || stdout}`
+          error: `脚本执行失败(退出码 ${code}): ${stderr || stdout}`
         });
         return;
       }
@@ -1243,7 +930,7 @@ app.post('/api/telegram/test', async (req, res) => {
             id: String(ch.id),
             title: ch.title || ch.username || String(ch.id),
             type: 'channel',
-            username: ch.username ? `@${ch.username}` : null
+            username: ch.username ? `@${ch.username} ` : null
           }));
 
           // 保存频道列表到插件配置
@@ -1271,7 +958,7 @@ app.post('/api/telegram/test', async (req, res) => {
       } catch (parseError) {
         res.json({
           ok: false,
-          error: `解析脚本输出失败: ${parseError.message}`,
+          error: `解析脚本输出失败: ${parseError.message} `,
           output: stdout
         });
       }
@@ -1310,7 +997,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const aiConfig = config?.ai;
 
     if (!aiConfig || !aiConfig.baseUrl || !aiConfig.apiKey || !aiConfig.model) {
@@ -1329,7 +1016,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
     const { URL } = await import('url');
 
     // 拼接完整的 API 路径
-    const fullUrl = `${aiConfig.baseUrl}/chat/completions`;
+    const fullUrl = `${aiConfig.baseUrl} /chat/completions`;
     const apiUrl = new URL(fullUrl);
 
     const postData = JSON.stringify({
@@ -1341,7 +1028,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
         },
         {
           role: 'user',
-          content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content}`
+          content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content} `
         }
       ],
       temperature: 0.7
@@ -1354,7 +1041,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.apiKey}`,
+        'Authorization': `Bearer ${aiConfig.apiKey} `,
         'Content-Length': Buffer.byteLength(postData)
       }
     };
@@ -1382,7 +1069,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
           if (result.error) {
             return res.json({
               ok: false,
-              error: `AI 错误: ${result.error.message || JSON.stringify(result.error)}`
+              error: `AI 错误: ${result.error.message || JSON.stringify(result.error)} `
             });
           }
 
@@ -1445,7 +1132,7 @@ app.post('/api/telegram/publish', async (req, res) => {
       });
     }
 
-    const config = await loadConfig();
+    const config = await ConfigManager.loadConfig();
     const tgSendScript = config?.diary?.tgSendScript || '/path/to/telegram_channel_send.py';
     const tgBotToken = config?.diary?.tgBotToken;
 
@@ -1486,7 +1173,7 @@ app.post('/api/telegram/publish', async (req, res) => {
         isResolved = true;
         res.json({
           ok: false,
-          error: `执行脚本失败: ${err.message}`
+          error: `执行脚本失败: ${err.message} `
         });
       }
     });
@@ -1503,7 +1190,7 @@ app.post('/api/telegram/publish', async (req, res) => {
       } else {
         res.json({
           ok: false,
-          error: `发布失败 (退出码 ${code}): ${stderr || stdout}`
+          error: `发布失败(退出码 ${code}): ${stderr || stdout} `
         });
       }
     });
@@ -1535,7 +1222,7 @@ async function scanFolders(basePath) {
 
   async function scan(dir, relativePath = '') {
     try {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
+      const entries = await fsPromises.readdir(dir, { withFileTypes: true });
 
       for (const entry of entries) {
         if (entry.isDirectory() && !entry.name.startsWith('.')) {

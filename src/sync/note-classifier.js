@@ -84,10 +84,19 @@ async function callAI(config, systemPrompt, userPrompt) {
   });
 }
 
+// 简单内存缓存：1 小时过期
+let folderCache = null;
+let folderCacheTime = 0;
+const CACHE_TTL = 3600 * 1000;
+
 /**
- * 1. 获取文件夹结构（递归读取所有子文件夹）
+ * 1. 获取文件夹结构（附带内存缓存）
  */
 async function getFolderStructure(baseDir) {
+  if (folderCache && Date.now() - folderCacheTime < CACHE_TTL) {
+    return folderCache;
+  }
+
   try {
     const folders = [];
 
@@ -107,6 +116,8 @@ async function getFolderStructure(baseDir) {
     }
 
     await scanDir(baseDir);
+    folderCache = folders;
+    folderCacheTime = Date.now();
     return folders;
   } catch (error) {
     console.error('读取文件夹结构失败:', error);
@@ -115,143 +126,115 @@ async function getFolderStructure(baseDir) {
 }
 
 /**
- * 2. AI 分类：决定笔记应该存储到哪个文件夹
- * 如果没有合适的文件夹，AI 可以建议创建新文件夹
+ * 清除文件夹缓存（供外部调用或文件变更时复位）
  */
-export async function classifyNote(content, config, baseDir) {
+export function clearFolderCache() {
+  folderCache = null;
+  folderCacheTime = 0;
+}
+
+/**
+ * 2. 核心 AI 处理：提取元数据、生成标签、并规划分类文件夹（单次 API 调用完成）
+ */
+export async function processNoteAI(content, config, baseDir) {
   const folders = await getFolderStructure(baseDir);
 
-  // 读取用户自定义的分类规则
   const customRules = config?.classification?.rules || [];
   const rulesText = customRules.length > 0
-    ? `\n\n用户自定义分类规则（优先级从高到低）：\n${customRules.map((rule, i) => `${i + 1}. ${rule}`).join('\n')}`
+    ? `\n\n用户自定义分类规则（优先级最高）：\n${customRules.map((rule, i) => `${i + 1}. ${rule}`).join('\n')}`
     : '';
 
-  const systemPrompt = `你是一个专业的笔记分类助手。根据笔记内容，选择或建议一个合适的文件夹路径。
+  const systemPrompt = `你是一个全能的知识库整理分析助手。你需要对笔记进行综合评估分析。
 
-规则：
-1. 仔细分析笔记的主题和内容
-2. **优先遵循用户自定义的分类规则**（如果有）
-3. **必须从现有文件夹列表中选择一个完整路径**（包括所有层级，如 "J 艺术/J4 摄影艺术 与电影艺术/视频技术"）
-4. 如果现有文件夹都不合适，可以建议创建新文件夹，但必须基于现有的顶级分类（如在 "J 艺术" 下创建子文件夹）
-5. 返回的 folder 字段必须是完整的相对路径，使用 "/" 分隔层级
+任务范围：
+1. 元数据提取：提取笔记的 "title"(若无则简短生成), "author", "source", "published"(YYYY-MM-DD，若无返回null)。不要虚构。
+2. 语义标签生成：生成 1-3 个中文精准语义标签(tags)，避免宽泛词汇，优先使用领域专业术语。
+3. 文件夹分类：从下方提供的[现有文件夹列表]中选择最符合主题的一个完整路径作为 "folder" 或者依据规则建议同级新建。如果有对应规则，则优先按照规则分类。返回 "isNew"(是否属于新建议的文件夹)及 "reason"(分类理由)。
+
 ${rulesText}
 
-${folders.length > 0 ? `现有文件夹列表（完整路径）：\n${folders.map(f => `- ${f}`).join('\n')}` : '当前没有分类文件夹，请建议一个新的文件夹名称。'}
+现有文件目录层级结构参考：
+${folders.length > 0 ? folders.map(f => `- ${f}`).join('\n') : '目前为空请建议一个新主分类。'}
 
-请以 JSON 格式返回：
+必须返回严谨的 JSON 结构，并严格参照如下键名：
 {
-  "folder": "完整的文件夹路径（如 'J 艺术/J4 摄影艺术 与电影艺术/视频技术'）",
-  "reason": "选择或创建理由（简短说明）",
-  "isNew": true/false
-}`;
-
-  const userPrompt = `请为以下笔记内容选择或建议合适的文件夹：
-
-${content.substring(0, 1000)}${content.length > 1000 ? '...' : ''}`;
-
-  // 最多尝试 2 次
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const response = await callAI(config, systemPrompt, userPrompt);
-      console.log(`[classifyNote] 第 ${attempt} 次尝试，AI 响应:`, response.substring(0, 200));
-      const result = JSON.parse(response);
-
-      // 验证返回的文件夹路径
-      if (result.folder) {
-        // 检查是否在现有文件夹列表中
-        const folderExists = folders.includes(result.folder);
-
-        if (folderExists) {
-          console.log(`[笔记分类] ✅ 选择现有文件夹: ${result.folder}`);
-          return { ...result, isNew: false };
-        } else if (result.isNew) {
-          // AI 建议创建新文件夹，验证路径格式
-          const newFolderPath = path.join(baseDir, result.folder);
-          try {
-            await fs.mkdir(newFolderPath, { recursive: true });
-            console.log(`[笔记分类] ✅ 创建新文件夹: ${result.folder}`);
-            return result;
-          } catch (error) {
-            console.error(`[笔记分类] ❌ 创建文件夹失败:`, error);
-            if (attempt === 2) {
-              // 第二次尝试仍失败，使用根目录
-              return { folder: '', reason: '创建文件夹失败，使用根目录', isNew: false };
-            }
-            // 继续下一次尝试
-            continue;
-          }
-        } else {
-          // AI 返回的文件夹不存在，且标记为非新建
-          console.warn(`[笔记分类] ⚠️ 第 ${attempt} 次尝试：AI 返回的文件夹不存在: ${result.folder}`);
-          if (attempt === 2) {
-            // 第二次尝试仍失败，使用根目录
-            return { folder: '', reason: 'AI 返回的文件夹不存在，使用根目录', isNew: false };
-          }
-          // 继续下一次尝试
-          continue;
-        }
-      } else {
-        console.warn(`[笔记分类] ⚠️ 第 ${attempt} 次尝试：AI 未返回文件夹`);
-        if (attempt === 2) {
-          return { folder: '', reason: 'AI 未返回有效文件夹，使用根目录', isNew: false };
-        }
-        continue;
-      }
-    } catch (error) {
-      console.error(`[classifyNote] 第 ${attempt} 次尝试失败:`, error.message);
-      if (attempt === 2) {
-        console.error('[classifyNote] 错误详情:', error);
-        return { folder: '', reason: '分类失败，使用根目录', isNew: false };
-      }
-      // 继续下一次尝试
-      continue;
-    }
+  "metadata": {
+    "title": "文章标题",
+    "author": "作者信息或null",
+    "source": "来源信息或null",
+    "published": "日期或null"
+  },
+  "tags": ["标签1", "标签2"],
+  "classification": {
+    "folder": "现有的确切路径，比如 'J 艺术/J4 摄影艺术 与电影艺术/视频技术'",
+    "reason": "简短的一句分类理由",
+    "isNew": false
   }
-
-  // 理论上不会到这里，但以防万一
-  return { folder: '', reason: '分类失败，使用根目录', isNew: false };
 }
 
-/**
- * 3. AI 生成标签：根据内容生成 1-3 个语义标签
- */
-export async function generateTags(content, config) {
-  const systemPrompt = `你是一个专业的标签生成助手。根据笔记内容生成 1-3 个精准的语义标签。
+仅输出正确的 JSON（不要带 Markdown block 和多余文字），确保它能被直接解析。`;
 
-规则：
-1. 标签应该反映内容的核心主题
-2. 使用中文，简洁明了（2-4 个字）
-3. 避免过于宽泛的标签（如"学习"、"工作"）
-4. 优先使用专业术语和领域词汇
-5. 生成 1-3 个标签即可
-
-请以 JSON 数组格式返回：
-["标签1", "标签2", "标签3"]`;
-
-  const userPrompt = `请为以下内容生成标签：
-
+  const userPrompt = `请对以下内容进行处理：
+  
 ${content.substring(0, 1500)}${content.length > 1500 ? '...' : ''}`;
 
-  try {
-    const response = await callAI(config, systemPrompt, userPrompt);
-    console.log('[generateTags] AI 响应:', response.substring(0, 200));
-    const tags = JSON.parse(response);
+  let result = null;
 
-    if (Array.isArray(tags) && tags.length > 0) {
-      return tags.slice(0, 3); // 最多 3 个标签
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      let response = await callAI(config, systemPrompt, userPrompt);
+      response = response.trim();
+
+      if (response.startsWith('\`\`\`json')) {
+        response = response.replace(/\`\`\`json\n?/g, '').replace(/\`\`\`\n?/g, '');
+      } else if (response.startsWith('\`\`\`')) {
+        response = response.replace(/\`\`\`\n?/g, '');
+      }
+
+      result = JSON.parse(response);
+      console.log(`[processNoteAI] 第 ${attempt} 次响应成功.`);
+      break;
+    } catch (error) {
+      console.error(`[processNoteAI] 尝试 ${attempt} 失败: ${error.message}`);
+      if (attempt === 2) {
+        result = null;
+      }
     }
-
-    return ['网页内容']; // 默认标签
-  } catch (error) {
-    console.error('[generateTags] AI 生成标签失败:', error.message);
-    console.error('[generateTags] 错误详情:', error);
-    return ['网页内容'];
   }
+
+  // 默认 Fallback
+  const defaultMeta = { title: '未命名笔记', author: null, source: null, published: null };
+  const defaultRes = {
+    metadata: defaultMeta,
+    tags: ['默认归档'],
+    classification: { folder: '', reason: '分析失败使用根目录', isNew: false }
+  };
+
+  if (!result) return defaultRes;
+
+  // 保证 metadata 全面
+  if (!result.metadata) result.metadata = defaultMeta;
+  if (!result.metadata.title) result.metadata.title = '未命名笔记';
+  if (!Array.isArray(result.tags)) result.tags = ['默认归档'];
+
+  // 核对分类
+  if (result.classification && result.classification.folder) {
+    const isExist = folders.includes(result.classification.folder);
+    if (isExist) {
+      result.classification.isNew = false;
+    } else if (!result.classification.isNew) {
+      // AI 自作主张塞了个不存在的且说不是新的，强行置空作为回退避免后续出错
+      result.classification.folder = '';
+    }
+  } else {
+    result.classification = defaultRes.classification;
+  }
+
+  return result;
 }
 
 /**
- * 4. AI 总结内容：生成结构化笔记
+ * 3. AI 总结内容：生成结构化笔记（保持原有功能不变）
  */
 export async function summarizeContent(content, config) {
   const systemPrompt = `你是一个专业的笔记整理助手。将内容整理成结构化的笔记格式。
@@ -290,56 +273,8 @@ ${content}`;
   }
 }
 
-/**
- * 5. 提取元数据：从内容中提取标题、作者、来源等
- */
-export async function extractMetadata(content, config) {
-  const systemPrompt = `你是一个元数据提取助手。从内容中提取标题、作者、来源、发布时间等信息。
-
-请以 JSON 格式返回：
-{
-  "title": "文章标题（如果无法提取，生成一个简短的描述性标题）",
-  "author": "作者名称（如果没有则为 null）",
-  "source": "来源说明（如：网站名、公众号名等，如果没有则为 null）",
-  "published": "发布时间（YYYY-MM-DD 格式，如果没有则为 null）"
-}
-
-规则：
-1. 标题必须提供，如果无法提取则根据内容生成
-2. 其他字段如果无法确定则返回 null
-3. 不要编造信息`;
-
-  const userPrompt = `请从以下内容中提取元数据：
-
-${content.substring(0, 1000)}${content.length > 1000 ? '...' : ''}`;
-
-  try {
-    const response = await callAI(config, systemPrompt, userPrompt);
-    console.log('[extractMetadata] AI 响应:', response.substring(0, 200));
-    const metadata = JSON.parse(response);
-
-    // 确保标题存在
-    if (!metadata.title) {
-      metadata.title = '未命名笔记';
-    }
-
-    return metadata;
-  } catch (error) {
-    console.error('[extractMetadata] AI 提取元数据失败:', error.message);
-    console.error('[extractMetadata] 错误详情:', error);
-    // 返回默认值
-    return {
-      title: '未命名笔记',
-      author: null,
-      source: null,
-      published: null
-    };
-  }
-}
-
 export default {
-  classifyNote,
-  generateTags,
+  processNoteAI,
   summarizeContent,
-  extractMetadata
+  clearFolderCache
 };
