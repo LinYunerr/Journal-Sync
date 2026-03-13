@@ -62,7 +62,7 @@ export async function execute({ content, options, suggestion }) {
         setTimeout(() => {
             tgProcess.kill();
             resolve({ success: false, error: 'timeout' });
-        }, 10000);
+        }, 60000);
     });
 }
 

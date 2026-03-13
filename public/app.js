@@ -596,7 +596,11 @@ function createCard(item) {
 
         // telegram (跳过则不显示)
         const telegramStatus = item.status.telegram;
-        if (telegramStatus !== 'skipped') {
+        const hasSpecificSends = item.telegramSends && Array.isArray(item.telegramSends) && item.telegramSends.length > 0;
+        const hasPendingSends = item.pendingSends && Array.isArray(item.pendingSends) && item.pendingSends.length > 0;
+
+        // 如果没有特定频道的发送记录（和进行中的记录），才显示粗粒度的通用状态
+        if (!hasSpecificSends && !hasPendingSends && telegramStatus !== 'skipped') {
             if (telegramStatus === 'pending') {
                 statuses.push('<span class="status-item pending">⏳ Telegram</span>');
             } else if (telegramStatus === 'success' || telegramStatus === true) {
@@ -606,23 +610,22 @@ function createCard(item) {
             }
         }
 
-        // mem0 (跳过则不显示)
-        const mem0Status = item.status.mem0;
-        if (mem0Status !== 'skipped') {
-            if (mem0Status === 'pending') {
-                statuses.push('<span class="status-item pending">⏳ Mem0</span>');
-            } else if (mem0Status === 'success' || mem0Status === true) {
-                statuses.push('<span class="status-item success">✓ Mem0</span>');
-            } else if (mem0Status === 'failed' || mem0Status === false) {
-                statuses.push('<span class="status-item failed">✗ Mem0</span>');
-            }
+        // 新增：渲染独立记录的 Telegram 发送记录（成功）
+        if (hasSpecificSends) {
+            // 使用 Set 去重
+            const uniqueChannels = [...new Set(item.telegramSends)];
+            uniqueChannels.forEach(channel => {
+                const shortName = channel.substring(0, 5);
+                statuses.push(`<span class="status-item success">✓ Telegram: ${escapeHtml(shortName)}</span>`);
+            });
         }
 
-        // 新增：渲染独立记录的 Telegram 发送
-        if (item.telegramSends && Array.isArray(item.telegramSends)) {
-            item.telegramSends.forEach(channel => {
+        // 渲染客户端正在请求中的频道路由（发送中）
+        if (hasPendingSends) {
+            const uniquePending = [...new Set(item.pendingSends)];
+            uniquePending.forEach(channel => {
                 const shortName = channel.substring(0, 5);
-                statuses.push(`<span class="status-item telegram-tag">✓ Telegram: ${escapeHtml(shortName)}</span>`);
+                statuses.push(`<span class="status-item pending">⏳ Telegram: ${escapeHtml(shortName)}</span>`);
             });
         }
 
@@ -902,7 +905,7 @@ if (publishTgBtn) {
         }
 
         publishTgBtn.disabled = true;
-        publishTgBtn.textContent = '⏳ 发布中...';
+        publishTgBtn.textContent = '⏳ ...';
 
         let channelNameText = '';
         if (tgChannelSelect.selectedIndex >= 0) {
@@ -915,55 +918,73 @@ if (publishTgBtn) {
         }
         const saveId = currentSaveId;
 
-        try {
-            const response = await fetch('/api/telegram/publish', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: contentToPublish,
-                    channel: channel,
-                    saveId: saveId,
-                    type: 'note',
-                    channelName: channelNameText
-                })
-            });
-
-            const data = await response.json();
-
-            if (data.ok) {
-                alert('✅ 发布成功！');
-
-                // 查找或创建历史记录项目，并同步本地状态更新 UI
-                let existingItem = timeline.find(item => item.id === saveId);
-                if (!existingItem) {
-                    existingItem = {
-                        id: saveId,
-                        timestamp: new Date().toISOString(),
-                        type: 'note',
-                        content: contentToPublish,
-                        status: {},
-                        telegramSends: [channelNameText],
-                        pending: false
-                    };
-                    timeline.unshift(existingItem);
-                } else {
-                    if (!existingItem.telegramSends) existingItem.telegramSends = [];
-                    if (!existingItem.telegramSends.includes(channelNameText)) {
-                        existingItem.telegramSends.push(channelNameText);
-                    }
-                }
-
-                // 局部渲染更新
-                renderTimeline();
-            } else {
-                alert('发布失败: ' + (data.error || '未知错误'));
+        // 立即更新 UI (前端虚拟 Pending 状态)
+        let existingItem = timeline.find(item => item.id === saveId);
+        if (!existingItem) {
+            existingItem = {
+                id: saveId,
+                timestamp: new Date().toISOString(),
+                type: 'note',
+                content: contentToPublish,
+                status: {},
+                telegramSends: [],
+                pendingSends: [channelNameText],
+                pending: false
+            };
+            timeline.unshift(existingItem);
+        } else {
+            if (!existingItem.pendingSends) existingItem.pendingSends = [];
+            if (!existingItem.pendingSends.includes(channelNameText)) {
+                existingItem.pendingSends.push(channelNameText);
             }
-        } catch (error) {
-            alert('发布失败: ' + error.message);
-        } finally {
+        }
+        renderTimeline();
+
+        // 1 秒后释放发布按钮，允许继续操作
+        setTimeout(() => {
             publishTgBtn.disabled = false;
             publishTgBtn.textContent = '📤 发布 TG';
-        }
+        }, 1000);
+
+        // 异步背景发布（不 blocking UI）
+        fetch('/api/telegram/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                content: contentToPublish,
+                channel: channel,
+                saveId: saveId,
+                type: 'note',
+                channelName: channelNameText
+            })
+        }).then(async response => {
+            const data = await response.json();
+
+            // 清理对应项的 Pending 状态
+            const currentItem = timeline.find(item => item.id === saveId);
+            if (currentItem && currentItem.pendingSends) {
+                currentItem.pendingSends = currentItem.pendingSends.filter(c => c !== channelNameText);
+            }
+
+            if (data.ok) {
+                if (currentItem) {
+                    if (!currentItem.telegramSends) currentItem.telegramSends = [];
+                    if (!currentItem.telegramSends.includes(channelNameText)) {
+                        currentItem.telegramSends.push(channelNameText);
+                    }
+                }
+            } else {
+                alert('发送到 ' + channelNameText + ' 失败: ' + (data.error || '未知错误'));
+            }
+            renderTimeline();
+        }).catch(error => {
+            const currentItem = timeline.find(item => item.id === saveId);
+            if (currentItem && currentItem.pendingSends) {
+                currentItem.pendingSends = currentItem.pendingSends.filter(c => c !== channelNameText);
+            }
+            alert('发送到 ' + channelNameText + ' 失败: ' + error.message);
+            renderTimeline();
+        });
     });
 }
 
@@ -985,7 +1006,7 @@ if (publishTgDiaryBtn) {
         }
 
         publishTgDiaryBtn.disabled = true;
-        publishTgDiaryBtn.textContent = '⏳ 发布中...';
+        publishTgDiaryBtn.textContent = '⏳ ...';
 
         let channelNameText = '';
         if (tgChannelSelectDiary.selectedIndex >= 0) {
@@ -998,55 +1019,73 @@ if (publishTgDiaryBtn) {
         }
         const saveId = currentSaveId;
 
-        try {
-            const response = await fetch('/api/telegram/publish', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: content,
-                    channel: channel,
-                    saveId: saveId,
-                    type: 'diary',
-                    channelName: channelNameText
-                })
-            });
-
-            const data = await response.json();
-
-            if (data.ok) {
-                alert('✅ 发布成功！');
-
-                // 查找或创建历史记录项目，并同步本地状态更新 UI
-                let existingItem = timeline.find(item => item.id === saveId);
-                if (!existingItem) {
-                    existingItem = {
-                        id: saveId,
-                        timestamp: new Date().toISOString(),
-                        type: 'diary',
-                        content: content,
-                        status: {},
-                        telegramSends: [channelNameText],
-                        pending: false
-                    };
-                    timeline.unshift(existingItem);
-                } else {
-                    if (!existingItem.telegramSends) existingItem.telegramSends = [];
-                    if (!existingItem.telegramSends.includes(channelNameText)) {
-                        existingItem.telegramSends.push(channelNameText);
-                    }
-                }
-
-                // 局部渲染更新
-                renderTimeline();
-            } else {
-                alert('发布失败: ' + (data.error || '未知错误'));
+        // 立即更新 UI (前端虚拟 Pending 状态)
+        let existingItem = timeline.find(item => item.id === saveId);
+        if (!existingItem) {
+            existingItem = {
+                id: saveId,
+                timestamp: new Date().toISOString(),
+                type: 'diary',
+                content: content,
+                status: {},
+                telegramSends: [],
+                pendingSends: [channelNameText],
+                pending: false
+            };
+            timeline.unshift(existingItem);
+        } else {
+            if (!existingItem.pendingSends) existingItem.pendingSends = [];
+            if (!existingItem.pendingSends.includes(channelNameText)) {
+                existingItem.pendingSends.push(channelNameText);
             }
-        } catch (error) {
-            alert('发布失败: ' + error.message);
-        } finally {
+        }
+        renderTimeline();
+
+        // 1 秒后释放发布按钮，允许继续操作
+        setTimeout(() => {
             publishTgDiaryBtn.disabled = false;
             publishTgDiaryBtn.textContent = '📤 发布到 Telegram';
-        }
+        }, 1000);
+
+        // 异步背景发布
+        fetch('/api/telegram/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                content: content,
+                channel: channel,
+                saveId: saveId,
+                type: 'diary',
+                channelName: channelNameText
+            })
+        }).then(async response => {
+            const data = await response.json();
+
+            // 清理对应项的 Pending 状态
+            const currentItem = timeline.find(item => item.id === saveId);
+            if (currentItem && currentItem.pendingSends) {
+                currentItem.pendingSends = currentItem.pendingSends.filter(c => c !== channelNameText);
+            }
+
+            if (data.ok) {
+                if (currentItem) {
+                    if (!currentItem.telegramSends) currentItem.telegramSends = [];
+                    if (!currentItem.telegramSends.includes(channelNameText)) {
+                        currentItem.telegramSends.push(channelNameText);
+                    }
+                }
+            } else {
+                alert('发送到 ' + channelNameText + ' 失败: ' + (data.error || '未知错误'));
+            }
+            renderTimeline();
+        }).catch(error => {
+            const currentItem = timeline.find(item => item.id === saveId);
+            if (currentItem && currentItem.pendingSends) {
+                currentItem.pendingSends = currentItem.pendingSends.filter(c => c !== channelNameText);
+            }
+            alert('发送到 ' + channelNameText + ' 失败: ' + error.message);
+            renderTimeline();
+        });
     });
 }
 

@@ -30,9 +30,13 @@ async function initDataFiles() {
       const filePath = path.join(dataDir, file);
       try {
         await fsPromises.access(filePath);
-      } catch (e) {
-        await fsPromises.writeFile(filePath, JSON.stringify(defaultData, null, 2), 'utf-8');
-        console.log(`[Init] Created default ${file}`);
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          await fsPromises.writeFile(filePath, JSON.stringify(defaultData, null, 2), 'utf-8');
+          console.log(`[Init] Created default ${file}`);
+        } else {
+          console.error(`[Init] File access error for ${file}:`, err);
+        }
       }
     }
   } catch (error) {
@@ -1314,7 +1318,7 @@ app.post('/api/telegram/publish', async (req, res) => {
           error: '发布超时'
         });
       }
-    }, 10000);
+    }, 60000);
   } catch (error) {
     res.status(500).json({
       ok: false,
