@@ -1,0 +1,1792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚙️ 设置 - Journal Sync</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      color: #333;
+    }
+
+    .back-btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .back-btn:hover {
+      background: #5568d3;
+    }
+
+    .tabs {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      display: flex;
+      gap: 12px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      background: white;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.3s;
+    }
+
+    .tab-btn:hover {
+      border-color: #667eea;
+    }
+
+    .tab-btn.active {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #333;
+      font-size: 14px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 14px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 16px;
+      width: 100%;
+    }
+
+    .btn-primary:hover {
+      background: #5568d3;
+    }
+
+    .rules-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .rule-item {
+      background: #f5f5f5;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 16px;
+      cursor: move;
+      transition: all 0.3s;
+    }
+
+    .rule-item:hover {
+      border-color: #667eea;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .rule-item.dragging {
+      opacity: 0.5;
+    }
+
+    .rule-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .rule-order {
+      background: #667eea;
+      color: white;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .rule-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 20px;
+      padding: 4px 8px;
+      transition: transform 0.2s;
+    }
+
+    .btn-icon:hover {
+      transform: scale(1.2);
+    }
+
+    .rule-content {
+      color: #666;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .add-rule-btn {
+      background: #4caf50;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      width: 100%;
+    }
+
+    .add-rule-btn:hover {
+      background: #45a049;
+    }
+
+    .rule-form {
+      background: #f9f9f9;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .rule-form.show {
+      display: block;
+    }
+
+    .rule-form textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+    }
+
+    .rule-form textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .rule-form-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .rule-form-actions button {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .btn-save {
+      background: #4caf50;
+      color: white;
+    }
+
+    .btn-cancel {
+      background: #f44336;
+      color: white;
+    }
+
+    .success-message {
+      background: #e8f5e9;
+      border: 1px solid #4caf50;
+      color: #2e7d32;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .success-message.show {
+      display: block;
+    }
+
+    .info-box {
+      background: #e3f2fd;
+      border-left: 4px solid #2196f3;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #1565c0;
+    }
+
+    .folder-item {
+      position: relative;
+      padding: 3px 8px;
+      margin: 0;
+      border-radius: 3px;
+      transition: background 0.2s;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1.2;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .folder-item:hover {
+      background: #f0f0f0;
+      z-index: 10;
+    }
+
+    .folder-item:hover .folder-delete-btn {
+      opacity: 1;
+    }
+
+    .folder-indent {
+      display: inline-block;
+      width: 16px;
+      flex-shrink: 0;
+    }
+
+    .folder-icon {
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+
+    .folder-name {
+      flex: 1;
+      color: #333;
+      word-break: break-word;
+    }
+
+    .folder-delete-btn {
+      opacity: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px;
+      color: #f44336;
+      transition: opacity 0.2s, transform 0.2s;
+      flex-shrink: 0;
+    }
+
+    .folder-delete-btn:hover {
+      transform: scale(1.2);
+    }
+
+    .folder-add-zone {
+      position: relative;
+      height: 14px;
+      margin-top: -7px;
+      margin-bottom: -7px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+    }
+
+    .folder-add-zone::before {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 1px;
+      background: transparent;
+      transition: all 0.2s;
+    }
+
+    .folder-add-zone:hover::before {
+      background: #667eea;
+      border-top: 1px dashed #667eea;
+    }
+
+    .folder-add-zone::after {
+      content: '+';
+      position: absolute;
+      background: #667eea;
+      color: white;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      z-index: 1;
+    }
+
+    .folder-add-zone:hover::after {
+      display: flex;
+    }
+
+    .folder-add-dialog {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+
+    .folder-add-dialog.show {
+      display: flex;
+    }
+
+    .folder-add-dialog-content {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+    }
+
+    .folder-add-dialog h3 {
+      margin-bottom: 16px;
+      color: #333;
+      font-size: 18px;
+    }
+
+    .folder-add-dialog input {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .folder-add-dialog input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .folder-add-dialog-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .folder-add-dialog-actions button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .folder-list-container {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 8px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚙️ 设置</h1>
+      <a href="/" class="back-btn">← 返回主页</a>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('model')">🤖 大模型</button>
+      <button class="tab-btn" onclick="switchTab('diary')">📔 日记</button>
+      <button class="tab-btn" onclick="switchTab('note')">📄 笔记</button>
+    </div>
+
+    <!-- 大模型设置 -->
+    <div id="model-tab" class="tab-content active">
+      <div class="card">
+        <div id="modelSuccess" class="success-message"></div>
+
+        <div class="info-box">
+          💡 这里配置用于内容处理和智能分类的 AI 模型
+        </div>
+
+        <div class="form-group">
+          <label for="baseUrl">API 地址</label>
+          <input type="text" id="baseUrl" placeholder="https://api.openai.com/v1">
+        </div>
+
+        <div class="form-group">
+          <label for="apiKey">API 密钥</label>
+          <input type="text" id="apiKey" placeholder="sk-...">
+        </div>
+
+        <div class="form-group">
+          <label for="model">模型名称</label>
+          <input type="text" id="model" placeholder="gpt-4">
+        </div>
+
+        <button class="btn-primary" onclick="saveModelConfig()">💾 保存配置</button>
+
+        <div style="height: 12px;"></div>
+
+        <button class="btn-primary" onclick="testAiConnection()" style="background: #4caf50;">🔌 LLM 连通性测试</button>
+
+        <div id="testResult" style="margin-top: 16px; padding: 12px; border-radius: 8px; display: none;"></div>
+      </div>
+    </div>
+
+    <!-- 日记配置 -->
+    <div id="diary-tab" class="tab-content">
+      <div class="card">
+        <div id="diarySuccess" class="success-message"></div>
+
+        <div class="info-box">
+          💡 配置日记同步到各个平台的参数
+        </div>
+
+        <h3 style="margin-bottom: 16px; color: #667eea;">📁 Obsidian 配置</h3>
+        <div class="form-group">
+          <label for="diaryObsidianPath">Obsidian 存储路径（绝对路径）</label>
+          <input type="text" id="diaryObsidianPath" placeholder="/Users/username/Documents/Obsidian/日记">
+        </div>
+
+        <div id="flomo-config" style="display: none;">
+          <h3 style="margin-top: 24px; margin-bottom: 16px; color: #667eea;">🌸 flomo 配置</h3>
+          <div class="form-group">
+            <label for="flomoApi">flomo API Webhook</label>
+            <input type="text" id="flomoApi" placeholder="https://flomoapp.com/iwh/...">
+          </div>
+        </div>
+
+        <div id="memu-config" style="display: none;">
+          <h3 style="margin-top: 24px; margin-bottom: 16px; color: #667eea;">🧠 memU 配置</h3>
+          <div class="form-group">
+            <label for="memuBridgeScript">memU 桥接脚本路径（绝对路径）</label>
+            <input type="text" id="memuBridgeScript" placeholder="/Users/username/Documents/memu_bridge.py">
+          </div>
+          <div class="form-group">
+            <label for="memuUserId">memU 用户 ID</label>
+            <input type="text" id="memuUserId" placeholder="username">
+          </div>
+        </div>
+
+        <div id="telegram-config" style="display: none;">
+          <h3 style="margin-top: 24px; margin-bottom: 16px; color: #667eea;">✈️ Telegram 配置</h3>
+
+          <div class="form-group">
+            <label for="tgBotToken">Bot Token</label>
+            <input type="password" id="tgBotToken" placeholder="输入你的 Telegram Bot Token">
+          </div>
+
+          <button class="btn-primary" onclick="testTelegramConnection()" style="background: #4caf50; margin-bottom: 20px;">
+            🔌 测试连通性并获取频道列表
+          </button>
+
+          <div id="tgTestResult" style="margin-bottom: 20px; padding: 12px; border-radius: 8px; display: none;"></div>
+
+          <div class="form-group" id="tgChannelListGroup" style="display: none;">
+            <label for="tgChannelList">可用频道列表</label>
+            <select id="tgChannelList" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+              <option value="">请先测试连通性以获取频道列表</option>
+            </select>
+          </div>
+
+          <div class="info-box" style="margin-top: 16px;">
+            💡 <strong>提示</strong>：如果某些频道未出现在列表中，可能是因为：
+            <ul style="margin: 8px 0 0 20px; line-height: 1.8;">
+              <li>Bot 最近未在该频道发送过消息</li>
+              <li>频道是新添加的，还没有消息记录</li>
+            </ul>
+            <strong>解决方法</strong>：
+            <ul style="margin: 8px 0 0 20px; line-height: 1.8;">
+              <li>在每个频道发送一条测试消息（可以是任意内容）</li>
+              <li>然后重新点击"测试连通性"按钮刷新列表</li>
+            </ul>
+          </div>
+
+          <div class="form-group" style="margin-top: 20px;">
+            <label for="tgOptimizePrompt">生成 TG 发布格式的提示词</label>
+            <textarea id="tgOptimizePrompt" rows="30" style="width: 100%;" placeholder="自定义 AI 优化笔记为 Telegram 发布格式的提示词...&#10;&#10;留空则使用默认提示词"></textarea>
+            <small style="color: #666; font-size: 12px; display: block; margin-top: 4px;">
+              💡 这个提示词会告诉 AI 如何将笔记内容优化为适合 Telegram 发布的格式。你可以根据自己的风格自定义。
+            </small>
+          </div>
+        </div>
+
+        <div id="mem0-config" style="display: none;">
+          <h3 style="margin-top: 24px; margin-bottom: 16px; color: #667eea;">🧠 Mem0 配置</h3>
+
+          <div class="info-box">
+            💡 配置 OpenAI 兼容的 LLM API，用于任务提取和标签生成
+          </div>
+
+          <div class="form-group">
+            <label for="mem0BaseUrl">API Base URL</label>
+            <input type="text" id="mem0BaseUrl" placeholder="https://api.openai.com/v1">
+          </div>
+
+          <div class="form-group">
+            <label for="mem0ApiKey">API Key</label>
+            <input type="password" id="mem0ApiKey" placeholder="sk-...">
+          </div>
+
+          <div class="form-group">
+            <label for="mem0Model">模型名称</label>
+            <input type="text" id="mem0Model" placeholder="gpt-4o-mini">
+          </div>
+
+          <button class="btn-primary" onclick="testMem0Connection()" style="background: #4caf50; margin-bottom: 20px;">
+            🔌 测试连通性
+          </button>
+
+          <div id="mem0TestResult" style="margin-bottom: 20px; padding: 12px; border-radius: 8px; display: none;"></div>
+
+          <h3 style="margin-top: 24px; margin-bottom: 16px; color: #667eea;">🎴 洞察卡片开关</h3>
+
+          <div class="info-box">
+            💡 控制右侧显示哪些 Mem0 洞察卡片
+          </div>
+
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="mem0EmotionsEnabled" style="width: 20px; height: 20px;">
+              <span>😊 情绪卡片 - 分析过去7天的情感关键词</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="mem0MediaEnabled" style="width: 20px; height: 20px;">
+              <span>📚 书影音卡片 - 追踪关注的书籍、电影、音乐、游戏</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="mem0WorkEnabled" style="width: 20px; height: 20px;">
+              <span>💼 工作卡片 - 显示最近5件工作相关事项</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="mem0LifeEnabled" style="width: 20px; height: 20px;">
+              <span>🏡 生活卡片 - 显示最近5件生活相关事项</span>
+            </label>
+          </div>
+        </div>
+
+        <button class="btn-primary" onclick="saveDiaryConfig()">✅ 已自动保存</button>
+      </div>
+    </div>
+
+    <!-- 笔记配置 -->
+    <div id="note-tab" class="tab-content">
+      <div class="card">
+        <div id="noteSuccess" class="success-message"></div>
+
+        <h3 style="margin-bottom: 16px; color: #667eea;">📁 笔记存储路径</h3>
+        <div class="info-box">
+          💡 配置笔记 Vault 的绝对路径，用于文件夹索引扫描
+        </div>
+
+        <div class="form-group">
+          <label for="noteVaultPath">Vault 路径（绝对路径）</label>
+          <input type="text" id="noteVaultPath" placeholder="/Users/username/Documents/Obsidian">
+        </div>
+
+        <button class="btn-primary" onclick="saveNoteVaultPath()" style="margin-bottom: 24px;">💾 保存路径</button>
+
+        <h3 style="margin-top: 24px; margin-bottom: 16px; color: #667eea;">📋 分类规则</h3>
+        <div class="info-box">
+          💡 自定义 AI 分类规则，优先级从上到下。拖动可调整顺序。
+        </div>
+
+        <div class="rule-form" id="ruleForm">
+          <textarea id="ruleInput" placeholder="输入分类规则，例如：&#10;&#10;所有关于 AI 模型发布的新闻，应该放到 'T 工业技术/TP 自然技术 计算机技术/TP18 人工智能AI/TP181 人工智能AI 新闻' 下的对应厂商文件夹"></textarea>
+          <div class="rule-form-actions">
+            <button class="btn-save" onclick="saveRule()">✓ 保存</button>
+            <button class="btn-cancel" onclick="cancelRule()">✗ 取消</button>
+          </div>
+        </div>
+
+        <button class="add-rule-btn" onclick="showRuleForm()">+ 添加规则</button>
+
+        <div style="height: 20px;"></div>
+
+        <div class="rules-list" id="rulesList"></div>
+
+        <h3 style="margin-top: 32px; margin-bottom: 16px; color: #667eea;">📁 文件夹索引</h3>
+
+        <!-- 分类方法设置 -->
+        <div style="background: #f5f5f5; border-radius: 8px; padding: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span style="font-weight: 600; color: #333;">当前文件管理模式：</span>
+            <span id="currentMethod" style="color: #667eea; font-weight: 600;">中图法分类</span>
+          </div>
+          <button class="btn-icon" onclick="showMethodDialog()" style="background: #667eea; color: white; padding: 8px 16px; border-radius: 6px; font-size: 14px;">
+            ✏️ 修改分类方法
+          </button>
+        </div>
+
+        <!-- 更新索引按钮 -->
+        <button class="btn-primary" onclick="rebuildIndex()" style="background: #4caf50; margin-bottom: 20px;">
+          🔄 扫描并更新文件夹索引
+        </button>
+
+        <div class="info-box">
+          💡 管理文件夹索引列表。可以手动添加或删除文件夹，也可以点击"扫描并更新文件夹索引"从磁盘重新扫描。
+        </div>
+
+        <!-- 文件夹统计 -->
+        <div style="background: #e3f2fd; border-left: 4px solid #2196f3; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+          <span style="font-weight: 600; color: #1565c0;">文件夹总数：</span>
+          <span id="folderCount" style="color: #1565c0; font-weight: 600;">0</span>
+        </div>
+
+        <!-- 文件夹列表 -->
+        <div class="folder-list-container" id="foldersList"></div>
+      </div>
+    </div>
+
+    <!-- 添加文件夹对话框 -->
+    <div class="folder-add-dialog" id="folderAddDialog">
+      <div class="folder-add-dialog-content">
+        <h3>➕ 添加文件夹</h3>
+        <input type="text" id="folderAddInput" placeholder="输入文件夹名称，例如：新建文件夹">
+        <div style="background: #f5f5f5; padding: 8px; border-radius: 4px; margin-bottom: 16px; font-size: 12px; color: #666;">
+          <strong>插入位置：</strong><br>
+          <span id="folderAddPosition"></span>
+        </div>
+        <div class="folder-add-dialog-actions">
+          <button class="btn-save" onclick="confirmAddFolder()">✓ 添加</button>
+          <button class="btn-cancel" onclick="closeAddDialog()">✗ 取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let classificationRules = [];
+    let editingRuleIndex = -1;
+    let foldersList = [];
+
+    // 切换标签
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+      if (tab === 'model') {
+        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+        document.getElementById('model-tab').classList.add('active');
+        loadModelConfig();
+      } else if (tab === 'diary') {
+        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+        document.getElementById('diary-tab').classList.add('active');
+        loadDiaryConfig();
+        loadPluginStates();
+      } else if (tab === 'note') {
+        document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
+        document.getElementById('note-tab').classList.add('active');
+        loadNoteConfig();
+        loadRules();
+        loadFolders();
+        loadClassificationMethod();
+      }
+    }
+
+    // 加载日记配置
+    async function loadDiaryConfig() {
+      try {
+        const response = await fetch('/api/config/diary');
+        const data = await response.json();
+
+        if (data.ok && data.config) {
+          document.getElementById('diaryObsidianPath').value = data.config.obsidianPath || '';
+          document.getElementById('flomoApi').value = data.config.flomoApi || '';
+          document.getElementById('memuBridgeScript').value = data.config.memuBridgeScript || '';
+          document.getElementById('memuUserId').value = data.config.memuUserId || '';
+          document.getElementById('tgBotToken').value = data.config.tgBotToken || '';
+          document.getElementById('tgOptimizePrompt').value = data.config.tgOptimizePrompt || '';
+
+          // 加载 Mem0 配置
+          loadMem0Config();
+
+          // 加载频道列表
+          if (data.config.tgChannels) {
+            try {
+              const channels = JSON.parse(data.config.tgChannels);
+              if (channels && channels.length > 0) {
+                const channelList = document.getElementById('tgChannelList');
+                channelList.innerHTML = '<option value="">选择频道</option>' + channels.map(ch =>
+                  `<option value="${ch.id}">${ch.title}</option>`
+                ).join('');
+
+                // 设置默认选中的频道
+                if (data.config.tgDiaryChannel) {
+                  channelList.value = data.config.tgDiaryChannel;
+                }
+
+                document.getElementById('tgChannelListGroup').style.display = 'block';
+              }
+            } catch (e) {
+              console.error('解析频道列表失败:', e);
+            }
+          }
+
+          // 加载保存的频道（用于手动输入框）
+          if (data.config.tgDiaryChannel) {
+            const channel = data.config.tgDiaryChannel;
+            // 如果是频道 ID 或用户名格式，显示在手动输入框
+            if (channel.startsWith('-') || channel.startsWith('@')) {
+              document.getElementById('tgManualChannel').value = channel;
+            }
+          }
+        }
+
+        // 加载插件状态并显示/隐藏相关配置
+        await loadPluginStates();
+      } catch (error) {
+        console.error('加载日记配置失败:', error);
+      }
+    }
+
+    // 加载插件状态
+    async function loadPluginStates() {
+      try {
+        const response = await fetch('/api/plugins');
+        const data = await response.json();
+
+        if (data.ok && data.plugins) {
+          // 根据插件状态显示/隐藏配置区域
+          toggleConfigSection('flomo-config', data.plugins.flomo);
+          toggleConfigSection('memu-config', data.plugins.memu);
+          toggleConfigSection('telegram-config', data.plugins.telegram);
+          toggleConfigSection('mem0-config', data.plugins.mem0);
+        }
+      } catch (error) {
+        console.error('加载插件状态失败:', error);
+      }
+    }
+
+    // 切换配置区域显示/隐藏
+    function toggleConfigSection(sectionId, show) {
+      const section = document.getElementById(sectionId);
+      if (section) {
+        section.style.display = show ? 'block' : 'none';
+      }
+    }
+
+    // 自动保存单个配置项
+    async function autoSaveConfig(path, value) {
+      try {
+        await fetch('/api/config/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, value })
+        });
+        console.log(`[自动保存] ${path} = ${value}`);
+      } catch (error) {
+        console.error(`[自动保存失败] ${path}:`, error);
+      }
+    }
+
+    // 保存日记配置（安慰按钮，实际已自动保存）
+    async function saveDiaryConfig() {
+      showSuccess('diarySuccess', '✅ 配置已保存！（所有输入都会自动保存）');
+    }
+
+    // 加载笔记配置
+    async function loadNoteConfig() {
+      try {
+        const response = await fetch('/api/config/note');
+        const data = await response.json();
+
+        if (data.ok && data.config) {
+          document.getElementById('noteVaultPath').value = data.config.vaultPath || '';
+        }
+      } catch (error) {
+        console.error('加载笔记配置失败:', error);
+      }
+    }
+
+    // 保存笔记 Vault 路径
+    async function saveNoteVaultPath() {
+      const vaultPath = document.getElementById('noteVaultPath').value.trim();
+
+      if (!vaultPath) {
+        alert('请输入 Vault 路径');
+        return;
+      }
+
+      try {
+        await fetch('/api/config/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: 'note.vaultPath', value: vaultPath })
+        });
+
+        showSuccess('noteSuccess', 'Vault 路径保存成功！');
+      } catch (error) {
+        alert('保存路径失败: ' + error.message);
+      }
+    }
+
+    // 加载模型配置
+    async function loadModelConfig() {
+      try {
+        const response = await fetch('/api/config/full');
+        const data = await response.json();
+
+        // 直接使用返回的配置数据，不检查 ok 字段
+        if (data && data.config && data.config.ai) {
+          document.getElementById('baseUrl').value = data.config.ai?.baseUrl || '';
+          document.getElementById('apiKey').value = data.config.ai?.apiKey || '';
+          document.getElementById('model').value = data.config.ai?.model || '';
+        }
+      } catch (error) {
+        console.error('加载配置失败:', error);
+      }
+    }
+
+    // 保存模型配置
+    async function saveModelConfig() {
+      const baseUrl = document.getElementById('baseUrl').value.trim();
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const model = document.getElementById('model').value.trim();
+
+      if (!baseUrl || !apiKey || !model) {
+        alert('请填写所有配置项');
+        return;
+      }
+
+      try {
+        await fetch('/api/config/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: 'ai.baseUrl', value: baseUrl })
+        });
+
+        await fetch('/api/config/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: 'ai.apiKey', value: apiKey })
+        });
+
+        await fetch('/api/config/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: 'ai.model', value: model })
+        });
+
+        showSuccess('modelSuccess', '配置保存成功！');
+      } catch (error) {
+        alert('保存配置失败: ' + error.message);
+      }
+    }
+
+    // 测试 AI 连接
+    async function testAiConnection() {
+      const resultDiv = document.getElementById('testResult');
+      resultDiv.style.display = 'block';
+      resultDiv.style.background = '#e3f2fd';
+      resultDiv.style.border = '1px solid #2196f3';
+      resultDiv.style.color = '#1565c0';
+      resultDiv.textContent = '⏳ 正在测试连接...';
+
+      try {
+        const response = await fetch('/api/config/test-ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+          resultDiv.style.background = '#e8f5e9';
+          resultDiv.style.border = '1px solid #4caf50';
+          resultDiv.style.color = '#2e7d32';
+          resultDiv.innerHTML = `✅ 连接成功！<br>模型: ${data.model}<br>响应时间: ${data.duration}`;
+        } else {
+          resultDiv.style.background = '#ffebee';
+          resultDiv.style.border = '1px solid #f44336';
+          resultDiv.style.color = '#c62828';
+          resultDiv.innerHTML = `❌ 连接失败<br>错误: ${data.error || data.message}`;
+        }
+      } catch (error) {
+        resultDiv.style.background = '#ffebee';
+        resultDiv.style.border = '1px solid #f44336';
+        resultDiv.style.color = '#c62828';
+        resultDiv.textContent = '❌ 请求失败: ' + error.message;
+      }
+    }
+
+    // 加载分类规则
+    async function loadRules() {
+      try {
+        const response = await fetch('/api/classification-rules');
+        const data = await response.json();
+
+        if (data.ok) {
+          classificationRules = data.rules || [];
+          renderRules();
+        }
+      } catch (error) {
+        console.error('加载规则失败:', error);
+      }
+    }
+
+    // 渲染规则列表
+    function renderRules() {
+      const list = document.getElementById('rulesList');
+      list.innerHTML = '';
+
+      classificationRules.forEach((rule, index) => {
+        const item = document.createElement('div');
+        item.className = 'rule-item';
+        item.draggable = true;
+        item.dataset.index = index;
+
+        item.innerHTML = `
+          <div class="rule-header">
+            <div class="rule-order">${index + 1}</div>
+            <div class="rule-actions">
+              <button class="btn-icon" onclick="editRule(${index})" title="编辑">✏️</button>
+              <button class="btn-icon" onclick="deleteRule(${index})" title="删除">🗑️</button>
+            </div>
+          </div>
+          <div class="rule-content">${rule}</div>
+        `;
+
+        // 拖拽事件
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragend', handleDragEnd);
+
+        list.appendChild(item);
+      });
+    }
+
+    // 显示规则表单
+    function showRuleForm() {
+      document.getElementById('ruleForm').classList.add('show');
+      document.getElementById('ruleInput').value = '';
+      editingRuleIndex = -1;
+    }
+
+    // 取消规则
+    function cancelRule() {
+      document.getElementById('ruleForm').classList.remove('show');
+      document.getElementById('ruleInput').value = '';
+      editingRuleIndex = -1;
+    }
+
+    // 保存规则
+    async function saveRule() {
+      const rule = document.getElementById('ruleInput').value.trim();
+
+      if (!rule) {
+        alert('请输入规则内容');
+        return;
+      }
+
+      if (editingRuleIndex >= 0) {
+        classificationRules[editingRuleIndex] = rule;
+      } else {
+        classificationRules.push(rule);
+      }
+
+      await saveRulesToServer();
+      cancelRule();
+      renderRules();
+    }
+
+    // 编辑规则
+    function editRule(index) {
+      editingRuleIndex = index;
+      document.getElementById('ruleInput').value = classificationRules[index];
+      document.getElementById('ruleForm').classList.add('show');
+    }
+
+    // 删除规则
+    async function deleteRule(index) {
+      if (!confirm('确定要删除这条规则吗？')) return;
+
+      classificationRules.splice(index, 1);
+      await saveRulesToServer();
+      renderRules();
+    }
+
+    // 保存规则到服务器
+    async function saveRulesToServer() {
+      try {
+        const response = await fetch('/api/classification-rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rules: classificationRules })
+        });
+
+        // 检查响应状态
+        if (!response.ok) {
+          const text = await response.text();
+          console.error('服务器响应错误:', text);
+          alert('保存规则失败: HTTP ' + response.status);
+          return;
+        }
+
+        const data = await response.json();
+
+        if (data.ok) {
+          showSuccess('noteSuccess', '规则保存成功！');
+        } else {
+          alert('保存规则失败: ' + (data.error || data.message || '未知错误'));
+        }
+      } catch (error) {
+        alert('保存规则失败: ' + error.message);
+      }
+    }
+
+    // 显示成功消息
+    function showSuccess(id, message) {
+      const el = document.getElementById(id);
+      el.textContent = message;
+      el.classList.add('show');
+      setTimeout(() => {
+        el.classList.remove('show');
+      }, 3000);
+    }
+
+    // 拖拽相关
+    let draggedIndex = -1;
+
+    function handleDragStart(e) {
+      draggedIndex = parseInt(e.target.dataset.index);
+      e.target.classList.add('dragging');
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      const dropIndex = parseInt(e.target.closest('.rule-item').dataset.index);
+
+      if (draggedIndex !== dropIndex) {
+        const draggedItem = classificationRules[draggedIndex];
+        classificationRules.splice(draggedIndex, 1);
+        classificationRules.splice(dropIndex, 0, draggedItem);
+
+        saveRulesToServer();
+        renderRules();
+      }
+    }
+
+    function handleDragEnd(e) {
+      e.target.classList.remove('dragging');
+    }
+
+    // ========== 文件夹索引管理 ==========
+
+    let addFolderPosition = -1; // -1 表示在开头，其他表示在某个索引之后
+
+    // 加载文件夹列表
+    async function loadFolders() {
+      try {
+        const response = await fetch('/api/folders');
+        const data = await response.json();
+
+        if (data.ok) {
+          foldersList = data.folders || [];
+          document.getElementById('folderCount').textContent = data.count || 0;
+          renderFolders();
+        }
+      } catch (error) {
+        console.error('加载文件夹失败:', error);
+      }
+    }
+
+    // 计算文件夹层级
+    function getFolderLevel(folder) {
+      return (folder.match(/\//g) || []).length;
+    }
+
+    // 获取文件夹最后一级名称
+    function getFolderLastName(folder) {
+      const parts = folder.split('/');
+      return parts[parts.length - 1];
+    }
+
+    // 渲染文件夹列表
+    function renderFolders() {
+      const list = document.getElementById('foldersList');
+      list.innerHTML = '';
+
+      if (foldersList.length === 0) {
+        list.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">暂无文件夹</div>';
+        return;
+      }
+
+      // 在开头添加一个添加区域
+      const addZoneStart = document.createElement('div');
+      addZoneStart.className = 'folder-add-zone';
+      addZoneStart.onclick = () => showAddDialog(-1);
+      list.appendChild(addZoneStart);
+
+      foldersList.forEach((folder, index) => {
+        const level = getFolderLevel(folder);
+        const lastName = getFolderLastName(folder);
+
+        // 文件夹项
+        const item = document.createElement('div');
+        item.className = 'folder-item';
+
+        // 缩进
+        const indent = document.createElement('span');
+        indent.className = 'folder-indent';
+        indent.style.width = (level * 16) + 'px';
+        item.appendChild(indent);
+
+        // 图标
+        const icon = document.createElement('span');
+        icon.className = 'folder-icon';
+        icon.textContent = '📁';
+        item.appendChild(icon);
+
+        // 名称
+        const name = document.createElement('span');
+        name.className = 'folder-name';
+        name.textContent = lastName;
+        name.title = folder; // 完整路径作为 tooltip
+        item.appendChild(name);
+
+        // 删除按钮
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'folder-delete-btn';
+        deleteBtn.textContent = '🗑️';
+        deleteBtn.onclick = (e) => {
+          e.stopPropagation();
+          deleteFolder(folder);
+        };
+        item.appendChild(deleteBtn);
+
+        list.appendChild(item);
+
+        // 添加区域
+        const addZone = document.createElement('div');
+        addZone.className = 'folder-add-zone';
+        addZone.onclick = () => showAddDialog(index);
+        list.appendChild(addZone);
+      });
+    }
+
+    // 显示添加对话框
+    function showAddDialog(position) {
+      addFolderPosition = position;
+
+      let positionText = '';
+      if (position === -1) {
+        positionText = '在列表开头添加';
+      } else {
+        const currentFolder = foldersList[position];
+        const level = getFolderLevel(currentFolder);
+        const parentPath = currentFolder.split('/').slice(0, -1).join('/');
+
+        if (parentPath) {
+          positionText = `在 "${currentFolder}" 之后，作为 "${parentPath}" 的子文件夹`;
+        } else {
+          positionText = `在 "${currentFolder}" 之后，作为根级文件夹`;
+        }
+      }
+
+      document.getElementById('folderAddPosition').textContent = positionText;
+      document.getElementById('folderAddInput').value = '';
+      document.getElementById('folderAddDialog').classList.add('show');
+      document.getElementById('folderAddInput').focus();
+    }
+
+    // 关闭添加对话框
+    function closeAddDialog() {
+      document.getElementById('folderAddDialog').classList.remove('show');
+      addFolderPosition = -1;
+    }
+
+    // 确认添加文件夹
+    async function confirmAddFolder() {
+      const folderName = document.getElementById('folderAddInput').value.trim();
+
+      if (!folderName) {
+        alert('请输入文件夹名称');
+        return;
+      }
+
+      // 构建完整路径
+      let fullPath = '';
+      if (addFolderPosition === -1) {
+        // 在开头添加，作为根级文件夹
+        fullPath = folderName;
+      } else {
+        // 在某个文件夹之后添加
+        const currentFolder = foldersList[addFolderPosition];
+        const parentPath = currentFolder.split('/').slice(0, -1).join('/');
+
+        if (parentPath) {
+          fullPath = parentPath + '/' + folderName;
+        } else {
+          fullPath = folderName;
+        }
+      }
+
+      try {
+        const response = await fetch('/api/folders/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder: fullPath })
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+          showSuccess('noteSuccess', '文件夹添加成功！');
+          closeAddDialog();
+          await loadFolders();
+        } else {
+          alert('添加失败: ' + (data.error || '未知错误'));
+        }
+      } catch (error) {
+        alert('添加失败: ' + error.message);
+      }
+    }
+
+    // 删除文件夹
+    async function deleteFolder(folder) {
+      if (!confirm(`确定要删除文件夹 "${folder}" 吗？`)) return;
+
+      try {
+        const response = await fetch('/api/folders/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder })
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+          showSuccess('noteSuccess', '文件夹删除成功！');
+          await loadFolders();
+        } else {
+          alert('删除失败: ' + (data.error || '未知错误'));
+        }
+      } catch (error) {
+        alert('删除失败: ' + error.message);
+      }
+    }
+
+    // 重建索引
+    async function rebuildIndex() {
+      if (!confirm('确定要从磁盘重新扫描文件夹吗？这将覆盖当前的索引列表。')) return;
+
+      try {
+        const response = await fetch('/api/folders/rebuild', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+          showSuccess('noteSuccess', `索引已更新！共扫描到 ${data.count} 个文件夹。`);
+          await loadFolders();
+        } else {
+          alert('更新失败: ' + (data.error || '未知错误'));
+        }
+      } catch (error) {
+        alert('更新失败: ' + error.message);
+      }
+    }
+
+    // 加载分类方法
+    async function loadClassificationMethod() {
+      try {
+        const response = await fetch('/api/classification-method');
+        const data = await response.json();
+
+        if (data.ok) {
+          document.getElementById('currentMethod').textContent = data.method || '中图法分类';
+        }
+      } catch (error) {
+        console.error('加载分类方法失败:', error);
+      }
+    }
+
+    // 显示修改分类方法对话框
+    function showMethodDialog() {
+      const currentMethod = document.getElementById('currentMethod').textContent;
+      const newMethod = prompt('请输入新的分类方法名称：', currentMethod);
+
+      if (newMethod && newMethod.trim() && newMethod.trim() !== currentMethod) {
+        saveClassificationMethod(newMethod.trim());
+      }
+    }
+
+    // 保存分类方法
+    async function saveClassificationMethod(method) {
+      try {
+        const response = await fetch('/api/classification-method', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method })
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+          document.getElementById('currentMethod').textContent = method;
+          showSuccess('noteSuccess', '分类方法保存成功！');
+        } else {
+          alert('保存失败: ' + (data.error || '未知错误'));
+        }
+      } catch (error) {
+        alert('保存失败: ' + error.message);
+      }
+    }
+
+    // 测试 Telegram 连接并获取频道列表
+    async function testTelegramConnection() {
+      const botToken = document.getElementById('tgBotToken').value.trim();
+      const resultDiv = document.getElementById('tgTestResult');
+
+      if (!botToken) {
+        alert('请先输入 Bot Token');
+        return;
+      }
+
+      resultDiv.style.display = 'block';
+      resultDiv.style.background = '#e3f2fd';
+      resultDiv.style.border = '1px solid #2196f3';
+      resultDiv.style.color = '#1565c0';
+      resultDiv.textContent = '⏳ 正在测试连接并获取频道列表...';
+
+      try {
+        const response = await fetch('/api/telegram/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botToken })
+        });
+
+        const data = await response.json();
+
+        if (data.ok && data.channels) {
+          // 填充频道列表
+          const channelList = document.getElementById('tgChannelList');
+          channelList.innerHTML = '<option value="">选择频道</option>' + data.channels.map(ch =>
+            `<option value="${ch.id}">${ch.title} (${ch.type})</option>`
+          ).join('');
+
+          document.getElementById('tgChannelListGroup').style.display = 'block';
+
+          // 自动选择第一个频道
+          if (data.channels.length > 0) {
+            const firstChannel = data.channels[0];
+            channelList.value = firstChannel.id;
+          }
+
+          // 立即保存频道信息到配置
+          try {
+            // 保存频道列表
+            await fetch('/api/config/set', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                path: 'diary.tgChannels',
+                value: JSON.stringify(data.channels)
+              })
+            });
+
+            // 如果有频道，保存第一个为默认频道
+            if (data.channels.length > 0) {
+              await fetch('/api/config/set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  path: 'diary.tgDiaryChannel',
+                  value: data.channels[0].id
+                })
+              });
+            }
+
+            resultDiv.style.background = '#e8f5e9';
+            resultDiv.style.border = '1px solid #4caf50';
+            resultDiv.style.color = '#2e7d32';
+            resultDiv.innerHTML = `✅ 连接成功！找到 ${data.channels.length} 个可用频道，已自动保存`;
+          } catch (saveError) {
+            resultDiv.style.background = '#fff3cd';
+            resultDiv.style.border = '1px solid #ffc107';
+            resultDiv.style.color = '#856404';
+            resultDiv.innerHTML = `⚠️ 找到 ${data.channels.length} 个频道，但保存失败: ${saveError.message}`;
+          }
+        } else {
+          resultDiv.style.background = '#ffebee';
+          resultDiv.style.border = '1px solid #f44336';
+          resultDiv.style.color = '#c62828';
+          resultDiv.innerHTML = `❌ 连接失败<br>错误: ${data.error || data.message}`;
+        }
+      } catch (error) {
+        resultDiv.style.background = '#ffebee';
+        resultDiv.style.border = '1px solid #f44336';
+        resultDiv.style.color = '#c62828';
+        resultDiv.textContent = '❌ 请求失败: ' + error.message;
+      }
+    }
+
+    // 加载 Mem0 配置
+    async function loadMem0Config() {
+      try {
+        const response = await fetch('/api/mem0/config');
+        const data = await response.json();
+
+        if (data.ok && data.config) {
+          document.getElementById('mem0BaseUrl').value = data.config.llm?.config?.base_url || '';
+          document.getElementById('mem0ApiKey').value = data.config.llm?.config?.api_key || '';
+          document.getElementById('mem0Model').value = data.config.llm?.config?.model || '';
+        }
+
+        // 加载洞察卡片开关状态
+        const configResponse = await fetch('/api/config/diary');
+        const configData = await configResponse.json();
+
+        if (configData.ok && configData.config) {
+          const insights = configData.config.mem0Insights || {};
+          document.getElementById('mem0EmotionsEnabled').checked = insights.emotions !== false;
+          document.getElementById('mem0MediaEnabled').checked = insights.media !== false;
+          document.getElementById('mem0WorkEnabled').checked = insights.work !== false;
+          document.getElementById('mem0LifeEnabled').checked = insights.life !== false;
+        }
+      } catch (error) {
+        console.error('加载 Mem0 配置失败:', error);
+      }
+    }
+
+    // 保存 Mem0 配置（静默版本，不显示提示）
+    async function saveMem0ConfigSilent() {
+      const baseUrl = document.getElementById('mem0BaseUrl').value.trim();
+      const apiKey = document.getElementById('mem0ApiKey').value.trim();
+      const model = document.getElementById('mem0Model').value.trim();
+
+      if (!baseUrl || !apiKey || !model) {
+        return;
+      }
+
+      const response = await fetch('/api/mem0/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          llm: {
+            provider: 'openai',
+            config: {
+              base_url: baseUrl,
+              api_key: apiKey,
+              model: model
+            }
+          }
+        })
+      });
+
+      const data = await response.json();
+      if (!data.ok) {
+        throw new Error(data.error || '保存配置失败');
+      }
+    }
+
+    // 保存 Mem0 配置
+    async function saveMem0Config() {
+      const baseUrl = document.getElementById('mem0BaseUrl').value.trim();
+      const apiKey = document.getElementById('mem0ApiKey').value.trim();
+      const model = document.getElementById('mem0Model').value.trim();
+
+      if (!baseUrl || !apiKey || !model) {
+        alert('请填写所有 Mem0 配置项');
+        return;
+      }
+
+      try {
+        await saveMem0ConfigSilent();
+
+        const resultDiv = document.getElementById('mem0TestResult');
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = '#e8f5e9';
+        resultDiv.style.border = '1px solid #4caf50';
+        resultDiv.style.color = '#2e7d32';
+        resultDiv.textContent = '✅ Mem0 配置保存成功！';
+        setTimeout(() => {
+          resultDiv.style.display = 'none';
+        }, 3000);
+      } catch (error) {
+        alert('保存失败: ' + error.message);
+      }
+    }
+
+    // 测试 Mem0 连接
+    async function testMem0Connection() {
+      const baseUrl = document.getElementById('mem0BaseUrl').value.trim();
+      const apiKey = document.getElementById('mem0ApiKey').value.trim();
+      const model = document.getElementById('mem0Model').value.trim();
+      const resultDiv = document.getElementById('mem0TestResult');
+
+      if (!baseUrl || !apiKey || !model) {
+        alert('请先填写所有配置项');
+        return;
+      }
+
+      resultDiv.style.display = 'block';
+      resultDiv.style.background = '#e3f2fd';
+      resultDiv.style.border = '1px solid #2196f3';
+      resultDiv.style.color = '#1565c0';
+      resultDiv.textContent = '⏳ 正在测试连接...';
+
+      try {
+        // 先保存配置（静默保存）
+        await saveMem0ConfigSilent();
+
+        // 然后测试连接
+        const response = await fetch('/api/mem0/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.ok && data.success) {
+          resultDiv.style.background = '#e8f5e9';
+          resultDiv.style.border = '1px solid #4caf50';
+          resultDiv.style.color = '#2e7d32';
+          resultDiv.textContent = '✅ 连接成功！Mem0 配置正常';
+        } else {
+          resultDiv.style.background = '#ffebee';
+          resultDiv.style.border = '1px solid #f44336';
+          resultDiv.style.color = '#c62828';
+          resultDiv.textContent = '❌ 连接失败: ' + (data.error || '未知错误');
+        }
+      } catch (error) {
+        resultDiv.style.background = '#ffebee';
+        resultDiv.style.border = '1px solid #f44336';
+        resultDiv.style.color = '#c62828';
+        resultDiv.textContent = '❌ 请求失败: ' + error.message;
+      }
+    }
+
+    // 设置自动保存监听器
+    function setupAutoSave() {
+      // 日记配置输入框
+      const diaryInputs = [
+        { id: 'diaryObsidianPath', path: 'diary.obsidianPath' },
+        { id: 'flomoApi', path: 'diary.flomoApi' },
+        { id: 'memuBridgeScript', path: 'diary.memuBridgeScript' },
+        { id: 'memuUserId', path: 'diary.memuUserId' },
+        { id: 'tgBotToken', path: 'diary.tgBotToken' },
+        { id: 'tgOptimizePrompt', path: 'diary.tgOptimizePrompt' }
+      ];
+
+      // Mem0 配置输入框
+      const mem0Inputs = [
+        { id: 'mem0BaseUrl', handler: saveMem0ConfigAuto },
+        { id: 'mem0ApiKey', handler: saveMem0ConfigAuto },
+        { id: 'mem0Model', handler: saveMem0ConfigAuto }
+      ];
+
+      // Mem0 洞察卡片开关
+      const mem0InsightsToggles = [
+        { id: 'mem0EmotionsEnabled', path: 'mem0Insights.emotions' },
+        { id: 'mem0MediaEnabled', path: 'mem0Insights.media' },
+        { id: 'mem0WorkEnabled', path: 'mem0Insights.work' },
+        { id: 'mem0LifeEnabled', path: 'mem0Insights.life' }
+      ];
+
+      // 为日记配置添加自动保存
+      diaryInputs.forEach(({ id, path }) => {
+        const element = document.getElementById(id);
+        if (element) {
+          // 使用 input 事件实时保存
+          element.addEventListener('input', debounce(() => {
+            const value = element.value.trim();
+            autoSaveConfig(path, value);
+          }, 1000)); // 1秒防抖
+        }
+      });
+
+      // 为 Mem0 配置添加自动保存
+      mem0Inputs.forEach(({ id, handler }) => {
+        const element = document.getElementById(id);
+        if (element) {
+          element.addEventListener('input', debounce(handler, 1000));
+        }
+      });
+
+      // 为 Mem0 洞察卡片开关添加自动保存
+      mem0InsightsToggles.forEach(({ id, path }) => {
+        const element = document.getElementById(id);
+        if (element) {
+          element.addEventListener('change', () => {
+            const value = element.checked;
+            autoSaveConfig(path, value);
+          });
+        }
+      });
+
+      // Telegram 频道选择自动保存
+      const tgChannelList = document.getElementById('tgChannelList');
+      if (tgChannelList) {
+        tgChannelList.addEventListener('change', () => {
+          const value = tgChannelList.value.trim();
+          autoSaveConfig('diary.tgDiaryChannel', value);
+        });
+      }
+    }
+
+    // 防抖函数
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    // Mem0 配置自动保存
+    async function saveMem0ConfigAuto() {
+      const baseUrl = document.getElementById('mem0BaseUrl').value.trim();
+      const apiKey = document.getElementById('mem0ApiKey').value.trim();
+      const model = document.getElementById('mem0Model').value.trim();
+
+      // 只有三个字段都填写了才保存
+      if (baseUrl && apiKey && model) {
+        try {
+          const response = await fetch('/api/mem0/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              llm: {
+                provider: 'openai',
+                config: {
+                  base_url: baseUrl,
+                  api_key: apiKey,
+                  model: model
+                }
+              }
+            })
+          });
+
+          const data = await response.json();
+          if (data.ok) {
+            console.log('[自动保存] Mem0 配置已保存');
+          }
+        } catch (error) {
+          console.error('[自动保存失败] Mem0 配置:', error);
+        }
+      }
+    }
+
+    // 页面加载时
+    loadModelConfig();
+    setupAutoSave();
+  </script>
+</body>
+</html>

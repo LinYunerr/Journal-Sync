@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+
+# Data files
+data/config.json
+data/history.json
+
+# Plugin configs (sensitive information)
+Plugin/*/config.json
+
+# Backups
+backups/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

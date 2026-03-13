@@ -1,0 +1,13 @@
+{
+  "botToken": "YOUR_BOT_TOKEN_HERE",
+  "channels": [
+    {
+      "id": "CHANNEL_ID",
+      "title": "频道名称",
+      "type": "channel",
+      "username": "@channel_username"
+    }
+  ],
+  "defaultChannel": "CHANNEL_ID",
+  "optimizePrompt": "你的自定义提示词..."
+}

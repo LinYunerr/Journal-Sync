@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📋 所有记录 - Journal Sync</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .back-btn {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .back-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .timeline-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .timeline-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .timeline-card-type {
+            display: inline-block;
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .timeline-card-type.diary {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .timeline-card-type.note {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .timeline-card-time {
+            color: #999;
+            font-size: 13px;
+        }
+
+        .timeline-card-content {
+            color: #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-bottom: 12px;
+        }
+
+        .timeline-card-status {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .status-item.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-item.failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-item.pending {
+            background: #e0e0e0;
+            color: #999;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: white;
+        }
+
+        .empty-state p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 所有记录</h1>
+            <a href="/" class="back-btn">← 返回主页</a>
+        </div>
+
+        <div id="timelineContainer">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>加载历史记录...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let timeline = [];
+
+        // 加载所有历史记录
+        async function loadAllHistory() {
+            try {
+                const response = await fetch('/api/history?limit=1000');
+                const data = await response.json();
+
+                if (data.success) {
+                    timeline = data.history;
+                    renderTimeline();
+                }
+            } catch (error) {
+                console.error('Load history error:', error);
+                document.getElementById('timelineContainer').innerHTML =
+                    '<div class="empty-state"><p>加载历史记录失败</p></div>';
+            }
+        }
+
+        // 渲染时间线
+        function renderTimeline() {
+            const container = document.getElementById('timelineContainer');
+
+            if (timeline.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>还没有保存记录</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = timeline.map(item => createCard(item)).join('');
+        }
+
+        // 创建卡片 HTML
+        function createCard(item) {
+            const typeLabel = item.type === 'diary' ? '日记' : '笔记';
+            const typeClass = item.type === 'diary' ? 'diary' : 'note';
+            const time = new Date(item.timestamp).toLocaleString('zh-CN');
+
+            let statusHTML = '';
+            if (item.status) {
+                const statuses = [];
+
+                // Obsidian (总是显示)
+                const obsidianStatus = item.status.obsidian;
+                if (obsidianStatus === 'success' || obsidianStatus === true) {
+                    statuses.push('<span class="status-item success">✓ Obsidian</span>');
+                } else if (obsidianStatus === 'failed' || obsidianStatus === false) {
+                    statuses.push('<span class="status-item failed">✗ Obsidian</span>');
+                }
+
+                // flomo (跳过则不显示)
+                const flomoStatus = item.status.flomo;
+                if (flomoStatus !== 'skipped') {
+                    if (flomoStatus === 'success' || flomoStatus === true) {
+                        statuses.push('<span class="status-item success">✓ flomo</span>');
+                    } else if (flomoStatus === 'failed' || flomoStatus === false) {
+                        statuses.push('<span class="status-item failed">✗ flomo</span>');
+                    }
+                }
+
+                // nmem (跳过则不显示)
+                const nmemStatus = item.status.nmem;
+                if (nmemStatus !== 'skipped') {
+                    if (nmemStatus === 'success' || nmemStatus === true) {
+                        statuses.push('<span class="status-item success">✓ Nowledge Mem</span>');
+                    } else if (nmemStatus === 'failed' || nmemStatus === false) {
+                        statuses.push('<span class="status-item failed">✗ Nowledge Mem</span>');
+                    }
+                }
+
+                // memu (跳过则不显示)
+                const memuStatus = item.status.memu;
+                if (memuStatus !== 'skipped') {
+                    if (memuStatus === 'success' || memuStatus === true) {
+                        statuses.push('<span class="status-item success">✓ memU</span>');
+                    } else if (memuStatus === 'failed' || memuStatus === false) {
+                        statuses.push('<span class="status-item failed">✗ memU</span>');
+                    }
+                }
+
+                // telegram (跳过则不显示)
+                const telegramStatus = item.status.telegram;
+                if (telegramStatus !== 'skipped') {
+                    if (telegramStatus === 'success' || telegramStatus === true) {
+                        statuses.push('<span class="status-item success">✓ Telegram</span>');
+                    } else if (telegramStatus === 'failed' || telegramStatus === false) {
+                        statuses.push('<span class="status-item failed">✗ Telegram</span>');
+                    }
+                }
+
+                if (statuses.length > 0) {
+                    statusHTML = `<div class="timeline-card-status">${statuses.join('')}</div>`;
+                }
+            }
+
+            return `
+                <div class="timeline-card">
+                    <div class="timeline-card-header">
+                        <span class="timeline-card-type ${typeClass}">${typeLabel}</span>
+                        <span class="timeline-card-time">${time}</span>
+                    </div>
+                    <div class="timeline-card-content">${escapeHtml(item.content)}</div>
+                    ${statusHTML}
+                </div>
+            `;
+        }
+
+        // 转义 HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 页面加载完成后初始化
+        loadAllHistory();
+    </script>
+</body>
+</html>

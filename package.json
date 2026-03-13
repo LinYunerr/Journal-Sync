@@ -1,0 +1,19 @@
+{
+  "name": "journal-sync",
+  "version": "2.0.0",
+  "description": "日记笔记同步工具 - 支持 Obsidian、flomo、nmem、memU、Telegram",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/web/server.js",
+    "stop": "./stop.sh",
+    "dev": "node src/web/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  }
+}

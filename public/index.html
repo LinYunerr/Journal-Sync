@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📝 Journal Sync - 日记笔记同步工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .content-wrapper {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        .main-content {
+            width: 900px;
+            flex-shrink: 0;
+        }
+
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 1280px) {
+            .content-wrapper {
+                flex-direction: column;
+            }
+
+            .main-content {
+                width: 100%;
+            }
+
+            .sidebar {
+                width: 100%;
+            }
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.95;
+        }
+
+        .main-card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            margin-bottom: 30px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            border-bottom: 2px solid #e0e0e0;
+            align-items: center;
+        }
+
+        .tab {
+            padding: 12px 28px;
+            background: none;
+            border: none;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            color: #666;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab:hover:not(.active) {
+            color: #888;
+        }
+
+        .button-group-right {
+            margin-left: auto;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .settings-btn {
+            margin-bottom: -2px;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .settings-btn:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+        }
+
+        .input-section {
+            margin-bottom: 25px;
+        }
+
+        .input-section label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            margin-left: auto;
+            gap: 20px;
+        }
+
+        .flomo-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .flomo-toggle-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .flomo-slider {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #e0e0e0;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .flomo-slider.active {
+            background: #667eea;
+        }
+
+        .flomo-slider-button {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 11px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: all 0.3s;
+        }
+
+        .flomo-slider.active .flomo-slider-button {
+            left: 26px;
+        }
+
+        .mode-slider {
+            position: relative;
+            width: 100px;
+            height: 32px;
+            background: #e0e0e0;
+            border-radius: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .mode-slider-button {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 48px;
+            height: 28px;
+            background: white;
+            border-radius: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .mode-slider.summarize .mode-slider-button {
+            left: 50px;
+        }
+
+        .input-section textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 15px;
+            font-family: inherit;
+            resize: vertical;
+            transition: border-color 0.3s;
+        }
+
+        .input-section textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .options-section {
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+
+        .options-section label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #555;
+            cursor: pointer;
+        }
+
+        .options-section input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status-item {
+            display: inline-block;
+            margin-right: 15px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .status-item.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-item.failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-item.pending {
+            background: #e0e0e0;
+            color: #999;
+        }
+
+        .status-item.skipped {
+            background: #f0f0f0;
+            color: #aaa;
+            text-decoration: line-through;
+        }
+
+        .view-all-btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            margin-top: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+            text-decoration: none;
+        }
+
+        .view-all-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .timeline-section {
+            margin-top: 30px;
+        }
+
+        .timeline-header {
+            color: white;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            text-align: center;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .timeline-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .timeline-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .timeline-card-type {
+            display: inline-block;
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .timeline-card-type.diary {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .timeline-card-type.note {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .timeline-card-time {
+            color: #999;
+            font-size: 13px;
+        }
+
+        .timeline-card-content {
+            color: #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-bottom: 12px;
+        }
+
+        .timeline-card-status {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .timeline-card-status .status-item {
+            margin: 0;
+        }
+
+        .show-more-link {
+            display: inline-block;
+            margin-left: 8px;
+            color: #667eea;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .show-more-link:hover {
+            color: #5568d3;
+            text-decoration: underline;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: white;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.7;
+        }
+
+        .empty-state p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        /* 任务列表样式 */
+        .tasks-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .tasks-header {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .task-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            transition: all 0.3s;
+        }
+
+        .task-item:hover {
+            background: #e9ecef;
+        }
+
+        .task-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .task-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+            word-wrap: break-word;
+        }
+
+        .task-desc {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        .task-delete {
+            background: #f44336;
+            color: white;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            flex-shrink: 0;
+            transition: all 0.3s;
+        }
+
+        .task-delete:hover {
+            background: #d32f2f;
+            transform: scale(1.1);
+        }
+
+        .tasks-empty {
+            text-align: center;
+            padding: 30px 20px;
+            color: #999;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            color: white;
+        }
+
+        .stat-card .number {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        /* 情绪卡片样式 */
+        .emotion-keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .emotion-keyword {
+            padding: 6px 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+
+        /* 媒体项样式 */
+        .media-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: all 0.3s;
+        }
+
+        .media-item:hover {
+            background: #e9ecef;
+        }
+
+        .media-type {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .media-type.movie {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .media-type.book {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .media-type.music {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .media-type.game {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        .media-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .media-desc {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        /* 工作/生活项样式 */
+        .insight-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: all 0.3s;
+        }
+
+        .insight-item:hover {
+            background: #e9ecef;
+        }
+
+        .insight-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .insight-desc {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        .insight-meta {
+            font-size: 0.8em;
+            color: #999;
+            margin-top: 6px;
+        }
+
+        /* 历史记录项样式 */
+        .history-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .history-item-content {
+            flex: 1;
+        }
+
+        .history-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .history-item-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .history-item-btn.show {
+            background: #667eea;
+            color: white;
+        }
+
+        .history-item-btn.hide {
+            background: #e0e0e0;
+            color: #666;
+        }
+
+        .history-item-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 Journal Sync</h1>
+            <p>记录生活，同步到 Obsidian、flomo、Nowledge Mem、memU</p>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="number" id="stat-total">0</div>
+                <div class="label">总记录</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-diary">0</div>
+                <div class="label">日记</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-note">0</div>
+                <div class="label">笔记</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-today">0</div>
+                <div class="label">今日</div>
+            </div>
+        </div>
+
+        <!-- 两列布局 -->
+        <div class="content-wrapper">
+            <!-- 左侧主内容 -->
+            <div class="main-content">
+                <div class="main-card">
+            <div class="tabs">
+                <button class="tab active" data-type="diary">📔 日记</button>
+                <button class="tab" data-type="note">📄 笔记</button>
+                <div class="button-group-right">
+                    <a href="/plugins.html" class="settings-btn">🔌 插件</a>
+                    <a href="/settings.html" class="settings-btn">⚙️ 设置</a>
+                </div>
+            </div>
+
+            <div class="input-section">
+                <label for="contentInput">
+                    <span>输入内容</span>
+                    <div class="mode-toggle">
+                        <!-- flomo 开关 -->
+                        <div class="flomo-toggle" id="flomoToggle" style="display: none;">
+                            <span class="flomo-toggle-label">flomo</span>
+                            <div class="flomo-slider" id="flomoSlider">
+                                <div class="flomo-slider-button"></div>
+                            </div>
+                        </div>
+                        <!-- 原文/总结开关 -->
+                        <div id="modeToggle" style="display: none;">
+                            <div class="mode-slider" id="modeSlider">
+                                <div class="mode-slider-button" id="modeSliderButton">原文</div>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+                <textarea
+                    id="contentInput"
+                    placeholder="在这里输入你的日记或笔记...&#10;&#10;支持多行输入，粘贴长文本也没问题 😊"
+                ></textarea>
+            </div>
+
+            <!-- Telegram 发布区域（仅笔记模式显示） -->
+            <div id="telegramPublishSection" style="display: none; margin-bottom: 20px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
+                    <button class="btn" id="generateTgBtn" style="flex: 1; background: #0088cc; color: white;">
+                        ✨ 生成 TG 发布格式
+                    </button>
+                    <button class="btn" id="publishTgBtn" style="flex: 1; background: #0088cc; color: white;">
+                        📤 发布 TG
+                    </button>
+                    <select id="tgChannelSelect" style="flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-weight: 600;">
+                        <option value="">选择频道</option>
+                    </select>
+                </div>
+
+                <!-- TG 优化内容预览框 -->
+                <div id="tgPreviewSection" style="display: none;">
+                    <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: #333;">
+                        TG 发布内容（可编辑）
+                    </label>
+                    <textarea
+                        id="tgPreviewContent"
+                        style="width: 100%; min-height: 150px; padding: 15px; border: 2px solid #0088cc; border-radius: 10px; font-size: 15px; font-family: inherit; resize: vertical;"
+                        placeholder="点击"生成 TG 发布格式"后，AI 优化的内容将显示在这里..."
+                    ></textarea>
+                </div>
+            </div>
+
+            <!-- Telegram 选项（仅日记模式显示） -->
+            <div id="telegramOptionsSection" style="display: none; margin-bottom: 20px;">
+                <div style="display: flex; gap: 12px;">
+                    <button class="btn" id="publishTgDiaryBtn" style="flex: 1; background: #0088cc; color: white;">
+                        📤 发布到 Telegram
+                    </button>
+                    <select id="tgChannelSelectDiary" style="flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-weight: 600;">
+                        <option value="">选择频道</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" id="saveBtn">
+                    💾 保存到 Obsidian
+                </button>
+            </div>
+        </div>
+
+        <div class="timeline-section">
+            <h2 class="timeline-header">⏱️ 保存历史</h2>
+            <div id="timelineContainer">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>加载历史记录...</p>
+                </div>
+            </div>
+            <a href="/history.html" class="view-all-btn">📋 查看所有记录</a>
+        </div>
+            </div>
+
+            <!-- 右侧任务列表 -->
+            <div class="sidebar" id="tasksSidebar" style="display: none;">
+                <div class="tasks-card">
+                    <div class="tasks-header">✅ 任务列表</div>
+                    <div id="tasksContainer">
+                        <div class="tasks-empty">暂无任务</div>
+                    </div>
+                </div>
+
+                <!-- 情绪卡片 -->
+                <div class="tasks-card" id="emotionsCard" style="margin-top: 20px; display: none;">
+                    <div class="tasks-header">😊 本周情绪</div>
+                    <div id="emotionsContainer">
+                        <div class="tasks-empty">暂无数据</div>
+                    </div>
+                </div>
+
+                <!-- 书影音卡片 -->
+                <div class="tasks-card" id="mediaCard" style="margin-top: 20px; display: none;">
+                    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>📚 最近关注的书影音</span>
+                        <button id="mediaHistoryBtn" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;" title="查看历史">📜</button>
+                    </div>
+                    <div id="mediaContainer">
+                        <div class="tasks-empty">暂无数据</div>
+                    </div>
+                </div>
+
+                <!-- 工作卡片 -->
+                <div class="tasks-card" id="workCard" style="margin-top: 20px; display: none;">
+                    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>💼 工作</span>
+                        <button id="workHistoryBtn" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;" title="查看历史">📜</button>
+                    </div>
+                    <div id="workContainer">
+                        <div class="tasks-empty">暂无数据</div>
+                    </div>
+                </div>
+
+                <!-- 生活卡片 -->
+                <div class="tasks-card" id="lifeCard" style="margin-top: 20px; display: none;">
+                    <div class="tasks-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>🏡 生活</span>
+                        <button id="lifeHistoryBtn" style="background: none; border: none; cursor: pointer; font-size: 1.2em; color: #667eea;" title="查看历史">📜</button>
+                    </div>
+                    <div id="lifeContainer">
+                        <div class="tasks-empty">暂无数据</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 历史记录模态框 -->
+    <div id="historyModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; overflow: auto;">
+        <div style="background: white; max-width: 800px; margin: 50px auto; border-radius: 15px; padding: 30px; max-height: 80vh; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 id="historyModalTitle" style="margin: 0;">历史记录</h2>
+                <button id="closeHistoryModal" style="background: none; border: none; font-size: 2em; cursor: pointer; color: #999;">&times;</button>
+            </div>
+            <div id="historyModalContent"></div>
+        </div>
+    </div>
+
+    <script src="app.js?v=20260312-1"></script>
+</body>
+</html>
