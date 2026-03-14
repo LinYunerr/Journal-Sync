@@ -32,11 +32,18 @@ export async function execute({ content }) {
         return { success: false, error: 'Flomo API URL 未配置' };
     }
 
+    // 过滤掉 Markdown 图片引用（flomo 不支持图片上传）
+    const textContent = content.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
+
+    if (!textContent) {
+        return { success: true, skipped: true, note: '内容仅含图片，flomo 跳过发送' };
+    }
+
     try {
         const response = await fetch(config.apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content })
+            body: JSON.stringify({ content: textContent })
         });
 
         const result = await response.json();

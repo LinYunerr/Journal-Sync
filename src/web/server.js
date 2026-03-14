@@ -6,6 +6,7 @@ import { saveToObsidian, optimizeContent } from '../sync/journal-sync.js';
 import { promises as fsPromises } from 'fs';
 import ConfigManager from '../utils/config-manager.js';
 import PluginManager from '../sync/plugin-manager.js';
+import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,11 +52,46 @@ PluginManager.loadPlugins();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// multer 配置：内存存储，限制单张图片 20MB
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('只允许上传图片文件'));
+    }
+  }
+});
+
 // 中间件
 // 限制 CORS，防止跨站请求伪造利用本地服务 RCE
 app.use(cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../../public')));
+
+/**
+ * 从 Markdown 内容中提取图片引用，转换为绝对路径列表
+ * @param {string} content - 包含 ![...](assets/xxx) 的 markdown 内容
+ * @param {string} obsidianPath - obsidian 保存目录（绝对路径）
+ * @returns {{ text: string, images: string[] }}
+ */
+function parseContentImages(content, obsidianPath) {
+  // 匹配 ![任意文字](路径)，提取路径部分
+  const imageRegex = /!\[[^\]]*\]\(([^)]+)\)/g;
+  const images = [];
+  let match;
+  while ((match = imageRegex.exec(content)) !== null) {
+    const imgPath = match[1].trim();
+    // 转为绝对路径（支持相对路径如 assets/xxx.png）
+    const absPath = path.isAbsolute(imgPath)
+      ? imgPath
+      : path.join(obsidianPath, imgPath);
+    images.push(absPath);
+  }
+  return { text: content, images };
+}
 
 // 历史记录存储
 const HISTORY_FILE = path.join(__dirname, '../../data/history.json');
@@ -131,28 +167,182 @@ app.get('/api/health', (req, res) => {
 });
 
 /**
+ * 图片上传：保存到临时缓存目录 data/image-cache/（不直接写入 Obsidian）
+ * 只有在用户点击保存后，才会在 save-stream 中将缓存图片移入 obsidian/assets/
+ * 返回: { success, filename, previewUrl }
+ */
+const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
+
+app.post('/api/upload-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: '没有收到图片文件' });
+    }
+
+    // 确保缓存目录存在
+    await fsPromises.mkdir(IMAGE_CACHE_DIR, { recursive: true });
+
+    // 生成安全文件名：{YYYY-MM-DD}_{HHmmss}_{ms}_{originalname}
+    const now = new Date();
+    const datePrefix = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('-');
+    const timePrefix = [
+      String(now.getHours()).padStart(2, '0'),
+      String(now.getMinutes()).padStart(2, '0'),
+      String(now.getSeconds()).padStart(2, '0')
+    ].join('');
+    const ms = String(now.getMilliseconds()).padStart(3, '0');
+
+    // 对文件名做安全处理
+    const safeOriginal = req.file.originalname
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .substring(0, 80);
+    const filename = `${datePrefix}_${timePrefix}_${ms}_${safeOriginal}`;
+    const cachePath = path.join(IMAGE_CACHE_DIR, filename);
+
+    // 写入缓存目录
+    await fsPromises.writeFile(cachePath, req.file.buffer);
+
+    console.log(`[ImageUpload] 图片已缓存到: ${cachePath}`);
+
+    res.json({
+      success: true,
+      filename,
+      previewUrl: `/api/image-cache/${encodeURIComponent(filename)}`
+    });
+  } catch (error) {
+    console.error('[ImageUpload] 图片上传失败:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 图片预览：先查缓存目录，再查 obsidian/assets/ 目录
+ */
+app.get('/api/image-cache/:filename', async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    // 防止路径穿越
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ error: '非法文件名' });
+    }
+
+    // 1. 先查缓存目录
+    const cachePath = path.join(IMAGE_CACHE_DIR, filename);
+    try {
+      await fsPromises.access(cachePath);
+      return res.sendFile(cachePath);
+    } catch {}
+
+    // 2. 再查 obsidian/assets/ 目录
+    const config = await ConfigManager.loadConfig();
+    const obsidianPath = config?.diary?.obsidianPath
+      || config?.obsidianPath
+      || '/path/to/obsidian/notes';
+    const assetsPath = path.join(obsidianPath, 'assets', filename);
+    try {
+      await fsPromises.access(assetsPath);
+      return res.sendFile(assetsPath);
+    } catch {}
+
+    res.status(404).json({ error: '图片不存在' });
+  } catch (error) {
+    res.status(404).json({ error: '图片不存在' });
+  }
+});
+
+/**
+ * 确保图片出现在 obsidianPath/assets/ 目录（幂等）
+ * - 如果文件在缓存目录：移过去
+ * - 如果文件已在 assets 目录：直接用
+ * - 否则：跳过并打印 warning
+ * @param {string[]} filenames
+ * @param {string} obsidianPath
+ * @returns {string[]} assets 目录下的绝对路径列表
+ */
+async function ensureImagesInAssets(filenames, obsidianPath) {
+  if (!filenames || filenames.length === 0) return [];
+
+  const assetsDir = path.join(obsidianPath, 'assets');
+  await fsPromises.mkdir(assetsDir, { recursive: true });
+
+  const result = [];
+  for (const filename of filenames) {
+    const destPath = path.join(assetsDir, filename);
+
+    // 1. 已经在 assets 了，直接用
+    try {
+      await fsPromises.access(destPath);
+      result.push(destPath);
+      console.log(`[ImageAssets] 已在 assets: ${filename}`);
+      continue;
+    } catch {}
+
+    // 2. 在缓存目录，移过去
+    const cachePath = path.join(IMAGE_CACHE_DIR, filename);
+    try {
+      await fsPromises.access(cachePath);
+      await fsPromises.copyFile(cachePath, destPath);
+      await fsPromises.unlink(cachePath).catch(() => {});
+      result.push(destPath);
+      console.log(`[ImageAssets] 移动到 assets: ${filename}`);
+      continue;
+    } catch {}
+
+    console.warn(`[ImageAssets] 找不到图片: ${filename}`);
+  }
+  return result;
+}
+
+
+/**
  * 保存日记/笔记（流式响应，实时更新状态）
  */
 app.post('/api/save-stream', async (req, res) => {
   try {
-    const { content, type = 'diary', options = {}, saveId } = req.body;
+    const { content, type = 'diary', options = {}, saveId, imageFilenames = [] } = req.body;
 
-    if (!content || !content.trim()) return res.status(400).json({ error: '内容不能为空' });
+    if ((!content || !content.trim()) && imageFilenames.length === 0) {
+      return res.status(400).json({ error: '内容不能为空' });
+    }
     if (!['diary', 'note'].includes(type)) return res.status(400).json({ error: '类型必须是 diary 或 note' });
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const optimized = optimizeContent(content);
+    const optimized = optimizeContent(content || '');
     const config = await ConfigManager.loadConfig();
 
-    const obsidianResult = await saveToObsidian(optimized, type, options);
+    const obsidianPath = type === 'note'
+      ? (config?.note?.vaultPath || config?.obsidianPath || '/path/to/obsidian/notes')
+      : (config?.diary?.obsidianPath || config?.obsidianPath || '/path/to/obsidian/notes');
+
+    // 保存时：确保图片在 obsidianPath/assets/（幂等，无论图片在缓存还是已在 assets）
+    const movedImagePaths = await ensureImagesInAssets(imageFilenames, obsidianPath);
+
+    // 将图片的 Markdown 引用追加到 content 中（给 Obsidian 保存用）
+    let contentWithImages = optimized;
+    if (movedImagePaths.length > 0) {
+      const imageRefs = movedImagePaths.map(p => {
+        const fname = path.basename(p);
+        return `![image](assets/${fname})`;
+      }).join('\n');
+      contentWithImages = optimized
+        ? optimized + '\n\n' + imageRefs
+        : imageRefs;
+    }
+
+    const obsidianResult = await saveToObsidian(contentWithImages, type, options);
     res.write(`data: ${JSON.stringify({ type: 'status', plugin: 'obsidian', success: obsidianResult.success })}\n\n`);
 
+    // 插件收到原始文字 content + 图片绝对路径列表
     const pluginResults = await PluginManager.executePlugins(optimized, type, options, config, (plugin, success) => {
       res.write(`data: ${JSON.stringify({ type: 'status', plugin, success })}\n\n`);
-    });
+    }, movedImagePaths);
 
     const historyStatus = { obsidian: obsidianResult.success ? 'success' : 'failed' };
     for (const [key, result] of Object.entries(pluginResults)) {
@@ -164,7 +354,7 @@ app.post('/api/save-stream', async (req, res) => {
       id: saveId,
       timestamp: new Date().toISOString(),
       type,
-      content,
+      content: contentWithImages,
       status: historyStatus,
       suggestion: pluginResults.memu?.suggestion || null
     });
@@ -1210,9 +1400,9 @@ app.post('/api/telegram/optimize', async (req, res) => {
  */
 app.post('/api/telegram/publish', async (req, res) => {
   try {
-    const { content, channel, saveId, type = 'diary', channelName } = req.body;
+    const { content, channel, saveId, type = 'diary', channelName, imageFilenames = [] } = req.body;
 
-    if (!content) {
+    if (!content && imageFilenames.length === 0) {
       return res.status(400).json({
         ok: false,
         error: '内容不能为空'
@@ -1244,11 +1434,57 @@ app.post('/api/telegram/publish', async (req, res) => {
       });
     }
 
-    // 使用 Python 脚本发送消息
-    const { spawn } = await import('child_process');
+    // 收集图片文件名：来自前端传入 + 从 content 中解析 + 从历史记录查找
+    const allFilenames = new Set(imageFilenames);
 
+    // 从 content 中提取 ![...](assets/xxx) 引用
+    const contentImgRegex = /!\[[^\]]*\]\(assets\/([^)]+)\)/g;
+    let imgMatch;
+    while ((imgMatch = contentImgRegex.exec(content || '')) !== null) {
+      allFilenames.add(imgMatch[1]);
+    }
+
+    // 从历史记录中查找同 saveId 的条目的图片引用
+    if (saveId) {
+      try {
+        const history = await loadHistory();
+        const historyItem = history.find(h => h.id === saveId);
+        if (historyItem?.content) {
+          const histContentRegex = /!\[[^\]]*\]\(assets\/([^)]+)\)/g;
+          let hm;
+          while ((hm = histContentRegex.exec(historyItem.content)) !== null) {
+            allFilenames.add(hm[1]);
+          }
+        }
+      } catch {}
+    }
+
+    // 确保所有图片都在 assets/ 目录（幂等移动）
+    const obsidianPath = config?.diary?.obsidianPath
+      || config?.obsidianPath
+      || '/path/to/obsidian/notes';
+
+    const validImagePaths = await ensureImagesInAssets(Array.from(allFilenames), obsidianPath);
+
+    // 构建 Python 脚本参数
+    const { spawn } = await import('child_process');
     const env = { ...process.env, TELEGRAM_BOT_TOKEN: tgBotToken };
-    const pythonProcess = spawn('python3', [tgSendScript, channel, content], { env });
+    // 去掉内容中的图片 markdown 引用
+    const textContent = (content || '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
+
+    // 始终使用 Plugin 的 telegram_send.py（支持 --images 和 stdin）
+    const pluginScript = path.join(__dirname, '../../Plugin/Telegram-Send/telegram_send.py');
+    const scriptToUse = pluginScript;
+
+    const args = [scriptToUse, channel];
+
+    // 如果有图片，追加 --images 参数
+    if (validImagePaths.length > 0) {
+      args.push('--images', ...validImagePaths);
+      console.log(`[TG Publish] 发送含 ${validImagePaths.length} 张图片的消息到 ${channel}`);
+    }
+
+    const pythonProcess = spawn('python3', args, { env });
 
     let stdout = '';
     let stderr = '';
@@ -1272,6 +1508,18 @@ app.post('/api/telegram/publish', async (req, res) => {
       }
     });
 
+    // 通过 stdin 传递文字内容
+    if (textContent) {
+      pythonProcess.stdin.write(textContent);
+    }
+    pythonProcess.stdin.end();
+
+    // 构建带图片引用的 content 用于历史记录
+    const imageRefs = validImagePaths.map(p => `![image](assets/${path.basename(p)})`).join('\n');
+    const contentWithImages = textContent
+      ? (imageRefs ? textContent + '\n\n' + imageRefs : textContent)
+      : imageRefs;
+
     pythonProcess.on('close', async (code) => {
       if (isResolved) return;
       isResolved = true;
@@ -1282,7 +1530,7 @@ app.post('/api/telegram/publish', async (req, res) => {
             id: saveId,
             timestamp: new Date().toISOString(),
             type: type,
-            content: content,
+            content: contentWithImages,
             telegramSends: [channelName],
             status: { telegram: 'success' }
           });
@@ -1297,7 +1545,7 @@ app.post('/api/telegram/publish', async (req, res) => {
             id: saveId,
             timestamp: new Date().toISOString(),
             type: type,
-            content: content,
+            content: contentWithImages,
             status: { telegram: 'failed' }
           });
         }

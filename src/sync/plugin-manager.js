@@ -60,8 +60,9 @@ export function getLoadedPlugins() {
  * @param {object} options - 前端传来的控制参数
  * @param {object} coreConfig - 主控制参数（启用了哪些插件等）
  * @param {function} onUpdate - 用于 SSE 实时流式响应的回调 (pluginName, isSuccess) => {}
+ * @param {string[]} images - 从 content 中提取的图片绝对路径列表（可选）
  */
-export async function executePlugins(content, type, options, coreConfig, onUpdate) {
+export async function executePlugins(content, type, options, coreConfig, onUpdate, images = []) {
     const pluginSettings = coreConfig?.plugins || {};
     const promises = [];
     const results = {};
@@ -71,6 +72,7 @@ export async function executePlugins(content, type, options, coreConfig, onUpdat
         content,
         type,
         options,
+        images,       // 图片绝对路径列表，插件可按需使用
         suggestion: null
     };
 

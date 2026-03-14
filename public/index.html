@@ -251,6 +251,109 @@
             border-color: #667eea;
         }
 
+        /* 图片拖拽时的高亮状态 */
+        .input-section textarea.drag-over {
+            border-color: #667eea;
+            border-style: dashed;
+            background: rgba(102, 126, 234, 0.05);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        /* 图片预览网格 */
+        .image-preview-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+            max-width: 50%;
+        }
+
+        .image-preview-grid:empty {
+            display: none;
+        }
+
+        .image-preview-item {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #e0e0e0;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .image-preview-item:hover {
+            border-color: #667eea;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .image-preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .image-preview-delete {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 22px;
+            height: 22px;
+            background: rgba(0, 0, 0, 0.55);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .image-preview-item:hover .image-preview-delete {
+            opacity: 1;
+        }
+
+        .image-preview-delete:hover {
+            background: #f44336;
+        }
+
+        .image-upload-status {
+            text-align: center;
+            color: #667eea;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+
+        /* 图片灯箱 */
+        .lightbox-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .lightbox-overlay.active {
+            display: flex;
+        }
+
+        .lightbox-overlay img {
+            max-width: 90vw;
+            max-height: 90vh;
+            border-radius: 8px;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+
         .options-section {
             margin-bottom: 25px;
             padding: 15px;
@@ -814,7 +917,10 @@
                             </div>
                         </label>
                         <textarea id="contentInput"
-                            placeholder="在这里输入你的日记或笔记...&#10;&#10;支持多行输入，粘贴长文本也没问题 😊"></textarea>
+                            placeholder="在这里输入你的日记或笔记...&#10;&#10;支持多行输入，粘贴长文本也没问题 😊&#10;📷 可以拖拽或粘贴图片"></textarea>
+                        <!-- 图片上传预览网格 -->
+                        <div id="imagePreviewGrid" class="image-preview-grid"></div>
+                        <div id="imageUploadStatus" class="image-upload-status"></div>
                     </div>
 
                     <!-- Telegram 发布区域（仅笔记模式显示） -->
@@ -953,7 +1059,12 @@
         </div>
     </div>
 
-    <script src="app.js?v=20260312-1"></script>
+    <!-- 图片灯箱 -->
+    <div id="lightboxOverlay" class="lightbox-overlay">
+        <img id="lightboxImage" src="" alt="preview">
+    </div>
+
+    <script src="app.js?v=20260314-img"></script>
 </body>
 
 </html>

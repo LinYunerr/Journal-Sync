@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Telegram Channel Send - 改进版
-支持模糊匹配频道名称、自动更新频道列表
+支持模糊匹配频道名称、自动更新频道列表、多图发送
 """
 import json
+import mimetypes
 import os
 import sys
 import urllib.parse
@@ -49,6 +50,113 @@ def api_call(token, method, params=None):
         data = None
     req = urllib.request.Request(base, data=data)
     with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def api_call_multipart(token, method, fields, files):
+    """
+    发送 multipart/form-data 请求（用于上传图片）
+    fields: dict of str
+    files: list of (field_name, filename, data, content_type)
+    """
+    boundary = f"----TGFormBoundary{os.getpid()}"
+    CRLF = b"\r\n"
+    body_parts = []
+    for key, val in fields.items():
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(f"Content-Disposition: form-data; name=\"{key}\"".encode())
+        body_parts.append(b"")
+        body_parts.append(val.encode("utf-8") if isinstance(val, str) else val)
+    for field_name, filename, data, content_type in files:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(
+            f"Content-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"".encode()
+        )
+        body_parts.append(f"Content-Type: {content_type}".encode())
+        body_parts.append(b"")
+        body_parts.append(data)
+    body_parts.append(f"--{boundary}--".encode())
+    body = CRLF.join(body_parts)
+
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)
+
+
+def upload_photo(token, chat_id, photo_path, caption=None):
+    """
+    上传单张图片并发送到频道（sendPhoto），返回响应 JSON
+    """
+    with open(photo_path, "rb") as f:
+        data = f.read()
+    filename = os.path.basename(photo_path)
+    mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+    fields = {"chat_id": str(chat_id)}
+    if caption:
+        fields["caption"] = caption
+    files = [("photo", filename, data, mime_type)]
+    return api_call_multipart(token, "sendPhoto", fields, files)
+
+
+def send_media_group(token, chat_id, image_paths, caption=None):
+    """
+    使用 sendMediaGroup 发送多张图片（最多 10 张）
+    caption 作为第一张图片的 caption 显示
+    """
+    CRLF = b"\r\n"
+    boundary = f"----TGMediaBoundary{os.getpid()}"
+    body_parts = []
+    media_list = []
+
+    # 构造 media JSON 元数据
+    for i, img_path in enumerate(image_paths[:10]):
+        attach_name = f"photo{i}"
+        item = {"type": "photo", "media": f"attach://{attach_name}"}
+        if i == 0 and caption:
+            item["caption"] = caption
+        media_list.append(item)
+
+    # 添加 chat_id 字段
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b"Content-Disposition: form-data; name=\"chat_id\"")
+    body_parts.append(b"")
+    body_parts.append(str(chat_id).encode())
+
+    # 添加 media 字段
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b"Content-Disposition: form-data; name=\"media\"")
+    body_parts.append(b"Content-Type: application/json")
+    body_parts.append(b"")
+    body_parts.append(json.dumps(media_list, ensure_ascii=False).encode("utf-8"))
+
+    # 添加每张图片文件
+    for i, img_path in enumerate(image_paths[:10]):
+        attach_name = f"photo{i}"
+        filename = os.path.basename(img_path)
+        mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+        with open(img_path, "rb") as f:
+            img_data = f.read()
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(
+            f"Content-Disposition: form-data; name=\"{attach_name}\"; filename=\"{filename}\"".encode()
+        )
+        body_parts.append(f"Content-Type: {mime_type}".encode())
+        body_parts.append(b"")
+        body_parts.append(img_data)
+
+    body_parts.append(f"--{boundary}--".encode())
+    body = CRLF.join(body_parts)
+
+    url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
 
 
@@ -326,10 +434,26 @@ def main():
         print(f"Failed to get bot id: {e}", file=sys.stderr)
         return 1
 
-    # 解析命令行参数
-    args = sys.argv[1:]
+    # 解析命令行参数：支持 --images path1 path2 ...
+    raw_args = sys.argv[1:]
     channel_arg = None
     message_arg = None
+    image_paths = []
+
+    # 提取 --images 参数（其后的所有参数都为图片路径）
+    if "--images" in raw_args:
+        idx = raw_args.index("--images")
+        image_paths = raw_args[idx + 1:]
+        args = raw_args[:idx]  # --images 前面的参数才是频道/消息
+    else:
+        args = raw_args
+
+    # 检查图片路径是否实际存在
+    valid_images = [p for p in image_paths if os.path.isfile(p)]
+    if len(valid_images) < len(image_paths):
+        missing = [p for p in image_paths if not os.path.isfile(p)]
+        print(f"Warning: {len(missing)} 图片路径不存在: {missing}", file=sys.stderr)
+    image_paths = valid_images
 
     # 检查是否是特殊模式
     if len(args) == 1 and args[0] == "--list-channels":
@@ -452,29 +576,66 @@ def main():
         print("Empty message.", file=sys.stderr)
         return 1
 
-    # 步骤 5: 发送消息
+    # 步骤 5: 发送消息（根据是否有图片选择不同方式）
     chat_id = chosen["id"]
     print(f"\nSending to: {chosen['title']} ({chat_id})", file=sys.stderr)
 
     try:
-        resp = api_call(token, "sendMessage", params={"chat_id": chat_id, "text": text})
-        if resp.get("ok"):
-            result = resp.get("result", {})
-            msg_id = result.get("message_id")
-            chat_info = result.get("chat", {})
-            print(json.dumps({
-                "ok": True,
-                "message_id": msg_id,
-                "channel": {
-                    "id": chat_info.get("id"),
-                    "title": chat_info.get("title"),
-                    "username": chat_info.get("username")
-                }
-            }, ensure_ascii=False))
-            return 0
+        if image_paths:
+            # 有图片：使用 sendMediaGroup 发送图片组，文字作为第一张的 caption
+            print(f"  发送图片组: {len(image_paths)} 张图片", file=sys.stderr)
+            caption = text if text and text.strip() else None
+
+            if len(image_paths) == 1:
+                # 单张图片用 sendPhoto，可以配 caption
+                resp = upload_photo(token, chat_id, image_paths[0], caption=caption)
+            else:
+                # 多张图片用 sendMediaGroup
+                resp = send_media_group(token, chat_id, image_paths, caption=caption)
+
+            if resp.get("ok"):
+                results = resp.get("result", [])
+                # sendMediaGroup 返回一个数组，sendPhoto 返回对象
+                if isinstance(results, list):
+                    msg_id = results[0].get("message_id") if results else None
+                    chat_info = results[0].get("chat", {}) if results else {}
+                else:
+                    msg_id = results.get("message_id")
+                    chat_info = results.get("chat", {})
+                print(json.dumps({
+                    "ok": True,
+                    "message_id": msg_id,
+                    "image_count": len(image_paths),
+                    "channel": {
+                        "id": chat_info.get("id"),
+                        "title": chat_info.get("title"),
+                        "username": chat_info.get("username")
+                    }
+                }, ensure_ascii=False))
+                return 0
+            else:
+                print(f"Failed to send media group: {resp}", file=sys.stderr)
+                return 1
         else:
-            print(f"Failed: {resp}", file=sys.stderr)
-            return 1
+            # 无图片：走原有 sendMessage 路径
+            resp = api_call(token, "sendMessage", params={"chat_id": chat_id, "text": text})
+            if resp.get("ok"):
+                result = resp.get("result", {})
+                msg_id = result.get("message_id")
+                chat_info = result.get("chat", {})
+                print(json.dumps({
+                    "ok": True,
+                    "message_id": msg_id,
+                    "channel": {
+                        "id": chat_info.get("id"),
+                        "title": chat_info.get("title"),
+                        "username": chat_info.get("username")
+                    }
+                }, ensure_ascii=False))
+                return 0
+            else:
+                print(f"Failed: {resp}", file=sys.stderr)
+                return 1
     except Exception as e:
         print(f"Failed to send message: {e}", file=sys.stderr)
         print(f"Channel: {chat_id}", file=sys.stderr)

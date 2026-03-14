@@ -29,7 +29,7 @@ export async function saveConfig(config) {
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
 }
 
-export async function execute({ content, options, suggestion }) {
+export async function execute({ content, options, suggestion, images = [] }) {
     const config = await loadConfig();
 
     if (!config.scriptPath || !config.botToken) {
@@ -39,9 +39,22 @@ export async function execute({ content, options, suggestion }) {
     const tgContent = suggestion || content;
     const channel = options?.telegramChannel || config.defaultChannel || '@LinYunChannel';
 
+    // 过滤掉正文中的 Markdown 图片引用，避免与实际图片发送重复
+    const textContent = tgContent.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
+
+    // 构建 Python 脚本的命令行参数
+    // 基础参数：脚本路径 + 频道
+    const args = [config.scriptPath, channel];
+
+    // 如果有图片，追加 --images 参数
+    if (images.length > 0) {
+        args.push('--images', ...images);
+        console.log(`[Telegram Plugin] 发送含 ${images.length} 张图片的消息到 ${channel}`);
+    }
+
     return new Promise((resolve) => {
         const env = { ...process.env, TELEGRAM_BOT_TOKEN: config.botToken };
-        const tgProcess = spawn('python3', [config.scriptPath, channel], { env });
+        const tgProcess = spawn('python3', args, { env });
 
         let output = '';
 
@@ -50,8 +63,8 @@ export async function execute({ content, options, suggestion }) {
 
         tgProcess.on('error', (err) => resolve({ success: false, error: err.message }));
 
-        if (tgContent) {
-            tgProcess.stdin.write(tgContent);
+        if (textContent) {
+            tgProcess.stdin.write(textContent);
         }
         tgProcess.stdin.end();
 
