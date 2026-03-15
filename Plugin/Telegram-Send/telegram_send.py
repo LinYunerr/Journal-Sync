@@ -9,6 +9,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+import time
 from difflib import SequenceMatcher
 
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
@@ -49,8 +50,17 @@ def api_call(token, method, params=None):
     else:
         data = None
     req = urllib.request.Request(base, data=data)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.load(r)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"API call failed: {e}. Retrying in 2 seconds... ({attempt + 1}/{max_retries})", file=sys.stderr)
+            time.sleep(2)
 
 
 def api_call_multipart(token, method, fields, files):
@@ -83,8 +93,17 @@ def api_call_multipart(token, method, fields, files):
         url, data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"API call (multipart) failed: {e}. Retrying in 2 seconds... ({attempt + 1}/{max_retries})", file=sys.stderr)
+            time.sleep(2)
 
 
 def upload_photo(token, chat_id, photo_path, caption=None):
@@ -156,8 +175,17 @@ def send_media_group(token, chat_id, image_paths, caption=None):
         url, data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"Send media group failed: {e}. Retrying in 2 seconds... ({attempt + 1}/{max_retries})", file=sys.stderr)
+            time.sleep(2)
 
 
 def get_bot_id(token):
