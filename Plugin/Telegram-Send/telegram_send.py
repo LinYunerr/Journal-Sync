@@ -600,8 +600,8 @@ def main():
     else:
         text = sys.stdin.read()
 
-    if not text or not text.strip():
-        print("Empty message.", file=sys.stderr)
+    if (not text or not text.strip()) and not image_paths:
+        print("Empty message and no images.", file=sys.stderr)
         return 1
 
     # 步骤 5: 发送消息（根据是否有图片选择不同方式）
@@ -612,7 +612,15 @@ def main():
         if image_paths:
             # 有图片：使用 sendMediaGroup 发送图片组，文字作为第一张的 caption
             print(f"  发送图片组: {len(image_paths)} 张图片", file=sys.stderr)
-            caption = text if text and text.strip() else None
+            
+            extracted_text = text if text and text.strip() else None
+            caption = extracted_text
+            text_to_send_separately = None
+            
+            # Telegram 限制图片 caption 最长 1024 字符
+            if caption and len(caption) > 1024:
+                text_to_send_separately = caption
+                caption = None  # 超长文字不能作为 caption，需单独发送
 
             if len(image_paths) == 1:
                 # 单张图片用 sendPhoto，可以配 caption
@@ -622,6 +630,14 @@ def main():
                 resp = send_media_group(token, chat_id, image_paths, caption=caption)
 
             if resp.get("ok"):
+                # 图片发送成功后，补发长文本
+                if text_to_send_separately:
+                    # 分段发送，Telegram 单条文字消息最长 4096 字符
+                    text_parts = [text_to_send_separately[i:i+4096] for i in range(0, len(text_to_send_separately), 4096)]
+                    for part in text_parts:
+                        api_call(token, "sendMessage", params={"chat_id": chat_id, "text": part})
+                        time.sleep(1) # 避免限频
+                        
                 results = resp.get("result", [])
                 # sendMediaGroup 返回一个数组，sendPhoto 返回对象
                 if isinstance(results, list):

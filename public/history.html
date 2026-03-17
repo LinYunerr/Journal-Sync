@@ -174,6 +174,74 @@
             font-size: 16px;
             opacity: 0.9;
         }
+
+        /* Image Preview Styles (Ported from index.html) */
+        .image-preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }
+
+        .image-preview-item {
+            position: relative;
+            padding-bottom: 100%; /* 1:1 Aspect Ratio */
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .image-preview-item:hover {
+            transform: scale(1.05);
+        }
+
+        .image-preview-item img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Lightbox overlay */
+        .lightbox-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            cursor: pointer;
+        }
+
+        .lightbox-image {
+            max-width: 90vw;
+            max-height: 90vh;
+            object-fit: contain;
+            border-radius: 4px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        .show-more-link {
+            color: #1976d2;
+            cursor: pointer;
+            font-weight: 500;
+            display: inline-block;
+            margin-top: 5px;
+            text-decoration: none;
+        }
+
+        .show-more-link:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -189,6 +257,11 @@
                 <p>加载历史记录...</p>
             </div>
         </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div id="lightboxOverlay" class="lightbox-overlay" onclick="closeLightbox()">
+        <img id="lightboxImage" class="lightbox-image" src="" alt="放大预览">
     </div>
 
     <script>
@@ -232,6 +305,57 @@
             const typeLabel = item.type === 'diary' ? '日记' : '笔记';
             const typeClass = item.type === 'diary' ? 'diary' : 'note';
             const time = new Date(item.timestamp).toLocaleString('zh-CN');
+            
+            const content = item.content || '';
+            const cardId = `card-${item.id}`;
+
+            // 分离文字和图片引用
+            const imageRegex = /!\[[^\]]*\]\(([^)]+)\)/g;
+            const imageUrls = [];
+            let match;
+            while ((match = imageRegex.exec(content)) !== null) {
+                imageUrls.push(match[1]);
+            }
+            // 纯文字部分（去掉图片 markdown）
+            const textContent = content.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
+
+            // 处理文字截断（1000字）
+            const maxLength = 1000;
+            const needsTruncate = textContent.length > maxLength;
+            const displayText = needsTruncate ? textContent.substring(0, maxLength) : textContent;
+
+            // 图片 HTML（缩略图网格）
+            let imageHTML = '';
+            if (imageUrls.length > 0) {
+                const imgItems = imageUrls.map(url => {
+                    // assets/ 开头的路径转为 /api/image-cache/ 预览路径（如果在缓存）或直接使用
+                    const previewSrc = url.startsWith('assets/') ? `/api/image-cache/${encodeURIComponent(url.replace('assets/', ''))}` : url;
+                    return `<div class="image-preview-item" onclick="openLightbox('${previewSrc.replace(/'/g, "\\'")}')">
+                        <img src="${previewSrc}" alt="image" onerror="this.parentElement.style.display='none'">
+                    </div>`;
+                }).join('');
+                imageHTML = `<div class="image-preview-grid" style="max-width:50%">${imgItems}</div>`;
+            }
+
+            let contentHTML = '';
+            if (textContent) {
+                if (needsTruncate) {
+                    contentHTML = `
+                        <div class="timeline-card-content" id="${cardId}-content">
+                            <span id="${cardId}-preview">${escapeHtml(displayText)}</span>
+                            <span id="${cardId}-full" style="display: none;">${escapeHtml(textContent)}</span>
+                            <a href="javascript:void(0)"
+                               class="show-more-link"
+                               id="${cardId}-toggle"
+                               onclick="toggleContent('${cardId}')">显示剩余</a>
+                        </div>
+                    `;
+                } else {
+                    contentHTML = `<div class="timeline-card-content">${escapeHtml(textContent)}</div>`;
+                }
+            }
+            contentHTML += imageHTML;
+
 
             let statusHTML = '';
             if (item.status) {
@@ -243,6 +367,8 @@
                     statuses.push('<span class="status-item success">✓ Obsidian</span>');
                 } else if (obsidianStatus === 'failed' || obsidianStatus === false) {
                     statuses.push('<span class="status-item failed">✗ Obsidian</span>');
+                } else if (obsidianStatus === 'pending') {
+                    statuses.push('<span class="status-item pending">⏳ Obsidian</span>');
                 }
 
                 // flomo (跳过则不显示)
@@ -252,6 +378,8 @@
                         statuses.push('<span class="status-item success">✓ flomo</span>');
                     } else if (flomoStatus === 'failed' || flomoStatus === false) {
                         statuses.push('<span class="status-item failed">✗ flomo</span>');
+                    } else if (flomoStatus === 'pending') {
+                        statuses.push('<span class="status-item pending">⏳ flomo</span>');
                     }
                 }
 
@@ -262,6 +390,8 @@
                         statuses.push('<span class="status-item success">✓ Nowledge Mem</span>');
                     } else if (nmemStatus === 'failed' || nmemStatus === false) {
                         statuses.push('<span class="status-item failed">✗ Nowledge Mem</span>');
+                    } else if (nmemStatus === 'pending') {
+                        statuses.push('<span class="status-item pending">⏳ Nowledge Mem</span>');
                     }
                 }
 
@@ -272,17 +402,31 @@
                         statuses.push('<span class="status-item success">✓ memU</span>');
                     } else if (memuStatus === 'failed' || memuStatus === false) {
                         statuses.push('<span class="status-item failed">✗ memU</span>');
+                    } else if (memuStatus === 'pending') {
+                        statuses.push('<span class="status-item pending">⏳ memU</span>');
                     }
                 }
 
                 // telegram (跳过则不显示)
                 const telegramStatus = item.status.telegram;
-                if (telegramStatus !== 'skipped') {
+                const hasSpecificSends = item.telegramSends && Array.isArray(item.telegramSends) && item.telegramSends.length > 0;
+                
+                if (!hasSpecificSends && telegramStatus !== 'skipped') {
                     if (telegramStatus === 'success' || telegramStatus === true) {
                         statuses.push('<span class="status-item success">✓ Telegram</span>');
                     } else if (telegramStatus === 'failed' || telegramStatus === false) {
                         statuses.push('<span class="status-item failed">✗ Telegram</span>');
+                    } else if (telegramStatus === 'pending') {
+                        statuses.push('<span class="status-item pending">⏳ Telegram</span>');
                     }
+                }
+                
+                if (hasSpecificSends) {
+                    const uniqueChannels = [...new Set(item.telegramSends)];
+                    uniqueChannels.forEach(channel => {
+                        const shortName = channel.substring(0, 5);
+                        statuses.push(`<span class="status-item success">✓ Telegram: ${escapeHtml(shortName)}</span>`);
+                    });
                 }
 
                 if (statuses.length > 0) {
@@ -296,10 +440,39 @@
                         <span class="timeline-card-type ${typeClass}">${typeLabel}</span>
                         <span class="timeline-card-time">${time}</span>
                     </div>
-                    <div class="timeline-card-content">${escapeHtml(item.content)}</div>
+                    ${contentHTML}
                     ${statusHTML}
                 </div>
             `;
+        }
+
+        // 切换内容显示/隐藏
+        function toggleContent(cardId) {
+            const preview = document.getElementById(`${cardId}-preview`);
+            const full = document.getElementById(`${cardId}-full`);
+            const toggle = document.getElementById(`${cardId}-toggle`);
+
+            if (preview.style.display === 'none') {
+                // 显示预览，隐藏全文
+                preview.style.display = 'inline';
+                full.style.display = 'none';
+                toggle.textContent = '显示剩余';
+            } else {
+                // 显示全文，隐藏预览
+                preview.style.display = 'none';
+                full.style.display = 'inline';
+                toggle.textContent = '收起';
+            }
+        }
+        
+        // Lightbox Functions
+        function openLightbox(src) {
+            document.getElementById('lightboxImage').src = src;
+            document.getElementById('lightboxOverlay').style.display = 'flex';
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightboxOverlay').style.display = 'none';
         }
 
         // 转义 HTML
