@@ -942,11 +942,8 @@ if (publishTgBtn) {
             channelNameText = tgChannelSelect.options[tgChannelSelect.selectedIndex].text;
         }
 
-        // 复用最近一次保存的 saveId（避免发布+保存出现两条历史）
-        if (!currentSaveId) {
-            currentSaveId = Date.now().toString();
-        }
-        const saveId = currentSaveId;
+        // 对于笔记页面，发布TG作为独立事件，不复用 currentSaveId
+        const saveId = Date.now().toString();
 
         // 立即更新 UI (前端虚拟 Pending 状态)
         let existingItem = timeline.find(item => item.id === saveId);

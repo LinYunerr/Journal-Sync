@@ -775,7 +775,8 @@ app.post('/api/config/test-ai', async (req, res) => {
 
     // 简单的测试请求
     const startTime = Date.now();
-    const response = await fetch(`${config.ai.baseUrl} / chat / completions`, {
+    const baseUrl = config.ai.baseUrl.replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1300,7 +1301,8 @@ app.post('/api/telegram/optimize', async (req, res) => {
     const { URL } = await import('url');
 
     // 拼接完整的 API 路径
-    const fullUrl = `${aiConfig.baseUrl} /chat/completions`;
+    const baseUrl = aiConfig.baseUrl.replace(/\/$/, '');
+    const fullUrl = `${baseUrl}/chat/completions`;
     const apiUrl = new URL(fullUrl);
 
     const postData = JSON.stringify({
@@ -1312,7 +1314,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
         },
         {
           role: 'user',
-          content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content} `
+          content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content}`
         }
       ],
       temperature: 0.7
@@ -1325,7 +1327,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.apiKey} `,
+        'Authorization': `Bearer ${aiConfig.apiKey}`,
         'Content-Length': Buffer.byteLength(postData)
       }
     };
