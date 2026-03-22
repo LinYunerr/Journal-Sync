@@ -5,18 +5,79 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 
 let configCache = null;
+const defaultConfig = { apiUrl: '' };
+
+export const manifest = {
+    id: 'flomo',
+    version: '1.0.0',
+    name: 'flomo',
+    description: '同步内容到 flomo',
+    category: 'diary-sync',
+    enabledByDefault: true,
+    settings: {
+        storage: 'plugin',
+        sections: [
+            {
+                id: 'basic',
+                title: '基础配置',
+                fields: [
+                    {
+                        key: 'apiUrl',
+                        type: 'password',
+                        label: 'flomo API Webhook',
+                        required: true,
+                        sensitive: true,
+                        validate: {
+                            pattern: '^https?://.+',
+                            message: 'flomo API Webhook 必须以 http:// 或 https:// 开头'
+                        },
+                        placeholder: 'https://flomoapp.com/iwh/...'
+                    }
+                ]
+            }
+        ],
+        actions: []
+    },
+    capabilities: {
+        execute: true,
+        configure: true,
+        test: false
+    }
+};
+
+async function loadLegacyConfig() {
+    try {
+        const raw = await fs.readFile(CORE_CONFIG_FILE, 'utf-8');
+        const coreConfig = JSON.parse(raw);
+        return {
+            apiUrl: coreConfig?.diary?.flomoApi || ''
+        };
+    } catch (error) {
+        return {};
+    }
+}
 
 export async function loadConfig() {
     if (configCache) return configCache;
+    const legacyConfig = await loadLegacyConfig();
     try {
         const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-        configCache = JSON.parse(data);
+        configCache = {
+            ...defaultConfig,
+            ...legacyConfig,
+            ...JSON.parse(data)
+        };
         return configCache;
     } catch (error) {
         console.error('[Flomo Plugin] 配置找不到:', error.message);
-        return { apiUrl: '' };
+        configCache = {
+            ...defaultConfig,
+            ...legacyConfig
+        };
+        return configCache;
     }
 }
 
@@ -54,6 +115,7 @@ export async function execute({ content }) {
 }
 
 export default {
+    manifest,
     execute,
     loadConfig,
     saveConfig

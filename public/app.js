@@ -7,6 +7,7 @@ let pluginStates = { flomo: true, nmem: true, memu: true, telegram: false, masto
 let flomoEnabled = { diary: true, note: true }; // flomo 发布开关（独立于插件状态）
 let mastodonEnabled = { diary: true, note: true }; // mastodon 发布开关
 let tgOptimizedContent = ''; // TG 优化后的内容
+let tgAppendSourceEnabled = false; // TG 结尾追加 source 超链接开关
 let availableChannels = []; // 可用的 Telegram 频道列表
 let pendingImages = []; // 缓存中的待保存图片 [{ filename, previewUrl }]
 let lastSavedImageFilenames = []; // 最近一次保存时的图片文件名（供 TG 发布使用）
@@ -68,7 +69,39 @@ const publishTgDiaryBtn = document.getElementById('publishTgDiaryBtn');
 const tgChannelSelect = document.getElementById('tgChannelSelect');
 const tgPreviewSection = document.getElementById('tgPreviewSection');
 const tgPreviewContent = document.getElementById('tgPreviewContent');
+const tgSourceSection = document.getElementById('tgSourceSection');
+const tgSourceUrlInput = document.getElementById('tgSourceUrl');
 const tgChannelSelectDiary = document.getElementById('tgChannelSelectDiary');
+
+function updateTgSourceSectionVisibility() {
+    if (!tgSourceSection) return;
+    const shouldShow = tgAppendSourceEnabled && tgPreviewSection && tgPreviewSection.style.display !== 'none';
+    tgSourceSection.style.display = shouldShow ? 'flex' : 'none';
+}
+
+function trimTrailingUrlPunctuation(url) {
+    return (url || '').replace(/[)\],.!?;:，。！？；：》」』】）]+$/g, '');
+}
+
+function extractFirstUrl(content) {
+    const match = (content || '').match(/https?:\/\/[^\s<>"']+/i);
+    if (!match) return '';
+    return trimTrailingUrlPunctuation(match[0]);
+}
+
+function normalizeSourceUrl(rawUrl) {
+    const url = (rawUrl || '').trim();
+    if (!url) return '';
+
+    if (url.toLowerCase().includes('bilibili')) {
+        const bvMatch = url.match(/BV[0-9A-Za-z]{10}/);
+        if (bvMatch) {
+            return `https://www.bilibili.com/video/${bvMatch[0]}`;
+        }
+    }
+
+    return url;
+}
 
 // 统计元素
 const statTotal = document.getElementById('stat-total');
@@ -167,6 +200,10 @@ tabs.forEach(tab => {
         // 重置 TG 预览
         tgPreviewSection.style.display = 'none';
         tgPreviewContent.value = '';
+        if (tgSourceUrlInput) {
+            tgSourceUrlInput.value = '';
+        }
+        updateTgSourceSectionVisibility();
         tgOptimizedContent = '';
     });
 });
@@ -789,6 +826,8 @@ async function loadTelegramChannels() {
 
     if (!pluginStates.telegram) {
         console.log('[loadTelegramChannels] Telegram 插件未启用，跳过加载');
+        tgAppendSourceEnabled = false;
+        updateTgSourceSectionVisibility();
         return;
     }
 
@@ -800,6 +839,9 @@ async function loadTelegramChannels() {
         console.log('[loadTelegramChannels] 收到配置:', data);
 
         if (data.ok && data.config) {
+            tgAppendSourceEnabled = Boolean(data.config.tgAppendSource);
+            updateTgSourceSectionVisibility();
+
             // 尝试加载频道列表
             let channels = [];
 
@@ -861,9 +903,13 @@ async function loadTelegramChannels() {
             }
         } else {
             console.log('[loadTelegramChannels] API 返回失败或没有配置');
+            tgAppendSourceEnabled = false;
+            updateTgSourceSectionVisibility();
         }
     } catch (error) {
         console.error('[loadTelegramChannels] 加载 Telegram 频道失败:', error);
+        tgAppendSourceEnabled = false;
+        updateTgSourceSectionVisibility();
     }
 }
 
@@ -871,6 +917,7 @@ async function loadTelegramChannels() {
 if (generateTgBtn) {
     generateTgBtn.addEventListener('click', async () => {
         const content = contentInput.value.trim();
+        const extractedSourceUrl = normalizeSourceUrl(extractFirstUrl(content));
 
         if (!content) {
             alert('请先输入内容');
@@ -893,6 +940,10 @@ if (generateTgBtn) {
                 tgOptimizedContent = data.optimized;
                 tgPreviewContent.value = tgOptimizedContent;
                 tgPreviewSection.style.display = 'block';
+                if (tgSourceUrlInput) {
+                    tgSourceUrlInput.value = extractedSourceUrl;
+                }
+                updateTgSourceSectionVisibility();
             } else {
                 alert('生成失败: ' + (data.error || '未知错误'));
             }
@@ -917,6 +968,9 @@ if (publishTgBtn) {
 
         // 获取要发布的内容
         let contentToPublish = tgPreviewContent.value.trim();
+        const sourceUrl = tgAppendSourceEnabled && tgSourceUrlInput
+            ? tgSourceUrlInput.value.trim()
+            : '';
 
         // 如果没有生成过优化内容，询问是否直接发布原文
         if (!contentToPublish) {
@@ -988,7 +1042,8 @@ if (publishTgBtn) {
                 saveId: saveId,
                 type: 'note',
                 channelName: channelNameText,
-                imageFilenames: imageFilenames
+                imageFilenames: imageFilenames,
+                sourceUrl: sourceUrl
             })
         }).then(async response => {
             const data = await response.json();

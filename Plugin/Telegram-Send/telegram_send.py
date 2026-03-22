@@ -15,6 +15,7 @@ from difflib import SequenceMatcher
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 TOKEN_FALLBACK_PATH = "/path/to/local/config/telegram_bot_token.txt"
 KNOWN_CHANNELS_PATH = "/path/to/local/config/telegram_channels.json"
+PLUGIN_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 # 频道别名映射：别名 -> 目标频道标识（可以是频道名、用户名或 chat_id）
 # 用于将常见称呼映射到具体频道
@@ -31,6 +32,61 @@ CHANNEL_ALIASES = {
     "林云窝": "林云窝",
     "life": "林云窝",
 }
+
+
+def load_plugin_config():
+    if not os.path.exists(PLUGIN_CONFIG_PATH):
+        return {}
+    try:
+        with open(PLUGIN_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def escape_html(text):
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def escape_html_attr(text):
+    return (
+        text.replace("&", "&amp;")
+        .replace("\"", "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def format_message_html(text, bold_first_line=False, source_url=None):
+    normalized = (text or "").replace("\r\n", "\n")
+    escaped = escape_html(normalized)
+    formatted = escaped
+    if bold_first_line:
+        lines = escaped.split("\n")
+        first_non_empty = None
+        for idx, line in enumerate(lines):
+            if line.strip():
+                first_non_empty = idx
+                break
+
+        if first_non_empty is not None:
+            lines[first_non_empty] = f"<b>{lines[first_non_empty]}</b>"
+            formatted = "\n".join(lines)
+
+    normalized_source = (source_url or "").strip()
+    if not normalized_source:
+        return formatted
+
+    safe_source_url = escape_html_attr(normalized_source)
+    source_link = f"<a href=\"{safe_source_url}\">source</a>"
+    base_text = formatted.rstrip()
+    if not base_text:
+        return source_link
+    return f"{base_text} {source_link}"
 
 
 def read_token():
@@ -117,6 +173,7 @@ def upload_photo(token, chat_id, photo_path, caption=None):
     fields = {"chat_id": str(chat_id)}
     if caption:
         fields["caption"] = caption
+        fields["parse_mode"] = "HTML"
     files = [("photo", filename, data, mime_type)]
     return api_call_multipart(token, "sendPhoto", fields, files)
 
@@ -137,6 +194,7 @@ def send_media_group(token, chat_id, image_paths, caption=None):
         item = {"type": "photo", "media": f"attach://{attach_name}"}
         if i == 0 and caption:
             item["caption"] = caption
+            item["parse_mode"] = "HTML"
         media_list.append(item)
 
     # 添加 chat_id 字段
@@ -462,19 +520,34 @@ def main():
         print(f"Failed to get bot id: {e}", file=sys.stderr)
         return 1
 
-    # 解析命令行参数：支持 --images path1 path2 ...
+    plugin_config = load_plugin_config()
+    show_link_preview = plugin_config.get("showLinkPreview", True)
+    bold_first_line = plugin_config.get("boldFirstLine", False)
+
+    # 解析命令行参数：支持 --source-url <url> 和 --images path1 path2 ...
     raw_args = sys.argv[1:]
     channel_arg = None
     message_arg = None
     image_paths = []
+    source_url = None
 
-    # 提取 --images 参数（其后的所有参数都为图片路径）
-    if "--images" in raw_args:
-        idx = raw_args.index("--images")
-        image_paths = raw_args[idx + 1:]
-        args = raw_args[:idx]  # --images 前面的参数才是频道/消息
-    else:
-        args = raw_args
+    # 命令行参数中，--images 后面的参数都视为图片路径
+    args = []
+    idx = 0
+    while idx < len(raw_args):
+        token_arg = raw_args[idx]
+        if token_arg == "--source-url":
+            if idx + 1 >= len(raw_args):
+                print("Missing URL value after --source-url", file=sys.stderr)
+                return 1
+            source_url = raw_args[idx + 1]
+            idx += 2
+            continue
+        if token_arg == "--images":
+            image_paths = raw_args[idx + 1:]
+            break
+        args.append(token_arg)
+        idx += 1
 
     # 检查图片路径是否实际存在
     valid_images = [p for p in image_paths if os.path.isfile(p)]
@@ -604,6 +677,8 @@ def main():
         print("Empty message and no images.", file=sys.stderr)
         return 1
 
+    formatted_text = format_message_html(text, bold_first_line=bold_first_line, source_url=source_url)
+
     # 步骤 5: 发送消息（根据是否有图片选择不同方式）
     chat_id = chosen["id"]
     print(f"\nSending to: {chosen['title']} ({chat_id})", file=sys.stderr)
@@ -613,7 +688,7 @@ def main():
             # 有图片：使用 sendMediaGroup 发送图片组，文字作为第一张的 caption
             print(f"  发送图片组: {len(image_paths)} 张图片", file=sys.stderr)
             
-            extracted_text = text if text and text.strip() else None
+            extracted_text = formatted_text if formatted_text.strip() else None
             caption = extracted_text
             text_to_send_separately = None
             
@@ -635,7 +710,12 @@ def main():
                     # 分段发送，Telegram 单条文字消息最长 4096 字符
                     text_parts = [text_to_send_separately[i:i+4096] for i in range(0, len(text_to_send_separately), 4096)]
                     for part in text_parts:
-                        api_call(token, "sendMessage", params={"chat_id": chat_id, "text": part})
+                        api_call(token, "sendMessage", params={
+                            "chat_id": chat_id,
+                            "text": part,
+                            "parse_mode": "HTML",
+                            "disable_web_page_preview": str(not show_link_preview).lower()
+                        })
                         time.sleep(1) # 避免限频
                         
                 results = resp.get("result", [])
@@ -662,7 +742,12 @@ def main():
                 return 1
         else:
             # 无图片：走原有 sendMessage 路径
-            resp = api_call(token, "sendMessage", params={"chat_id": chat_id, "text": text})
+            resp = api_call(token, "sendMessage", params={
+                "chat_id": chat_id,
+                "text": formatted_text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": str(not show_link_preview).lower()
+            })
             if resp.get("ok"):
                 result = resp.get("result", {})
                 msg_id = result.get("message_id")

@@ -5,24 +5,156 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 
 let configCache = null;
+const defaultConfig = { instanceUrl: '', accessToken: '', visibility: 'unlisted' };
+
+export const manifest = {
+    id: 'mastodon',
+    version: '1.0.0',
+    name: 'Mastodon',
+    description: '同步内容到 Mastodon',
+    category: 'diary-sync',
+    enabledByDefault: false,
+    settings: {
+        storage: 'plugin',
+        sections: [
+            {
+                id: 'basic',
+                title: '基础配置',
+                fields: [
+                    {
+                        key: 'instanceUrl',
+                        type: 'text',
+                        label: '实例地址',
+                        required: true,
+                        validate: {
+                            pattern: '^https?://.+',
+                            message: '实例地址必须以 http:// 或 https:// 开头'
+                        },
+                        placeholder: 'https://mastodon.social'
+                    },
+                    {
+                        key: 'accessToken',
+                        type: 'password',
+                        label: 'Access Token',
+                        required: true,
+                        sensitive: true,
+                        validate: {
+                            minLength: 10,
+                            message: 'Access Token 不能为空'
+                        },
+                        placeholder: '输入 Access Token'
+                    },
+                    {
+                        key: 'visibility',
+                        type: 'select',
+                        label: '帖子可见性',
+                        default: 'unlisted',
+                        options: [
+                            { label: '公开', value: 'public' },
+                            { label: '不公开', value: 'unlisted' },
+                            { label: '仅关注者', value: 'private' },
+                            { label: '仅提及对象', value: 'direct' }
+                        ]
+                    }
+                ]
+            }
+        ],
+        actions: [
+            {
+                id: 'testConnection',
+                label: '测试连通性',
+                kind: 'test'
+            }
+        ]
+    },
+    capabilities: {
+        execute: true,
+        configure: true,
+        test: true
+    }
+};
+
+async function loadLegacyConfig() {
+    try {
+        const raw = await fs.readFile(CORE_CONFIG_FILE, 'utf-8');
+        const coreConfig = JSON.parse(raw);
+        const diary = coreConfig?.diary || {};
+        return {
+            instanceUrl: diary.mastodonInstanceUrl || '',
+            accessToken: diary.mastodonAccessToken || '',
+            visibility: diary.mastodonVisibility || defaultConfig.visibility
+        };
+    } catch (error) {
+        return {};
+    }
+}
 
 export async function loadConfig() {
     if (configCache) return configCache;
+    const legacyConfig = await loadLegacyConfig();
     try {
         const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-        configCache = JSON.parse(data);
+        configCache = {
+            ...defaultConfig,
+            ...legacyConfig,
+            ...JSON.parse(data)
+        };
         return configCache;
     } catch (error) {
         console.error('[Mastodon Plugin] 配置文件读取失败:', error.message);
-        return { instanceUrl: '', accessToken: '', visibility: 'unlisted' };
+        configCache = {
+            ...defaultConfig,
+            ...legacyConfig
+        };
+        return configCache;
     }
 }
 
 export async function saveConfig(config) {
     configCache = config;
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+export async function runAction(actionId, payload = {}) {
+    if (actionId !== 'testConnection') {
+        throw new Error(`Unknown action: ${actionId}`);
+    }
+
+    const currentConfig = await loadConfig();
+    const nextConfig = { ...currentConfig, ...(payload.config || {}) };
+
+    if (!nextConfig.instanceUrl || !nextConfig.accessToken) {
+        return { success: false, error: '实例地址和 Access Token 不能为空' };
+    }
+
+    const url = new URL('/api/v1/accounts/verify_credentials', nextConfig.instanceUrl).href;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${nextConfig.accessToken}`
+        }
+    });
+
+    if (!response.ok) {
+        const result = await response.json().catch(async () => ({ error: await response.text() }));
+        return {
+            success: false,
+            error: result.error || '验证失败'
+        };
+    }
+
+    const data = await response.json();
+    return {
+        success: true,
+        message: `连接成功: ${data.display_name || data.username}`,
+        data: {
+            username: data.username,
+            displayName: data.display_name
+        }
+    };
 }
 
 /**
@@ -140,7 +272,9 @@ export async function execute({ content, options, images = [] }) {
 }
 
 export default {
+    manifest,
     execute,
     loadConfig,
-    saveConfig
+    saveConfig,
+    runAction
 };

@@ -8,6 +8,89 @@ const __dirname = path.dirname(__filename);
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 let configCache = null;
+const defaultConfig = {
+    llm: {
+        provider: 'openai',
+        config: {
+            base_url: 'https://api.openai.com/v1',
+            api_key: '',
+            model: 'gpt-4o-mini'
+        }
+    },
+    vectorStore: {
+        provider: 'local',
+        config: {
+            path: './data/mem0_vectors'
+        }
+    },
+    version: 'v1.1'
+};
+
+export const manifest = {
+    id: 'mem0',
+    version: '1.0.0',
+    name: 'Mem0',
+    description: '提取任务、标签和洞察',
+    category: 'diary-sync',
+    enabledByDefault: false,
+    settings: {
+        storage: 'plugin',
+        sections: [
+            {
+                id: 'llm',
+                title: 'LLM 配置',
+                fields: [
+                    {
+                        key: 'llm.config.base_url',
+                        type: 'text',
+                        label: 'API Base URL',
+                        required: true,
+                        validate: {
+                            pattern: '^https?://.+',
+                            message: 'API Base URL 必须以 http:// 或 https:// 开头'
+                        },
+                        placeholder: 'https://api.openai.com/v1'
+                    },
+                    {
+                        key: 'llm.config.api_key',
+                        type: 'password',
+                        label: 'API Key',
+                        required: true,
+                        sensitive: true,
+                        validate: {
+                            minLength: 10,
+                            message: 'API Key 不能为空'
+                        },
+                        placeholder: 'sk-...'
+                    },
+                    {
+                        key: 'llm.config.model',
+                        type: 'text',
+                        label: '模型名称',
+                        required: true,
+                        validate: {
+                            minLength: 1,
+                            message: '模型名称不能为空'
+                        },
+                        placeholder: 'gpt-4o-mini'
+                    }
+                ]
+            }
+        ],
+        actions: [
+            {
+                id: 'testConnection',
+                label: '测试连通性',
+                kind: 'test'
+            }
+        ]
+    },
+    capabilities: {
+        execute: true,
+        configure: true,
+        test: true
+    }
+};
 
 export async function loadConfig() {
     if (configCache) return configCache;
@@ -17,13 +100,35 @@ export async function loadConfig() {
         return configCache;
     } catch (error) {
         console.error('[Mem0 Plugin] 配置找不到:', error.message);
-        return null;
+        return { ...defaultConfig };
     }
 }
 
 export async function saveConfig(config) {
     configCache = config;
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+export async function runAction(actionId, payload = {}) {
+    if (actionId !== 'testConnection') {
+        throw new Error(`Unknown action: ${actionId}`);
+    }
+
+    const currentConfig = await loadConfig();
+    const nextConfig = {
+        ...currentConfig,
+        ...(payload.config || {}),
+        llm: {
+            ...(currentConfig.llm || {}),
+            ...((payload.config || {}).llm || {}),
+            config: {
+                ...(currentConfig.llm?.config || {}),
+                ...((payload.config || {}).llm?.config || {})
+            }
+        }
+    };
+    const client = new Mem0Client(nextConfig);
+    return client.testConnection();
 }
 
 export async function execute({ content, type }) {
@@ -66,7 +171,9 @@ export async function execute({ content, type }) {
 }
 
 export default {
+    manifest,
     execute,
     loadConfig,
-    saveConfig
+    saveConfig,
+    runAction
 };

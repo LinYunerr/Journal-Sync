@@ -6,20 +6,93 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 
 let configCache = null;
+const defaultConfig = {
+    memuBridgeScript: '/path/to/memu_bridge.py',
+    memuUserId: 'linyun'
+};
+
+export const manifest = {
+    id: 'memu',
+    version: '1.0.0',
+    name: 'memU',
+    description: '提取记忆并生成建议',
+    category: 'diary-sync',
+    enabledByDefault: true,
+    settings: {
+        storage: 'plugin',
+        sections: [
+            {
+                id: 'basic',
+                title: '基础配置',
+                fields: [
+                    {
+                        key: 'memuBridgeScript',
+                        type: 'text',
+                        label: '桥接脚本路径',
+                        required: true,
+                        validate: {
+                            minLength: 1,
+                            message: '桥接脚本路径不能为空'
+                        },
+                        placeholder: '/Users/username/Documents/memu_bridge.py'
+                    },
+                    {
+                        key: 'memuUserId',
+                        type: 'text',
+                        label: '用户 ID',
+                        required: true,
+                        validate: {
+                            minLength: 1,
+                            message: '用户 ID 不能为空'
+                        },
+                        placeholder: 'username'
+                    }
+                ]
+            }
+        ],
+        actions: []
+    },
+    capabilities: {
+        execute: true,
+        configure: true,
+        test: false
+    }
+};
+
+async function loadLegacyConfig() {
+    try {
+        const raw = await fs.readFile(CORE_CONFIG_FILE, 'utf-8');
+        const coreConfig = JSON.parse(raw);
+        const diary = coreConfig?.diary || {};
+        return {
+            memuBridgeScript: diary.memuBridgeScript || '',
+            memuUserId: diary.memuUserId || ''
+        };
+    } catch (error) {
+        return {};
+    }
+}
 
 async function loadConfig() {
     if (configCache) return configCache;
+    const legacyConfig = await loadLegacyConfig();
     try {
         const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-        configCache = JSON.parse(data);
+        configCache = {
+            ...defaultConfig,
+            ...legacyConfig,
+            ...JSON.parse(data)
+        };
         return configCache;
     } catch (error) {
-        return {
-            memuBridgeScript: '/path/to/memu_bridge.py',
-            memuUserId: 'linyun'
+        configCache = {
+            ...defaultConfig,
+            ...legacyConfig
         };
+        return configCache;
     }
 }
 
@@ -78,6 +151,7 @@ export async function execute(context) {
 }
 
 export default {
+    manifest,
     execute,
     loadConfig,
     saveConfig

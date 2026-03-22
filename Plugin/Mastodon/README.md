@@ -1,15 +1,27 @@
-# Mastodon 插件
+# Mastodon Plugin
 
-用于将日记/笔记同步发送到 Mastodon (长毛象)。
+将内容发送到 Mastodon。
 
-## 配置说明
+## Config
 
-在 `config.json` 中配置以下信息：
+在 `config.json` 中配置：
 
-- `instanceUrl`: Mastodon 实例地址，例如 `https://mastodon.social`
-- `accessToken`: 访问令牌 (Access Token)，在 Mastodon 设置 -> 开发人员 -> 新建应用 中获取。需要 `write:statuses` 权限。
-- `visibility`: 帖子可见性。可选值: `public` (公开), `unlisted` (不公开), `private` (仅关注者), `direct` (直接发送)。默认值为 `unlisted`。
+- `instanceUrl`
+- `accessToken`
+- `visibility`
 
-## 功能
+示例：
 
-提供将纯文本内容发送到 Mastodon 的功能。依赖于主程序的判断逻辑（当开启了日记/笔记的 CMX 发送开关时触发）。
+```json
+{
+  "instanceUrl": "https://mastodon.social",
+  "accessToken": "YOUR_ACCESS_TOKEN",
+  "visibility": "unlisted"
+}
+```
+
+## Usage
+
+1. 打开 `http://localhost:3000/plugins.html` 启用插件
+2. 在 `http://localhost:3000/settings.html` 保存配置
+3. 使用插件动作测试连接

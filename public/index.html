@@ -946,7 +946,15 @@
                             </label>
                             <textarea id="tgPreviewContent"
                                 style="width: 100%; min-height: 150px; padding: 15px; border: 2px solid #0088cc; border-radius: 10px; font-size: 15px; font-family: inherit; resize: vertical;"
-                                placeholder="点击" 生成 TG 发布格式"后，AI 优化的内容将显示在这里..."></textarea>
+                                placeholder='点击"生成 TG 发布格式"后，AI 优化的内容将显示在这里...'></textarea>
+                            <div id="tgSourceSection"
+                                style="display: none; margin-top: 10px; align-items: center; gap: 8px;">
+                                <label for="tgSourceUrl"
+                                    style="font-size: 14px; font-weight: 600; color: #333; white-space: nowrap;">source：</label>
+                                <input id="tgSourceUrl" type="text"
+                                    style="flex: 1; padding: 10px 12px; border: 2px solid #0088cc; border-radius: 8px; font-size: 14px;"
+                                    placeholder="自动提取到的链接会显示在这里，可手动编辑">
+                            </div>
                         </div>
                     </div>
 

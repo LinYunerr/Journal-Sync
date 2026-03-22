@@ -1,4 +1,3 @@
-import https from 'https';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -21,67 +20,38 @@ async function callAI(config, systemPrompt, userPrompt) {
     apiUrl = apiUrl.replace(/\/$/, '') + '/chat/completions';
   }
 
-  const url = new URL(apiUrl);
-
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: url.hostname,
-      port: url.port || 443,
-      path: url.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.ai.apiKey}`
-      }
-    };
-
-    const request = https.request(options, (response) => {
-      let data = '';
-
-      response.on('data', (chunk) => {
-        data += chunk.toString();
-      });
-
-      response.on('end', () => {
-        try {
-          if (!data || data.trim() === '') {
-            console.error('[callAI] HTTP 状态码:', response.statusCode);
-            console.error('[callAI] 请求 URL:', apiUrl);
-            return reject(new Error('AI 返回空响应'));
-          }
-
-          const result = JSON.parse(data);
-
-          if (result.error) {
-            return reject(new Error(`AI 错误: ${result.error.message || JSON.stringify(result.error)}`));
-          }
-
-          if (result.choices && result.choices[0] && result.choices[0].message) {
-            resolve(result.choices[0].message.content);
-          } else {
-            reject(new Error('AI 返回格式错误'));
-          }
-        } catch (error) {
-          reject(new Error(`解析 AI 响应失败: ${error.message}`));
-        }
-      });
-    });
-
-    request.on('error', (error) => {
-      reject(new Error(`AI 请求失败: ${error.message}`));
-    });
-
-    request.write(JSON.stringify({
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.ai.apiKey}`
+    },
+    body: JSON.stringify({
       model: config.ai.model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.3
-    }));
-
-    request.end();
+    })
   });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`AI 请求失败: HTTP ${response.status}${errorText ? ` - ${errorText}` : ''}`);
+  }
+
+  const result = await response.json();
+
+  if (result.error) {
+    throw new Error(`AI 错误: ${result.error.message || JSON.stringify(result.error)}`);
+  }
+
+  if (result.choices && result.choices[0] && result.choices[0].message) {
+    return result.choices[0].message.content;
+  }
+
+  throw new Error('AI 返回格式错误');
 }
 
 // 简单内存缓存：1 小时过期

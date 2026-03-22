@@ -178,95 +178,52 @@
         💡 启用插件后，相关的配置项会出现在设置页面中。禁用插件后，该功能将不会被调用。
       </div>
 
-      <div class="plugin-item">
-        <div class="plugin-info">
-          <div class="plugin-name">🌸 flomo</div>
-          <div class="plugin-desc">同步日记到 flomo 笔记应用</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="plugin-flomo" onchange="togglePlugin('flomo', this.checked)">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="plugin-item">
-        <div class="plugin-info">
-          <div class="plugin-name">🧠 memU</div>
-          <div class="plugin-desc">使用 AI 提取记忆并生成建议</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="plugin-memu" onchange="togglePlugin('memu', this.checked)">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="plugin-item">
-        <div class="plugin-info">
-          <div class="plugin-name">✈️ Telegram</div>
-          <div class="plugin-desc">发送日记到 Telegram 频道</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="plugin-telegram" onchange="togglePlugin('telegram', this.checked)">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="plugin-item">
-        <div class="plugin-info">
-          <div class="plugin-name">🧠 Mem0</div>
-          <div class="plugin-desc">AI 记忆系统，自动提取任务和标签</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="plugin-mem0" onchange="togglePlugin('mem0', this.checked)">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="plugin-item">
-        <div class="plugin-info">
-          <div class="plugin-name">🐘 长毛象 (Mastodon)</div>
-          <div class="plugin-desc">同步日记到长毛象实例</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="plugin-mastodon" onchange="togglePlugin('mastodon', this.checked)">
-          <span class="slider"></span>
-        </label>
-      </div>
+      <div id="pluginList"></div>
     </div>
   </div>
 
   <script>
-    // 加载插件状态
     async function loadPlugins() {
       try {
-        const response = await fetch('/api/plugins');
+        const response = await fetch('/api/plugins/registry');
         const data = await response.json();
 
-        if (data.ok && data.plugins) {
-          document.getElementById('plugin-flomo').checked = data.plugins.flomo || false;
-          document.getElementById('plugin-memu').checked = data.plugins.memu || false;
-          document.getElementById('plugin-telegram').checked = data.plugins.telegram || false;
-          document.getElementById('plugin-mem0').checked = data.plugins.mem0 || false;
-          document.getElementById('plugin-mastodon').checked = data.plugins.mastodon || false;
+        if (data.ok && Array.isArray(data.plugins)) {
+          renderPlugins(data.plugins);
         }
       } catch (error) {
         console.error('加载插件状态失败:', error);
       }
     }
 
-    // 切换插件状态
-    async function togglePlugin(pluginName, enabled) {
+    function renderPlugins(plugins) {
+      const pluginList = document.getElementById('pluginList');
+      pluginList.innerHTML = plugins.map(plugin => `
+        <div class="plugin-item">
+          <div class="plugin-info">
+            <div class="plugin-name">${plugin.manifest.name}</div>
+            <div class="plugin-desc">${plugin.manifest.description || '暂无描述'}</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" ${plugin.enabled ? 'checked' : ''} onchange="togglePlugin('${plugin.id}', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      `).join('');
+    }
+
+    async function togglePlugin(pluginId, enabled) {
       try {
-        const response = await fetch('/api/plugins/toggle', {
+        const response = await fetch(`/api/plugins/${pluginId}/toggle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plugin: pluginName, enabled })
+          body: JSON.stringify({ enabled })
         });
 
         const data = await response.json();
 
         if (data.ok) {
-          showSuccess(`${pluginName} 插件已${enabled ? '启用' : '禁用'}`);
+          showSuccess(`${pluginId} 插件已${enabled ? '启用' : '禁用'}`);
         } else {
           alert('操作失败: ' + data.error);
         }

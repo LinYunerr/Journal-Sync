@@ -5,6 +5,12 @@ node_modules/
 logs/
 *.log
 
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
 # Data files
 data/config.json
 data/history.json
@@ -22,6 +28,8 @@ backups/
 # OS files
 .DS_Store
 Thumbs.db
+*.bak
+*.backup
 
 # IDE
 .vscode/

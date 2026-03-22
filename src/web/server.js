@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { saveToObsidian, optimizeContent } from '../sync/journal-sync.js';
 import { promises as fsPromises } from 'fs';
 import ConfigManager from '../utils/config-manager.js';
+import { applyNetworkProxy, normalizeNetworkProxy } from '../utils/network-proxy.js';
 import PluginManager from '../sync/plugin-manager.js';
 import multer from 'multer';
 
@@ -45,9 +46,23 @@ async function initDataFiles() {
   }
 }
 
+async function initNetworkProxy() {
+  try {
+    const config = await ConfigManager.loadConfig();
+    const proxyValue = config?.network?.proxy || '';
+    if (!proxyValue) return;
+
+    applyNetworkProxy(proxyValue);
+    console.log(`[Proxy] 已启用全局代理: ${proxyValue}`);
+  } catch (error) {
+    console.error('[Proxy] 初始化失败:', error.message);
+  }
+}
+
 // 启动时初始化文件然后加载插件
 await initDataFiles();
-PluginManager.loadPlugins();
+await initNetworkProxy();
+await PluginManager.loadPlugins();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -96,6 +111,66 @@ function parseContentImages(content, obsidianPath) {
 // 历史记录存储
 const HISTORY_FILE = path.join(__dirname, '../../data/history.json');
 const CONFIG_FILE = path.join(__dirname, '../../data/config.json');
+
+function createDefaultPluginStates(registry) {
+  return registry.reduce((states, plugin) => {
+    states[plugin.id] = plugin.manifest.enabledByDefault ?? false;
+    return states;
+  }, {});
+}
+
+async function loadPluginStates() {
+  const config = await ConfigManager.loadConfig();
+  const registry = PluginManager.getPluginRegistry();
+  const defaults = createDefaultPluginStates(registry);
+  return {
+    ...defaults,
+    ...(config.plugins || {})
+  };
+}
+
+async function savePluginToggle(pluginId, enabled) {
+  const config = await ConfigManager.loadConfig();
+  const registry = PluginManager.getPluginRegistry();
+  const defaults = createDefaultPluginStates(registry);
+  config.plugins = {
+    ...defaults,
+    ...(config.plugins || {}),
+    [pluginId]: enabled
+  };
+  await ConfigManager.saveConfig(config);
+}
+
+async function buildPluginRegistryResponse() {
+  const states = await loadPluginStates();
+  const registry = PluginManager.getPluginRegistry();
+
+  const plugins = await Promise.all(registry.map(async (plugin) => ({
+    id: plugin.id,
+    name: plugin.manifest.name,
+    description: plugin.manifest.description,
+    enabled: states[plugin.id] ?? plugin.manifest.enabledByDefault ?? false,
+    manifest: plugin.manifest,
+    config: await PluginManager.getPluginConfig(plugin.id, { sanitize: true })
+  })));
+
+  return { ok: true, plugins };
+}
+
+function sendPluginError(res, error) {
+  if (error?.name === 'PluginValidationError') {
+    return res.status(400).json({
+      ok: false,
+      error: error.message,
+      validationErrors: error.errors || []
+    });
+  }
+
+  return res.status(500).json({
+    ok: false,
+    error: error.message
+  });
+}
 
 
 
@@ -526,12 +601,10 @@ app.get('/api/config/obsidian', async (req, res) => {
 app.get('/api/config/diary', async (req, res) => {
   try {
     const config = await ConfigManager.loadConfig();
-    const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
-    const telegramConfig = await telegramConfigMod.loadConfig();
-    const flomoConfigMod = await import('../../Plugin/Flomo/index.js');
-    const flomoConfig = await flomoConfigMod.loadConfig();
-    const mastodonConfigMod = await import('../../Plugin/Mastodon/index.js');
-    const mastodonConfig = await mastodonConfigMod.loadConfig();
+    const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
+    const flomoConfig = await PluginManager.getPluginConfig('flomo').catch(() => ({}));
+    const mastodonConfig = await PluginManager.getPluginConfig('mastodon').catch(() => ({}));
+    const memuConfig = await PluginManager.getPluginConfig('memu').catch(() => ({}));
 
     // 默认值（从 journal-sync.js 中的常量）
     const defaults = {
@@ -542,23 +615,30 @@ app.get('/api/config/diary', async (req, res) => {
       tgDiaryChannel: '@LinYunChannel',
       tgBotToken: '',
       tgChannels: '[]',
-      tgOptimizePrompt: ''
+      tgOptimizePrompt: '',
+      tgShowLinkPreview: true,
+      tgBoldFirstLine: false,
+      tgAppendSource: false
     };
 
     res.json({
       ok: true,
       config: {
         obsidianPath: config?.diary?.obsidianPath || config?.obsidianPath || defaults.obsidianPath,
-        flomoApi: flomoConfig?.apiUrl || defaults.flomoApi,
-        memuBridgeScript: config?.diary?.memuBridgeScript || defaults.memuBridgeScript,
-        memuUserId: config?.diary?.memuUserId || defaults.memuUserId,
+        flomoApi: '',
+        memuBridgeScript: memuConfig?.memuBridgeScript || config?.diary?.memuBridgeScript || defaults.memuBridgeScript,
+        memuUserId: memuConfig?.memuUserId || config?.diary?.memuUserId || defaults.memuUserId,
         tgDiaryChannel: telegramConfig?.defaultChannel || defaults.tgDiaryChannel,
-        tgBotToken: telegramConfig?.botToken || defaults.tgBotToken,
+        tgBotToken: '',
         tgChannels: JSON.stringify(telegramConfig?.channels || []),
         tgOptimizePrompt: telegramConfig?.optimizePrompt || defaults.tgOptimizePrompt,
+        tgShowLinkPreview: telegramConfig?.showLinkPreview ?? defaults.tgShowLinkPreview,
+        tgBoldFirstLine: telegramConfig?.boldFirstLine ?? defaults.tgBoldFirstLine,
+        tgAppendSource: telegramConfig?.appendSourceTag ?? defaults.tgAppendSource,
         mastodonInstanceUrl: mastodonConfig?.instanceUrl || '',
-        mastodonAccessToken: mastodonConfig?.accessToken || '',
-        mastodonVisibility: mastodonConfig?.visibility || 'unlisted'
+        mastodonAccessToken: '',
+        mastodonVisibility: mastodonConfig?.visibility || 'unlisted',
+        mem0Insights: config?.mem0Insights || {}
       }
     });
   } catch (error) {
@@ -633,6 +713,9 @@ app.get('/api/config/full', async (req, res) => {
           baseUrl: config?.ai?.baseUrl || '',
           apiKey: config?.ai?.apiKey || '',
           model: config?.ai?.model || ''
+        },
+        network: {
+          proxy: config?.network?.proxy || ''
         }
       }
     });
@@ -665,7 +748,10 @@ app.post('/api/config/set', async (req, res) => {
         botToken: '',
         channels: [],
         defaultChannel: '',
-        optimizePrompt: ''
+        optimizePrompt: '',
+        showLinkPreview: true,
+        boldFirstLine: false,
+        appendSourceTag: false
       };
 
       if (configPath === 'diary.tgBotToken') {
@@ -676,6 +762,12 @@ app.post('/api/config/set', async (req, res) => {
         telegramConfig.optimizePrompt = value;
       } else if (configPath === 'diary.tgChannels') {
         telegramConfig.channels = JSON.parse(value);
+      } else if (configPath === 'diary.tgShowLinkPreview') {
+        telegramConfig.showLinkPreview = Boolean(value);
+      } else if (configPath === 'diary.tgBoldFirstLine') {
+        telegramConfig.boldFirstLine = Boolean(value);
+      } else if (configPath === 'diary.tgAppendSource') {
+        telegramConfig.appendSourceTag = Boolean(value);
       }
 
       await telegramConfigMod.saveConfig(telegramConfig);
@@ -689,10 +781,9 @@ app.post('/api/config/set', async (req, res) => {
 
     // 特殊处理 Flomo 配置，保存到插件配置文件
     if (configPath === 'diary.flomoApi') {
-      const flomoConfigMod = await import('../../Plugin/Flomo/index.js');
-      const flomoConfig = await flomoConfigMod.loadConfig() || { apiUrl: '' };
+      const flomoConfig = await PluginManager.getPluginConfig('flomo').catch(() => ({ apiUrl: '' }));
       flomoConfig.apiUrl = value;
-      await flomoConfigMod.saveConfig(flomoConfig);
+      await PluginManager.savePluginConfig('flomo', flomoConfig);
 
       res.json({
         ok: true,
@@ -701,14 +792,29 @@ app.post('/api/config/set', async (req, res) => {
       return;
     }
 
+    if (configPath === 'diary.memuBridgeScript' || configPath === 'diary.memuUserId') {
+      const memuConfig = await PluginManager.getPluginConfig('memu').catch(() => ({}));
+      if (configPath === 'diary.memuBridgeScript') {
+        memuConfig.memuBridgeScript = value;
+      } else {
+        memuConfig.memuUserId = value;
+      }
+      await PluginManager.savePluginConfig('memu', memuConfig);
+
+      res.json({
+        ok: true,
+        message: 'MemU 配置已更新'
+      });
+      return;
+    }
+
     // 特殊处理 Mastodon 配置
     if (configPath.startsWith('diary.mastodon')) {
-      const mastodonConfigMod = await import('../../Plugin/Mastodon/index.js');
-      const mastodonConfig = await mastodonConfigMod.loadConfig() || {
+      const mastodonConfig = await PluginManager.getPluginConfig('mastodon').catch(() => ({
         instanceUrl: '',
         accessToken: '',
         visibility: 'unlisted'
-      };
+      }));
 
       if (configPath === 'diary.mastodonInstanceUrl') {
         mastodonConfig.instanceUrl = value;
@@ -718,7 +824,7 @@ app.post('/api/config/set', async (req, res) => {
         mastodonConfig.visibility = value;
       }
 
-      await mastodonConfigMod.saveConfig(mastodonConfig);
+      await PluginManager.savePluginConfig('mastodon', mastodonConfig);
 
       res.json({
         ok: true,
@@ -736,6 +842,18 @@ app.post('/api/config/set', async (req, res) => {
       return res.status(400).json({ ok: false, error: '非法的配置安全范围' });
     }
 
+    let normalizedNetworkProxy = null;
+    if (configPath === 'network.proxy') {
+      try {
+        normalizedNetworkProxy = normalizeNetworkProxy(value);
+      } catch (error) {
+        return res.status(400).json({
+          ok: false,
+          error: error.message
+        });
+      }
+    }
+
     let current = config;
     for (let i = 0; i < keys.length - 1; i++) {
       if (!current[keys[i]]) {
@@ -743,9 +861,22 @@ app.post('/api/config/set', async (req, res) => {
       }
       current = current[keys[i]];
     }
-    current[keys[keys.length - 1]] = value;
+    current[keys[keys.length - 1]] = configPath === 'network.proxy'
+      ? normalizedNetworkProxy
+      : value;
 
     await ConfigManager.saveConfig(config);
+
+    if (configPath === 'network.proxy') {
+      applyNetworkProxy(normalizedNetworkProxy);
+      return res.json({
+        ok: true,
+        message: normalizedNetworkProxy
+          ? '代理已更新并立即生效'
+          : '代理已清除，已恢复直连',
+        value: normalizedNetworkProxy
+      });
+    }
 
     res.json({
       ok: true,
@@ -1020,15 +1151,11 @@ app.post('/api/folders/delete', async (req, res) => {
  */
 app.get('/api/plugins', async (req, res) => {
   try {
-    const config = await ConfigManager.loadConfig();
-    const plugins = config?.plugins || {
-      flomo: true,
-      nmem: true,
-      memu: true,
-      telegram: false,
-      mem0: false,
-      mastodon: false
-    };
+    const registry = await buildPluginRegistryResponse();
+    const plugins = registry.plugins.reduce((states, plugin) => {
+      states[plugin.id] = plugin.enabled;
+      return states;
+    }, {});
 
     res.json({
       ok: true,
@@ -1056,21 +1183,15 @@ app.post('/api/plugins/toggle', async (req, res) => {
       });
     }
 
-    const config = await ConfigManager.loadConfig();
-
-    if (!config.plugins) {
-      config.plugins = {
-        flomo: true,
-        nmem: true,
-        memu: true,
-        telegram: false,
-        mem0: false,
-        mastodon: false
-      };
+    const pluginEntry = PluginManager.getPlugin(plugin);
+    if (!pluginEntry) {
+      return res.status(404).json({
+        ok: false,
+        error: '插件不存在'
+      });
     }
 
-    config.plugins[plugin] = enabled;
-    await ConfigManager.saveConfig(config);
+    await savePluginToggle(plugin, enabled);
 
     res.json({
       ok: true,
@@ -1081,6 +1202,99 @@ app.post('/api/plugins/toggle', async (req, res) => {
       ok: false,
       error: error.message
     });
+  }
+});
+
+app.get('/api/plugins/registry', async (req, res) => {
+  try {
+    res.json(await buildPluginRegistryResponse());
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/plugins/:id/config', async (req, res) => {
+  try {
+    const plugin = PluginManager.getPlugin(req.params.id);
+    if (!plugin) {
+      return res.status(404).json({ ok: false, error: '插件不存在' });
+    }
+
+    res.json({
+      ok: true,
+      config: await PluginManager.getPluginConfig(req.params.id, { sanitize: true })
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/plugins/:id/config', async (req, res) => {
+  try {
+    const plugin = PluginManager.getPlugin(req.params.id);
+    if (!plugin) {
+      return res.status(404).json({ ok: false, error: '插件不存在' });
+    }
+
+    const nextConfig = req.body?.config || req.body || {};
+    const savedConfig = await PluginManager.savePluginConfig(req.params.id, nextConfig);
+    res.json({
+      ok: true,
+      config: await PluginManager.getPluginConfig(req.params.id, { sanitize: true }),
+      saved: savedConfig
+    });
+  } catch (error) {
+    sendPluginError(res, error);
+  }
+});
+
+app.post('/api/plugins/:id/toggle', async (req, res) => {
+  try {
+    const plugin = PluginManager.getPlugin(req.params.id);
+    if (!plugin) {
+      return res.status(404).json({ ok: false, error: '插件不存在' });
+    }
+
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ ok: false, error: 'enabled 必须是 boolean' });
+    }
+
+    await savePluginToggle(req.params.id, enabled);
+    res.json({
+      ok: true,
+      message: `插件 ${req.params.id} 已${enabled ? '启用' : '禁用'}`
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/plugins/:id/actions/:actionId', async (req, res) => {
+  try {
+    const plugin = PluginManager.getPlugin(req.params.id);
+    if (!plugin) {
+      return res.status(404).json({ ok: false, error: '插件不存在' });
+    }
+
+    const result = await PluginManager.runPluginAction(
+      req.params.id,
+      req.params.actionId,
+      req.body?.payload || {}
+    );
+
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (error) {
+    sendPluginError(res, error);
   }
 });
 
@@ -1153,113 +1367,15 @@ app.post('/api/telegram/test', async (req, res) => {
         error: 'Bot Token 不能为空'
       });
     }
-
-    // 加载插件配置获取脚本路径
-    const pluginConfig = await loadTelegramConfig();
-    const tgSendScript = pluginConfig?.scriptPath || path.join(__dirname, '../../Plugin/Telegram-Send/telegram_send.py');
-
-    if (!tgSendScript) {
-      return res.json({
-        ok: false,
-        error: 'Telegram 脚本路径未配置'
-      });
-    }
-
-    // 使用 Python 脚本获取频道列表
-    const { spawn } = await import('child_process');
-
-    const env = { ...process.env, TELEGRAM_BOT_TOKEN: botToken };
-    const pythonProcess = spawn('python3', [tgSendScript, '--list-channels'], { env });
-
-    let stdout = '';
-    let stderr = '';
-    let isResolved = false;
-
-    pythonProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
+    await PluginManager.savePluginConfig('telegram', { botToken });
+    const result = await PluginManager.runPluginAction('telegram', 'discoverChannels', {
+      config: { botToken }
     });
-
-    pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
+    res.json({
+      ok: true,
+      channels: result.channels || [],
+      message: result.message
     });
-
-    pythonProcess.on('error', (err) => {
-      if (!isResolved) {
-        isResolved = true;
-        res.json({
-          ok: false,
-          error: `执行脚本失败: ${err.message}`
-        });
-      }
-    });
-
-    pythonProcess.on('close', async (code) => {
-      if (isResolved) return;
-      isResolved = true;
-
-      if (code !== 0) {
-        res.json({
-          ok: false,
-          error: `脚本执行失败(退出码 ${code}): ${stderr || stdout}`
-        });
-        return;
-      }
-
-      try {
-        // 解析 Python 脚本的 JSON 输出
-        const result = JSON.parse(stdout);
-
-        if (result.action === 'list' && result.channels) {
-          // 格式化频道列表
-          const channels = result.channels.map(ch => ({
-            id: String(ch.id),
-            title: ch.title || ch.username || String(ch.id),
-            type: 'channel',
-            username: ch.username ? `@${ch.username} ` : null
-          }));
-
-          // 保存频道列表到插件配置
-          await updateChannels(channels);
-
-          // 同时保存 Bot Token 到插件配置
-          if (pluginConfig) {
-            pluginConfig.botToken = botToken;
-            await saveTelegramConfig(pluginConfig);
-          }
-
-          res.json({
-            ok: true,
-            channels,
-            message: channels.length > 0
-              ? `找到 ${channels.length} 个可用频道`
-              : 'Bot Token 有效，但未找到频道。请确保 Bot 已被添加到频道并有发送消息的权限。'
-          });
-        } else {
-          res.json({
-            ok: false,
-            error: '脚本返回格式错误'
-          });
-        }
-      } catch (parseError) {
-        res.json({
-          ok: false,
-          error: `解析脚本输出失败: ${parseError.message} `,
-          output: stdout
-        });
-      }
-    });
-
-    // 超时处理
-    setTimeout(() => {
-      if (!isResolved) {
-        isResolved = true;
-        pythonProcess.kill();
-        res.json({
-          ok: false,
-          error: '请求超时'
-        });
-      }
-    }, 30000);
   } catch (error) {
     res.status(500).json({
       ok: false,
@@ -1284,6 +1400,8 @@ app.post('/api/telegram/optimize', async (req, res) => {
 
     const config = await ConfigManager.loadConfig();
     const aiConfig = config?.ai;
+    const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
+    const telegramConfig = await telegramConfigMod.loadConfig();
 
     if (!aiConfig || !aiConfig.baseUrl || !aiConfig.apiKey || !aiConfig.model) {
       return res.json({
@@ -1292,8 +1410,8 @@ app.post('/api/telegram/optimize', async (req, res) => {
       });
     }
 
-    // 获取自定义提示词，如果没有则使用默认提示词
-    const customPrompt = config?.diary?.tgOptimizePrompt;
+    // TG 优化提示词属于 Telegram 插件配置
+    const customPrompt = telegramConfig?.optimizePrompt;
     const systemPrompt = customPrompt || '你是一个专业的内容编辑，擅长将笔记内容优化为适合 Telegram 频道发布的格式。要求：1. 保持原意，简洁明了 2. 适当使用 emoji 3. 分段清晰 4. 适合社交媒体阅读';
 
     // 调用 AI 优化内容
@@ -1333,13 +1451,15 @@ app.post('/api/telegram/optimize', async (req, res) => {
     };
 
     const request = https.default.request(options, (apiRes) => {
-      let data = '';
+      const dataChunks = [];
 
       apiRes.on('data', (chunk) => {
-        data += chunk;
+        dataChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
 
       apiRes.on('end', () => {
+        const data = Buffer.concat(dataChunks).toString('utf8');
+
         try {
           // 检查是否有数据
           if (!data || data.trim() === '') {
@@ -1402,7 +1522,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
  */
 app.post('/api/telegram/publish', async (req, res) => {
   try {
-    const { content, channel, saveId, type = 'diary', channelName, imageFilenames = [] } = req.body;
+    const { content, channel, saveId, type = 'diary', channelName, imageFilenames = [], sourceUrl = '' } = req.body;
 
     if (!content && imageFilenames.length === 0) {
       return res.status(400).json({
@@ -1419,8 +1539,11 @@ app.post('/api/telegram/publish', async (req, res) => {
     }
 
     const config = await ConfigManager.loadConfig();
-    const tgSendScript = config?.diary?.tgSendScript || '/path/to/telegram_channel_send.py';
-    const tgBotToken = config?.diary?.tgBotToken;
+    const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
+    const tgSendScript = telegramConfig?.scriptPath
+      || config?.diary?.tgSendScript
+      || '/path/to/telegram_channel_send.py';
+    const tgBotToken = telegramConfig?.botToken || config?.diary?.tgBotToken;
 
     if (!tgSendScript) {
       return res.json({
@@ -1479,6 +1602,17 @@ app.post('/api/telegram/publish', async (req, res) => {
     const scriptToUse = pluginScript;
 
     const args = [scriptToUse, channel];
+    const normalizedSourceUrl = typeof sourceUrl === 'string' ? sourceUrl.trim() : '';
+
+    if (normalizedSourceUrl) {
+      if (!/^https?:\/\//i.test(normalizedSourceUrl)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'source 链接必须以 http:// 或 https:// 开头'
+        });
+      }
+      args.push('--source-url', normalizedSourceUrl);
+    }
 
     // 如果有图片，追加 --images 参数
     if (validImagePaths.length > 0) {
@@ -1488,16 +1622,16 @@ app.post('/api/telegram/publish', async (req, res) => {
 
     const pythonProcess = spawn('python3', args, { env });
 
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks = [];
+    const stderrChunks = [];
     let isResolved = false;
 
     pythonProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
+      stdoutChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
     });
 
     pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
+      stderrChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
     });
 
     pythonProcess.on('error', (err) => {
@@ -1525,6 +1659,8 @@ app.post('/api/telegram/publish', async (req, res) => {
     pythonProcess.on('close', async (code) => {
       if (isResolved) return;
       isResolved = true;
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
 
       if (code === 0) {
         if (saveId && channelName) {
@@ -1613,8 +1749,7 @@ async function scanFolders(basePath) {
 // 获取 Mem0 配置
 app.get('/api/mem0/config', async (req, res) => {
   try {
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
+    const config = await PluginManager.getPluginConfig('mem0', { sanitize: true });
     res.json({
       ok: true,
       config
@@ -1627,8 +1762,7 @@ app.get('/api/mem0/config', async (req, res) => {
 // 保存 Mem0 配置
 app.post('/api/mem0/config', async (req, res) => {
   try {
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    await mem0ConfigMod.saveConfig(req.body);
+    await PluginManager.savePluginConfig('mem0', req.body);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
@@ -1638,19 +1772,9 @@ app.post('/api/mem0/config', async (req, res) => {
 // 测试 Mem0 连接
 app.post('/api/mem0/test', async (req, res) => {
   try {
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-    if (!config) {
-      return res.json({
-        ok: false,
-        error: 'Mem0 配置未找到'
-      });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const result = await client.testConnection();
+    const result = await PluginManager.runPluginAction('mem0', 'testConnection', {
+      config: req.body?.config || {}
+    });
 
     res.json({
       ok: true,
@@ -1667,38 +1791,13 @@ app.post('/api/mem0/test', async (req, res) => {
 // 测试长毛象连接
 app.post('/api/mastodon/test', async (req, res) => {
   try {
-    const { instanceUrl, accessToken } = req.body;
-
-    if (!instanceUrl || !accessToken) {
-      return res.status(400).json({
-        ok: false,
-        error: 'API 参数不完整'
-      });
-    }
-
-    const url = new URL('/api/v1/accounts/verify_credentials', instanceUrl).href;
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
+    const result = await PluginManager.runPluginAction('mastodon', 'testConnection', {
+      config: req.body || {}
     });
-
-    if (response.ok) {
-      const data = await response.json();
-      res.json({
-        ok: true,
-        message: '长毛象连接成功!',
-        username: data.username,
-        display_name: data.display_name
-      });
-    } else {
-      const result = await response.json();
-      res.json({
-        ok: false,
-        error: result.error || '验证失败'
-      });
-    }
+    res.json({
+      ok: result.success,
+      ...result
+    });
   } catch (error) {
     res.status(500).json({
       ok: false,
