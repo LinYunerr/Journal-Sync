@@ -109,6 +109,76 @@ const statDiary = document.getElementById('stat-diary');
 const statNote = document.getElementById('stat-note');
 const statToday = document.getElementById('stat-today');
 
+// 全局输入框特性：自动增高（内容高度 + 额外行数，且不低于基础高度）
+const GlobalInputTraits = window.GlobalInputTraits || {};
+window.GlobalInputTraits = GlobalInputTraits;
+
+if (!GlobalInputTraits.autoGrowTextarea) {
+    GlobalInputTraits.autoGrowTextarea = function autoGrowTextarea(textarea, options = {}) {
+        if (!textarea) return null;
+
+        const reserveLines = Number.isFinite(options.reserveLines) ? options.reserveLines : 2;
+        const computed = window.getComputedStyle(textarea);
+        const parsedLineHeight = Number.parseFloat(computed.lineHeight);
+        const lineHeight = Number.isFinite(parsedLineHeight)
+            ? parsedLineHeight
+            : (Number.parseFloat(computed.fontSize) || 16) * 1.4;
+
+        const borderTop = Number.parseFloat(computed.borderTopWidth) || 0;
+        const borderBottom = Number.parseFloat(computed.borderBottomWidth) || 0;
+        const savedBaseHeight = Number.parseFloat(textarea.dataset.baseHeightPx || '');
+        const baseHeight = Number.isFinite(savedBaseHeight)
+            ? savedBaseHeight
+            : Math.max(textarea.offsetHeight, Number.parseFloat(computed.minHeight) || 0);
+
+        textarea.dataset.baseHeightPx = String(baseHeight);
+
+        const updateHeight = () => {
+            textarea.style.height = 'auto';
+            const reserveHeight = reserveLines * lineHeight;
+            const targetHeight = Math.max(baseHeight, textarea.scrollHeight + reserveHeight + borderTop + borderBottom);
+            textarea.style.height = `${Math.ceil(targetHeight)}px`;
+        };
+
+        const handleInput = () => updateHeight();
+        textarea.addEventListener('input', handleInput);
+        updateHeight();
+
+        return {
+            refresh: updateHeight,
+            destroy: ({ resetToBaseHeight = true } = {}) => {
+                textarea.removeEventListener('input', handleInput);
+                if (resetToBaseHeight) {
+                    textarea.style.height = `${Math.ceil(baseHeight)}px`;
+                } else {
+                    textarea.style.height = '';
+                }
+            }
+        };
+    };
+}
+
+let diaryAutoGrowTrait = null;
+
+function syncDiaryInputTraits() {
+    if (!contentInput) return;
+
+    if (currentType === 'diary') {
+        if (!diaryAutoGrowTrait) {
+            diaryAutoGrowTrait = GlobalInputTraits.autoGrowTextarea(contentInput, {
+                reserveLines: 2
+            });
+        }
+
+        if (diaryAutoGrowTrait?.refresh) {
+            diaryAutoGrowTrait.refresh();
+        }
+    } else if (diaryAutoGrowTrait?.destroy) {
+        diaryAutoGrowTrait.destroy({ resetToBaseHeight: true });
+        diaryAutoGrowTrait = null;
+    }
+}
+
 // 自动保存草稿到 localStorage
 if (contentInput) {
     contentInput.addEventListener('input', () => {
@@ -143,6 +213,7 @@ tabs.forEach(tab => {
 
         // 恢复缓存的内容
         contentInput.value = contentCache[currentType] || '';
+        syncDiaryInputTraits();
 
         // 更新占位符和显示区域
         if (currentType === 'diary') {
@@ -771,6 +842,7 @@ async function init() {
         if (contentCache[currentType]) {
             contentInput.value = contentCache[currentType];
         }
+        syncDiaryInputTraits();
 
         // 恢复 flomo 开关状态
         const savedFlomoEnabled = localStorage.getItem('journal-sync-flomo-enabled');
