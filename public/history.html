@@ -266,6 +266,8 @@
 
     <script>
         let timeline = [];
+        let refreshTimer = null;
+        let lastHistoryHash = '';
 
         // 加载所有历史记录
         async function loadAllHistory() {
@@ -274,7 +276,12 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    timeline = data.history;
+                    const nextHistory = Array.isArray(data.history) ? data.history : [];
+                    const nextHash = JSON.stringify(nextHistory);
+                    if (nextHash === lastHistoryHash) return;
+
+                    lastHistoryHash = nextHash;
+                    timeline = nextHistory;
                     renderTimeline();
                 }
             } catch (error) {
@@ -410,8 +417,9 @@
                 // telegram (跳过则不显示)
                 const telegramStatus = item.status.telegram;
                 const hasSpecificSends = item.telegramSends && Array.isArray(item.telegramSends) && item.telegramSends.length > 0;
+                const hasPendingSends = item.pendingSends && Array.isArray(item.pendingSends) && item.pendingSends.length > 0;
                 
-                if (!hasSpecificSends && telegramStatus !== 'skipped') {
+                if (!hasSpecificSends && !hasPendingSends && telegramStatus !== 'skipped') {
                     if (telegramStatus === 'success' || telegramStatus === true) {
                         statuses.push('<span class="status-item success">✓ Telegram</span>');
                     } else if (telegramStatus === 'failed' || telegramStatus === false) {
@@ -426,6 +434,14 @@
                     uniqueChannels.forEach(channel => {
                         const shortName = channel.substring(0, 5);
                         statuses.push(`<span class="status-item success">✓ Telegram: ${escapeHtml(shortName)}</span>`);
+                    });
+                }
+
+                if (hasPendingSends) {
+                    const uniquePending = [...new Set(item.pendingSends)];
+                    uniquePending.forEach(channel => {
+                        const shortName = channel.substring(0, 5);
+                        statuses.push(`<span class="status-item pending">⏳ Telegram: ${escapeHtml(shortName)}</span>`);
                     });
                 }
 
@@ -482,8 +498,31 @@
             return div.innerHTML;
         }
 
+        function startAutoRefresh() {
+            if (refreshTimer) return;
+            refreshTimer = setInterval(loadAllHistory, 3000);
+        }
+
+        function stopAutoRefresh() {
+            if (!refreshTimer) return;
+            clearInterval(refreshTimer);
+            refreshTimer = null;
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                loadAllHistory();
+                startAutoRefresh();
+            }
+        });
+
+        window.addEventListener('beforeunload', stopAutoRefresh);
+
         // 页面加载完成后初始化
         loadAllHistory();
+        startAutoRefresh();
     </script>
 </body>
 </html>

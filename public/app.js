@@ -407,6 +407,8 @@ saveBtn.addEventListener('click', async () => {
     const imageFilenames = pendingImages.map(img => img.filename);
 
     // 立即添加到历史记录（pending 状态）
+    const existingIndex = timeline.findIndex(item => item.id === saveId);
+    const existingEntry = existingIndex !== -1 ? timeline[existingIndex] : null;
     const pendingEntry = {
         id: saveId,
         timestamp: new Date().toISOString(),
@@ -420,11 +422,12 @@ saveBtn.addEventListener('click', async () => {
             memu: pluginStates.memu ? 'pending' : 'skipped',
             mem0: (pluginStates.mem0 && currentType === 'diary') ? 'pending' : 'skipped'
         },
-        telegramSends: [],
+        // 保留已成功/进行中的 Telegram 发布状态，避免被保存动作覆盖
+        telegramSends: existingEntry?.telegramSends || [],
+        pendingSends: existingEntry?.pendingSends || [],
         pending: true
     };
 
-    const existingIndex = timeline.findIndex(item => item.id === saveId);
     if (existingIndex !== -1) {
         timeline[existingIndex] = { ...timeline[existingIndex], ...pendingEntry, status: { ...timeline[existingIndex].status, ...pendingEntry.status } };
     } else {

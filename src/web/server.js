@@ -200,7 +200,9 @@ async function saveHistory(history) {
 /**
  * 添加或更新历史记录
  */
-async function updateOrAddToHistory(entry) {
+let historyWriteQueue = Promise.resolve();
+
+async function updateOrAddToHistoryInternal(entry) {
   const history = await loadHistory();
   const existingIndex = history.findIndex(item => item.id === entry.id);
 
@@ -230,6 +232,12 @@ async function updateOrAddToHistory(entry) {
   }
 
   await saveHistory(history);
+}
+
+async function updateOrAddToHistory(entry) {
+  const task = historyWriteQueue.then(() => updateOrAddToHistoryInternal(entry));
+  historyWriteQueue = task.catch(() => {});
+  return task;
 }
 
 // API 路由
