@@ -1602,7 +1602,16 @@ app.post('/api/telegram/publish', async (req, res) => {
     const scriptToUse = pluginScript;
 
     const args = [scriptToUse, channel];
-    const normalizedSourceUrl = typeof sourceUrl === 'string' ? sourceUrl.trim() : '';
+    const isNotePublish = type === 'note';
+    const enableBoldFirstLineForNote = isNotePublish && Boolean(telegramConfig?.boldFirstLine);
+    const enableAppendSourceForNote = isNotePublish && Boolean(telegramConfig?.appendSourceTag);
+    const normalizedSourceUrl = enableAppendSourceForNote && typeof sourceUrl === 'string'
+      ? sourceUrl.trim()
+      : '';
+
+    if (enableBoldFirstLineForNote) {
+      args.push('--bold-first-line');
+    }
 
     if (normalizedSourceUrl) {
       if (!/^https?:\/\//i.test(normalizedSourceUrl)) {

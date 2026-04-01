@@ -522,7 +522,7 @@ def main():
 
     plugin_config = load_plugin_config()
     show_link_preview = plugin_config.get("showLinkPreview", True)
-    bold_first_line = plugin_config.get("boldFirstLine", False)
+    bold_first_line = False
 
     # 解析命令行参数：支持 --source-url <url> 和 --images path1 path2 ...
     raw_args = sys.argv[1:]
@@ -536,6 +536,10 @@ def main():
     idx = 0
     while idx < len(raw_args):
         token_arg = raw_args[idx]
+        if token_arg == "--bold-first-line":
+            bold_first_line = True
+            idx += 1
+            continue
         if token_arg == "--source-url":
             if idx + 1 >= len(raw_args):
                 print("Missing URL value after --source-url", file=sys.stderr)

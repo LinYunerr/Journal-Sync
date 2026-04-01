@@ -19,12 +19,15 @@ test('plugin registry exposes expected plugins and telegram dynamic select metad
     field => field.key === 'defaultChannel'
   );
   const appendSourceField = telegramFields.find(field => field.key === 'appendSourceTag');
+  const boldFirstLineField = telegramFields.find(field => field.key === 'boldFirstLine');
   const boldFirstLineIndex = telegramFields.findIndex(field => field.key === 'boldFirstLine');
   const appendSourceIndex = telegramFields.findIndex(field => field.key === 'appendSourceTag');
 
   assert.equal(defaultChannelField.type, 'select');
   assert.equal(defaultChannelField.optionsSource.path, 'channels');
   assert.equal(appendSourceField.type, 'boolean');
+  assert.equal(boldFirstLineField.label, '笔记发布TG时首行加粗');
+  assert.equal(appendSourceField.label, '笔记发布TG时结尾增加source标识');
   assert.ok(appendSourceIndex > boldFirstLineIndex);
 });
 

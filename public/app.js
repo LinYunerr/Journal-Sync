@@ -158,25 +158,71 @@ if (!GlobalInputTraits.autoGrowTextarea) {
     };
 }
 
-let diaryAutoGrowTrait = null;
+if (!GlobalInputTraits.autoGrowRegistry) {
+    GlobalInputTraits.autoGrowRegistry = new Map();
+}
+
+if (!GlobalInputTraits.mountAutoGrowTextarea) {
+    GlobalInputTraits.mountAutoGrowTextarea = function mountAutoGrowTextarea(key, textarea, options = {}) {
+        if (!key || !textarea) return null;
+
+        const registry = GlobalInputTraits.autoGrowRegistry;
+        const current = registry.get(key);
+
+        if (current?.textarea && current.textarea !== textarea && current.trait?.destroy) {
+            current.trait.destroy({ resetToBaseHeight: true });
+            registry.delete(key);
+        }
+
+        if (!registry.has(key)) {
+            const trait = GlobalInputTraits.autoGrowTextarea(textarea, options);
+            if (trait) {
+                registry.set(key, { textarea, trait });
+            }
+        }
+
+        const mounted = registry.get(key)?.trait || null;
+        mounted?.refresh?.();
+        return mounted;
+    };
+}
+
+if (!GlobalInputTraits.unmountAutoGrowTextarea) {
+    GlobalInputTraits.unmountAutoGrowTextarea = function unmountAutoGrowTextarea(key, options = {}) {
+        const registry = GlobalInputTraits.autoGrowRegistry;
+        const current = registry.get(key);
+        if (!current?.trait?.destroy) return;
+
+        const resetToBaseHeight = options.resetToBaseHeight !== false;
+        current.trait.destroy({ resetToBaseHeight });
+        registry.delete(key);
+    };
+}
+
+if (!GlobalInputTraits.refreshAutoGrowTextarea) {
+    GlobalInputTraits.refreshAutoGrowTextarea = function refreshAutoGrowTextarea(key) {
+        GlobalInputTraits.autoGrowRegistry.get(key)?.trait?.refresh?.();
+    };
+}
 
 function syncDiaryInputTraits() {
     if (!contentInput) return;
 
     if (currentType === 'diary') {
-        if (!diaryAutoGrowTrait) {
-            diaryAutoGrowTrait = GlobalInputTraits.autoGrowTextarea(contentInput, {
-                reserveLines: 2
-            });
-        }
-
-        if (diaryAutoGrowTrait?.refresh) {
-            diaryAutoGrowTrait.refresh();
-        }
-    } else if (diaryAutoGrowTrait?.destroy) {
-        diaryAutoGrowTrait.destroy({ resetToBaseHeight: true });
-        diaryAutoGrowTrait = null;
+        GlobalInputTraits.mountAutoGrowTextarea('contentInput', contentInput, {
+            reserveLines: 2
+        });
+    } else {
+        GlobalInputTraits.unmountAutoGrowTextarea('contentInput', { resetToBaseHeight: true });
     }
+}
+
+function ensureTgPreviewInputTraits() {
+    if (!tgPreviewContent) return;
+
+    GlobalInputTraits.mountAutoGrowTextarea('tgPreviewContent', tgPreviewContent, {
+        reserveLines: 2
+    });
 }
 
 // 自动保存草稿到 localStorage
@@ -271,6 +317,7 @@ tabs.forEach(tab => {
         // 重置 TG 预览
         tgPreviewSection.style.display = 'none';
         tgPreviewContent.value = '';
+        GlobalInputTraits.refreshAutoGrowTextarea('tgPreviewContent');
         if (tgSourceUrlInput) {
             tgSourceUrlInput.value = '';
         }
@@ -1012,6 +1059,7 @@ if (generateTgBtn) {
                 tgOptimizedContent = data.optimized;
                 tgPreviewContent.value = tgOptimizedContent;
                 tgPreviewSection.style.display = 'block';
+                ensureTgPreviewInputTraits();
                 if (tgSourceUrlInput) {
                     tgSourceUrlInput.value = extractedSourceUrl;
                 }

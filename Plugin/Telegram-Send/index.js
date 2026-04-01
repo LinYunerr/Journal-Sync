@@ -89,13 +89,13 @@ export const manifest = {
                     {
                         key: 'boldFirstLine',
                         type: 'boolean',
-                        label: '首行加粗',
+                        label: '笔记发布TG时首行加粗',
                         default: false
                     },
                     {
                         key: 'appendSourceTag',
                         type: 'boolean',
-                        label: '结尾增加source标识',
+                        label: '笔记发布TG时结尾增加source标识',
                         default: false
                     }
                 ]
@@ -257,7 +257,7 @@ export async function runAction(actionId, payload = {}) {
     throw new Error(`Unknown action: ${actionId}`);
 }
 
-export async function execute({ content, options, suggestion, images = [] }) {
+export async function execute({ content, type, options, suggestion, images = [] }) {
     const config = await loadConfig();
 
     if (!config.scriptPath || !config.botToken) {
@@ -273,6 +273,11 @@ export async function execute({ content, options, suggestion, images = [] }) {
     // 构建 Python 脚本的命令行参数
     // 基础参数：脚本路径 + 频道
     const args = [config.scriptPath, channel];
+    const shouldBoldFirstLineForNote = type === 'note' && Boolean(config.boldFirstLine);
+
+    if (shouldBoldFirstLineForNote) {
+        args.push('--bold-first-line');
+    }
 
     // 如果有图片，追加 --images 参数
     if (images.length > 0) {
