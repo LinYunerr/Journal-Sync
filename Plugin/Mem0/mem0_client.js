@@ -4,6 +4,33 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEFAULT_INSIGHTS = Object.freeze({
+  emotions: { weeklyKeywords: [], history: [], lastUpdated: null },
+  media: { items: [], history: [] },
+  work: { items: [], history: [] },
+  life: { items: [], history: [] }
+});
+
+function createDefaultInsights() {
+  return JSON.parse(JSON.stringify(DEFAULT_INSIGHTS));
+}
+
+function normalizeInsights(insights) {
+  const merged = createDefaultInsights();
+  if (!insights || typeof insights !== 'object') return merged;
+  if (Array.isArray(insights.emotions?.weeklyKeywords)) merged.emotions.weeklyKeywords = insights.emotions.weeklyKeywords;
+  if (Array.isArray(insights.emotions?.history)) merged.emotions.history = insights.emotions.history;
+  if (typeof insights.emotions?.lastUpdated === 'string' || insights.emotions?.lastUpdated === null) {
+    merged.emotions.lastUpdated = insights.emotions.lastUpdated;
+  }
+  if (Array.isArray(insights.media?.items)) merged.media.items = insights.media.items;
+  if (Array.isArray(insights.media?.history)) merged.media.history = insights.media.history;
+  if (Array.isArray(insights.work?.items)) merged.work.items = insights.work.items;
+  if (Array.isArray(insights.work?.history)) merged.work.history = insights.work.history;
+  if (Array.isArray(insights.life?.items)) merged.life.items = insights.life.items;
+  if (Array.isArray(insights.life?.history)) merged.life.history = insights.life.history;
+  return merged;
+}
 
 /**
  * Mem0 客户端封装
@@ -358,14 +385,9 @@ ${content}
   async loadInsights() {
     try {
       const data = await fs.readFile(this.insightsPath, 'utf-8');
-      return JSON.parse(data);
+      return normalizeInsights(JSON.parse(data));
     } catch (error) {
-      return {
-        emotions: { weeklyKeywords: [], history: [], lastUpdated: null },
-        media: { items: [], history: [] },
-        work: { items: [], history: [] },
-        life: { items: [], history: [] }
-      };
+      return createDefaultInsights();
     }
   }
 

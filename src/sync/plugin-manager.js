@@ -250,6 +250,9 @@ function mergeConfigByManifest(existingConfig, incomingConfig, manifest) {
 
 function normalizeManifest(manifest, entryName) {
     const pluginId = manifest?.id || slugifyDirectoryName(entryName);
+    const dependsOn = Array.isArray(manifest?.dependsOn)
+        ? manifest.dependsOn.filter(item => typeof item === 'string' && item.trim())
+        : [];
 
     return {
         id: pluginId,
@@ -258,6 +261,7 @@ function normalizeManifest(manifest, entryName) {
         description: manifest?.description || '',
         category: manifest?.category || 'general',
         enabledByDefault: manifest?.enabledByDefault ?? false,
+        dependsOn,
         capabilities: {
             execute: manifest?.capabilities?.execute ?? true,
             configure: manifest?.capabilities?.configure ?? true,
@@ -270,6 +274,67 @@ function normalizeManifest(manifest, entryName) {
             actions: manifest?.settings?.actions || []
         }
     };
+}
+
+function getLegacyExecutionPriority(pluginId) {
+    if (pluginId === 'memu') return -10;
+    if (pluginId === 'telegram') return 10;
+    return 0;
+}
+
+export function resolvePluginExecutionOrder(pluginEntries) {
+    const indegree = new Map();
+    const edges = new Map();
+    const allIds = new Set(pluginEntries.map(([id]) => id));
+
+    for (const [pluginId] of pluginEntries) {
+        indegree.set(pluginId, 0);
+        edges.set(pluginId, new Set());
+    }
+
+    for (const [pluginId, plugin] of pluginEntries) {
+        const dependencies = Array.isArray(plugin?.manifest?.dependsOn) ? plugin.manifest.dependsOn : [];
+        for (const dependency of dependencies) {
+            if (!allIds.has(dependency) || dependency === pluginId) continue;
+            if (!edges.get(dependency).has(pluginId)) {
+                edges.get(dependency).add(pluginId);
+                indegree.set(pluginId, indegree.get(pluginId) + 1);
+            }
+        }
+    }
+
+    const ordered = [];
+    const available = pluginEntries
+        .filter(([id]) => indegree.get(id) === 0)
+        .map(([id]) => id);
+
+    const sortAvailable = () => {
+        available.sort((a, b) => {
+            const diff = getLegacyExecutionPriority(a) - getLegacyExecutionPriority(b);
+            if (diff !== 0) return diff;
+            return a.localeCompare(b);
+        });
+    };
+    sortAvailable();
+
+    while (available.length > 0) {
+        const current = available.shift();
+        ordered.push(current);
+        for (const next of edges.get(current)) {
+            indegree.set(next, indegree.get(next) - 1);
+            if (indegree.get(next) === 0) {
+                available.push(next);
+                sortAvailable();
+            }
+        }
+    }
+
+    if (ordered.length !== pluginEntries.length) {
+        const fallback = pluginEntries.map(([id]) => id);
+        fallback.sort((a, b) => getLegacyExecutionPriority(a) - getLegacyExecutionPriority(b));
+        return fallback;
+    }
+    return ordered;
 }
 
 /**
@@ -430,15 +495,7 @@ export async function executePlugins(content, type, options, coreConfig, onUpdat
         suggestion: null
     };
 
-    // 简易依赖顺序：memu -> telegram -> 其他
-    const loadedKeys = Object.keys(plugins);
-    loadedKeys.sort((a, b) => {
-        if (a === 'memu') return -1;
-        if (b === 'memu') return 1;
-        if (a === 'telegram') return 1;
-        if (b === 'telegram') return -1;
-        return 0;
-    });
+    const loadedKeys = resolvePluginExecutionOrder(Object.entries(plugins));
 
     // 1. 顺序执行具备依赖属性的插件 (比如 MemU 可能生成供 Telegram 使用的 suggestion)
     for (const key of loadedKeys) {

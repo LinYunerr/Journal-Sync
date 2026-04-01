@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import PluginManager, {
   normalizeActionResult,
+  resolvePluginExecutionOrder,
   validatePluginConfigData
 } from '../src/sync/plugin-manager.js';
 
@@ -67,4 +68,14 @@ test('validatePluginConfigData and normalizeActionResult return structured resul
       channels: [{ id: '1', title: 'Demo' }]
     }
   });
+});
+
+test('resolvePluginExecutionOrder honors manifest dependsOn graph', () => {
+  const order = resolvePluginExecutionOrder([
+    ['telegram', { manifest: { dependsOn: ['memu'] } }],
+    ['memu', { manifest: { dependsOn: [] } }],
+    ['flomo', { manifest: { dependsOn: [] } }]
+  ]);
+
+  assert.ok(order.indexOf('memu') < order.indexOf('telegram'));
 });

@@ -64,6 +64,7 @@ export const manifest = {
   version: '1.0.0',
   name: 'Telegram',
   description: '发送内容到 Telegram 频道',
+  dependsOn: ['memu'], // 可选：声明执行依赖
   enabledByDefault: false,
   settings: {
     storage: 'plugin',
@@ -97,12 +98,15 @@ export async function runAction(actionId, payload) {}
 - 主配置：`data/config.json`
 - 插件私有配置：`Plugin/<plugin>/config.json`
 - 敏感字段读取时会脱敏，保存空字符串时保留旧值
+- 插件执行顺序支持显式依赖：`manifest.dependsOn: string[]`
 
 ## 常用 API
 
 核心写入与历史：
 
 - `POST /api/save-stream`：保存并流式返回插件状态
+  - 请求体会进行基础校验（`content/type/options/saveId/imageFilenames`）
+  - 若未传 `saveId`，后端会自动生成唯一 ID，避免历史记录冲突
 - `POST /api/save`：兼容旧接口
 - `GET /api/history` / `DELETE /api/history`
 - `GET /api/stats`
@@ -112,6 +116,7 @@ Telegram：
 - `POST /api/telegram/test`
 - `POST /api/telegram/optimize`
 - `POST /api/telegram/publish`
+  - 请求体会进行基础校验（`content/channel/saveId/type/imageFilenames/sourceUrl`）
 
 插件：
 
@@ -145,6 +150,8 @@ Telegram：
 - 不要提交 `data/` 下运行时数据
 - 本地服务默认只允许 `localhost/127.0.0.1:3000` 的 CORS 来源
 - 代理配置可在设置中启用（用于 AI/外部请求）
+- 图片文件名在写入 `assets/` 前会做路径约束，拒绝路径穿越输入
+- AI 地址会自动规范到 `.../chat/completions`（若已包含则不重复追加）
 
 ## 已知限制
 

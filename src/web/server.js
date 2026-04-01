@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { saveToObsidian, optimizeContent } from '../sync/journal-sync.js';
 import { promises as fsPromises } from 'fs';
@@ -11,6 +12,90 @@ import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const DEFAULT_MEM0_INSIGHTS = Object.freeze({
+  emotions: { weeklyKeywords: [], history: [], lastUpdated: null },
+  media: { items: [], history: [] },
+  work: { items: [], history: [] },
+  life: { items: [], history: [] }
+});
+
+function createDefaultMem0Insights() {
+  return JSON.parse(JSON.stringify(DEFAULT_MEM0_INSIGHTS));
+}
+
+function normalizeMem0Insights(insights) {
+  const merged = createDefaultMem0Insights();
+  if (!insights || typeof insights !== 'object') return merged;
+  if (Array.isArray(insights.emotions?.weeklyKeywords)) merged.emotions.weeklyKeywords = insights.emotions.weeklyKeywords;
+  if (Array.isArray(insights.emotions?.history)) merged.emotions.history = insights.emotions.history;
+  if (typeof insights.emotions?.lastUpdated === 'string' || insights.emotions?.lastUpdated === null) {
+    merged.emotions.lastUpdated = insights.emotions.lastUpdated;
+  }
+  if (Array.isArray(insights.media?.items)) merged.media.items = insights.media.items;
+  if (Array.isArray(insights.media?.history)) merged.media.history = insights.media.history;
+  if (Array.isArray(insights.work?.items)) merged.work.items = insights.work.items;
+  if (Array.isArray(insights.work?.history)) merged.work.history = insights.work.history;
+  if (Array.isArray(insights.life?.items)) merged.life.items = insights.life.items;
+  if (Array.isArray(insights.life?.history)) merged.life.history = insights.life.history;
+  return merged;
+}
+
+function getAiChatCompletionsUrl(baseUrl) {
+  const trimmed = String(baseUrl || '').trim();
+  if (!trimmed) {
+    throw new Error('AI baseUrl 不能为空');
+  }
+  const url = new URL(trimmed);
+  const normalizedPath = url.pathname.replace(/\/+$/, '');
+  if (!normalizedPath.endsWith('/chat/completions')) {
+    url.pathname = `${normalizedPath || ''}/chat/completions`;
+  }
+  return url.toString();
+}
+
+function sanitizeAssetFilename(rawFilename) {
+  if (typeof rawFilename !== 'string') return null;
+  const trimmed = rawFilename.trim();
+  if (!trimmed) return null;
+  const normalized = path.basename(trimmed);
+  if (!normalized || normalized === '.' || normalized === '..') return null;
+  return normalized;
+}
+
+function isPathInsideDir(targetPath, baseDir) {
+  const relative = path.relative(baseDir, targetPath);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function validateSaveStreamPayload(body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+  const { content, type, options, imageFilenames } = payload;
+  if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
+  if (type !== undefined && !['diary', 'note'].includes(type)) return '类型必须是 diary 或 note';
+  if (options !== undefined && (typeof options !== 'object' || options === null || Array.isArray(options))) {
+    return 'options 必须是对象';
+  }
+  if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
+    return 'imageFilenames 必须是字符串数组';
+  }
+  return null;
+}
+
+function validateTelegramPublishPayload(body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+  const { content, channel, saveId, type, channelName, imageFilenames, sourceUrl } = payload;
+  if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
+  if (channel !== undefined && typeof channel !== 'string') return 'channel 必须是字符串';
+  if (saveId !== undefined && typeof saveId !== 'string' && typeof saveId !== 'number') return 'saveId 必须是字符串或数字';
+  if (type !== undefined && !['diary', 'note'].includes(type)) return 'type 必须是 diary 或 note';
+  if (channelName !== undefined && typeof channelName !== 'string') return 'channelName 必须是字符串';
+  if (sourceUrl !== undefined && typeof sourceUrl !== 'string') return 'sourceUrl 必须是字符串';
+  if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
+    return 'imageFilenames 必须是字符串数组';
+  }
+  return null;
+}
 
 // 初始化数据目录和基础配置
 async function initDataFiles() {
@@ -25,7 +110,7 @@ async function initDataFiles() {
       },
       'history.json': [],
       'tasks.json': [],
-      'mem0_insights.json': {}
+      'mem0_insights.json': createDefaultMem0Insights()
     };
 
     for (const [file, defaultData] of Object.entries(defaults)) {
@@ -40,6 +125,21 @@ async function initDataFiles() {
           console.error(`[Init] File access error for ${file}:`, err);
         }
       }
+    }
+
+    const mem0InsightsPath = path.join(dataDir, 'mem0_insights.json');
+    try {
+      const raw = await fsPromises.readFile(mem0InsightsPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeMem0Insights(parsed);
+      if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+        await fsPromises.writeFile(mem0InsightsPath, JSON.stringify(normalized, null, 2), 'utf-8');
+        console.log('[Init] Normalized mem0_insights.json structure');
+      }
+    } catch (error) {
+      const fallback = createDefaultMem0Insights();
+      await fsPromises.writeFile(mem0InsightsPath, JSON.stringify(fallback, null, 2), 'utf-8');
+      console.warn('[Init] Rebuilt invalid mem0_insights.json');
     }
   } catch (error) {
     console.error('[Init] Error initializing data files:', error);
@@ -307,9 +407,8 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
  */
 app.get('/api/image-cache/:filename', async (req, res) => {
   try {
-    const filename = req.params.filename;
-    // 防止路径穿越
-    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    const filename = sanitizeAssetFilename(req.params.filename);
+    if (!filename) {
       return res.status(400).json({ error: '非法文件名' });
     }
 
@@ -353,8 +452,17 @@ async function ensureImagesInAssets(filenames, obsidianPath) {
   await fsPromises.mkdir(assetsDir, { recursive: true });
 
   const result = [];
-  for (const filename of filenames) {
-    const destPath = path.join(assetsDir, filename);
+  for (const rawFilename of filenames) {
+    const filename = sanitizeAssetFilename(rawFilename);
+    if (!filename) {
+      console.warn(`[ImageAssets] 非法文件名已忽略: ${rawFilename}`);
+      continue;
+    }
+    const destPath = path.resolve(assetsDir, filename);
+    if (!isPathInsideDir(destPath, assetsDir)) {
+      console.warn(`[ImageAssets] 越界路径已忽略: ${rawFilename}`);
+      continue;
+    }
 
     // 1. 已经在 assets 了，直接用
     try {
@@ -365,7 +473,11 @@ async function ensureImagesInAssets(filenames, obsidianPath) {
     } catch {}
 
     // 2. 在缓存目录，移过去
-    const cachePath = path.join(IMAGE_CACHE_DIR, filename);
+    const cachePath = path.resolve(IMAGE_CACHE_DIR, filename);
+    if (!isPathInsideDir(cachePath, IMAGE_CACHE_DIR)) {
+      console.warn(`[ImageAssets] 非法缓存路径已忽略: ${rawFilename}`);
+      continue;
+    }
     try {
       await fsPromises.access(cachePath);
       await fsPromises.copyFile(cachePath, destPath);
@@ -386,7 +498,17 @@ async function ensureImagesInAssets(filenames, obsidianPath) {
  */
 app.post('/api/save-stream', async (req, res) => {
   try {
-    const { content, type = 'diary', options = {}, saveId, imageFilenames = [] } = req.body;
+    const payloadError = validateSaveStreamPayload(req.body);
+    if (payloadError) {
+      return res.status(400).json({ error: payloadError });
+    }
+
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const { content, type = 'diary', options = {}, saveId, imageFilenames = [] } = payload;
+    const normalizedSaveId = saveId === undefined || saveId === null ? '' : String(saveId).trim();
+    const effectiveSaveId = normalizedSaveId
+      ? normalizedSaveId
+      : `save_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     if ((!content || !content.trim()) && imageFilenames.length === 0) {
       return res.status(400).json({ error: '内容不能为空' });
@@ -434,7 +556,7 @@ app.post('/api/save-stream', async (req, res) => {
     }
 
     await updateOrAddToHistory({
-      id: saveId,
+      id: effectiveSaveId,
       timestamp: new Date().toISOString(),
       type,
       content: contentWithImages,
@@ -442,7 +564,7 @@ app.post('/api/save-stream', async (req, res) => {
       suggestion: pluginResults.memu?.suggestion || null
     });
 
-    res.write(`data: ${JSON.stringify({ type: 'complete', suggestion: pluginResults.memu?.suggestion })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'complete', saveId: effectiveSaveId, suggestion: pluginResults.memu?.suggestion })}\n\n`);
     res.end();
   } catch (error) {
     res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
@@ -556,7 +678,7 @@ app.post('/api/browse-folder', async (req, res) => {
     let { startPath } = req.body;
 
     // 路径规范化，防止类似于 startPath=../../../../ 形式的不受限遍历
-    let basePath = require('os').homedir();
+    let basePath = os.homedir();
     if (startPath && typeof startPath === 'string') {
       basePath = path.resolve(startPath);
     }
@@ -742,7 +864,7 @@ app.post('/api/config/set', async (req, res) => {
   try {
     const { path: configPath, value } = req.body;
 
-    if (!configPath || value === undefined) {
+    if (!configPath || typeof configPath !== 'string' || value === undefined) {
       return res.status(400).json({
         ok: false,
         error: '缺少必要参数'
@@ -769,7 +891,30 @@ app.post('/api/config/set', async (req, res) => {
       } else if (configPath === 'diary.tgOptimizePrompt') {
         telegramConfig.optimizePrompt = value;
       } else if (configPath === 'diary.tgChannels') {
-        telegramConfig.channels = JSON.parse(value);
+        if (typeof value === 'string') {
+          try {
+            telegramConfig.channels = JSON.parse(value);
+          } catch {
+            return res.status(400).json({
+              ok: false,
+              error: 'tgChannels 必须是合法 JSON 字符串'
+            });
+          }
+        } else if (Array.isArray(value)) {
+          telegramConfig.channels = value;
+        } else {
+          return res.status(400).json({
+            ok: false,
+            error: 'tgChannels 必须是 JSON 字符串或数组'
+          });
+        }
+
+        if (!Array.isArray(telegramConfig.channels)) {
+          return res.status(400).json({
+            ok: false,
+            error: 'tgChannels 解析后必须是数组'
+          });
+        }
       } else if (configPath === 'diary.tgShowLinkPreview') {
         telegramConfig.showLinkPreview = Boolean(value);
       } else if (configPath === 'diary.tgBoldFirstLine') {
@@ -908,14 +1053,15 @@ app.post('/api/config/test-ai', async (req, res) => {
     if (!config?.ai?.baseUrl || !config?.ai?.apiKey || !config?.ai?.model) {
       return res.status(400).json({
         ok: false,
+        success: false,
         error: 'AI 配置不完整，请先配置 API 地址、密钥和模型'
       });
     }
 
     // 简单的测试请求
     const startTime = Date.now();
-    const baseUrl = config.ai.baseUrl.replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const apiUrl = getAiChatCompletionsUrl(config.ai.baseUrl);
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -937,6 +1083,7 @@ app.post('/api/config/test-ai', async (req, res) => {
       const result = await response.json();
       res.json({
         ok: true,
+        success: true,
         message: 'AI 连接测试成功',
         duration: `${duration}ms`,
         model: config.ai.model,
@@ -946,6 +1093,7 @@ app.post('/api/config/test-ai', async (req, res) => {
       const error = await response.text();
       res.status(500).json({
         ok: false,
+        success: false,
         error: error,
         message: 'AI 连接测试失败'
       });
@@ -953,6 +1101,7 @@ app.post('/api/config/test-ai', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       ok: false,
+      success: false,
       error: error.message,
       message: 'AI 连接测试失败'
     });
@@ -1372,6 +1521,7 @@ app.post('/api/telegram/test', async (req, res) => {
     if (!botToken) {
       return res.status(400).json({
         ok: false,
+        success: false,
         error: 'Bot Token 不能为空'
       });
     }
@@ -1379,14 +1529,23 @@ app.post('/api/telegram/test', async (req, res) => {
     const result = await PluginManager.runPluginAction('telegram', 'discoverChannels', {
       config: { botToken }
     });
+    if (!result.success) {
+      return res.status(500).json({
+        ok: false,
+        success: false,
+        error: result.message || '获取频道列表失败'
+      });
+    }
     res.json({
       ok: true,
-      channels: result.channels || [],
+      success: true,
+      channels: result.data?.channels || [],
       message: result.message
     });
   } catch (error) {
     res.status(500).json({
       ok: false,
+      success: false,
       error: error.message
     });
   }
@@ -1402,6 +1561,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
     if (!content) {
       return res.status(400).json({
         ok: false,
+        success: false,
         error: '内容不能为空'
       });
     }
@@ -1414,6 +1574,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
     if (!aiConfig || !aiConfig.baseUrl || !aiConfig.apiKey || !aiConfig.model) {
       return res.json({
         ok: false,
+        success: false,
         error: 'AI 配置不完整，请先在设置中配置 AI 模型'
       });
     }
@@ -1422,104 +1583,78 @@ app.post('/api/telegram/optimize', async (req, res) => {
     const customPrompt = telegramConfig?.optimizePrompt;
     const systemPrompt = customPrompt || '你是一个专业的内容编辑，擅长将笔记内容优化为适合 Telegram 频道发布的格式。要求：1. 保持原意，简洁明了 2. 适当使用 emoji 3. 分段清晰 4. 适合社交媒体阅读';
 
-    // 调用 AI 优化内容
-    const https = await import('https');
-    const { URL } = await import('url');
-
-    // 拼接完整的 API 路径
-    const baseUrl = aiConfig.baseUrl.replace(/\/$/, '');
-    const fullUrl = `${baseUrl}/chat/completions`;
-    const apiUrl = new URL(fullUrl);
-
-    const postData = JSON.stringify({
-      model: aiConfig.model,
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt
-        },
-        {
-          role: 'user',
-          content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content}`
-        }
-      ],
-      temperature: 0.7
-    });
-
-    const options = {
-      hostname: apiUrl.hostname,
-      port: apiUrl.port || 443,
-      path: apiUrl.pathname,
+    // 调用 AI 优化内容（使用 fetch，复用全局代理）
+    const apiUrl = getAiChatCompletionsUrl(aiConfig.baseUrl);
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.apiKey}`,
-        'Content-Length': Buffer.byteLength(postData)
-      }
-    };
-
-    const request = https.default.request(options, (apiRes) => {
-      const dataChunks = [];
-
-      apiRes.on('data', (chunk) => {
-        dataChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      });
-
-      apiRes.on('end', () => {
-        const data = Buffer.concat(dataChunks).toString('utf8');
-
-        try {
-          // 检查是否有数据
-          if (!data || data.trim() === '') {
-            return res.json({
-              ok: false,
-              error: 'AI 返回空响应'
-            });
+        'Authorization': `Bearer ${aiConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: aiConfig.model,
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content}`
           }
-
-          const result = JSON.parse(data);
-
-          // 检查是否有错误
-          if (result.error) {
-            return res.json({
-              ok: false,
-              error: `AI 错误: ${result.error.message || JSON.stringify(result.error)} `
-            });
-          }
-
-          if (result.choices && result.choices[0] && result.choices[0].message) {
-            const optimized = result.choices[0].message.content;
-            res.json({
-              ok: true,
-              optimized: optimized
-            });
-          } else {
-            res.json({
-              ok: false,
-              error: 'AI 返回格式错误: ' + JSON.stringify(result)
-            });
-          }
-        } catch (parseError) {
-          res.json({
-            ok: false,
-            error: '解析 AI 响应失败: ' + parseError.message + '\n原始响应: ' + data.substring(0, 200)
-          });
-        }
-      });
+        ],
+        temperature: 0.7
+      })
     });
-
-    request.on('error', (err) => {
-      res.json({
+    const rawData = await response.text();
+    if (!rawData || rawData.trim() === '') {
+      return res.json({
         ok: false,
-        error: '调用 AI 失败: ' + err.message
+        success: false,
+        error: 'AI 返回空响应'
       });
+    }
+    let result;
+    try {
+      result = JSON.parse(rawData);
+    } catch (parseError) {
+      return res.json({
+        ok: false,
+        success: false,
+        error: '解析 AI 响应失败: ' + parseError.message + '\n原始响应: ' + rawData.substring(0, 200)
+      });
+    }
+    if (!response.ok) {
+      return res.json({
+        ok: false,
+        success: false,
+        error: result?.error?.message || rawData.substring(0, 200)
+      });
+    }
+    if (result.error) {
+      return res.json({
+        ok: false,
+        success: false,
+        error: `AI 错误: ${result.error.message || JSON.stringify(result.error)} `
+      });
+    }
+    if (result.choices && result.choices[0] && result.choices[0].message) {
+      const optimized = result.choices[0].message.content;
+      return res.json({
+        ok: true,
+        success: true,
+        optimized: optimized
+      });
+    }
+    res.json({
+      ok: false,
+      success: false,
+      error: 'AI 返回格式错误: ' + JSON.stringify(result)
     });
-
-    request.write(postData);
-    request.end();
   } catch (error) {
     res.status(500).json({
       ok: false,
+      success: false,
       error: error.message
     });
   }
@@ -1530,7 +1665,17 @@ app.post('/api/telegram/optimize', async (req, res) => {
  */
 app.post('/api/telegram/publish', async (req, res) => {
   try {
-    const { content, channel, saveId, type = 'diary', channelName, imageFilenames = [], sourceUrl = '' } = req.body;
+    const payloadError = validateTelegramPublishPayload(req.body);
+    if (payloadError) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: payloadError
+      });
+    }
+
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const { content, channel, saveId, type = 'diary', channelName, imageFilenames = [], sourceUrl = '' } = payload;
 
     if (!content && imageFilenames.length === 0) {
       return res.status(400).json({

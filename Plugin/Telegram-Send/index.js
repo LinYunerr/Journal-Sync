@@ -26,6 +26,7 @@ export const manifest = {
     name: 'Telegram',
     description: '发送内容到 Telegram 频道',
     category: 'diary-sync',
+    dependsOn: ['memu'],
     enabledByDefault: false,
     settings: {
         storage: 'plugin',

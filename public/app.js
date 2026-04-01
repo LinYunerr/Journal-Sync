@@ -467,6 +467,24 @@ saveBtn.addEventListener('click', async () => {
     }
 });
 
+function parseSSEEventsFromBuffer(buffer) {
+    const events = [];
+    const normalized = buffer.replace(/\r\n/g, '\n');
+    const blocks = normalized.split('\n\n');
+    const rest = blocks.pop() || '';
+
+    for (const block of blocks) {
+        const dataLines = block
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trimStart());
+        if (dataLines.length === 0) continue;
+        events.push(dataLines.join('\n'));
+    }
+
+    return { events, rest };
+}
+
 // 实时更新保存状态
 async function saveContentWithRealTimeUpdate(saveId, content, type, options, imageFilenames = []) {
     try {
@@ -490,23 +508,33 @@ async function saveContentWithRealTimeUpdate(saveId, content, type, options, ima
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let sseBuffer = '';
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n').filter(line => line.trim());
+            sseBuffer += decoder.decode(value, { stream: true });
+            const parsed = parseSSEEventsFromBuffer(sseBuffer);
+            sseBuffer = parsed.rest;
 
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    try {
-                        const data = JSON.parse(line.substring(6));
-                        updateTimelineStatus(saveId, data);
-                    } catch (e) {
-                        console.error('Parse error:', e);
-                    }
+            for (const payload of parsed.events) {
+                try {
+                    const data = JSON.parse(payload);
+                    updateTimelineStatus(saveId, data);
+                } catch (e) {
+                    console.error('Parse error:', e);
                 }
+            }
+        }
+        sseBuffer += decoder.decode();
+        const tail = parseSSEEventsFromBuffer(sseBuffer);
+        for (const payload of tail.events) {
+            try {
+                const data = JSON.parse(payload);
+                updateTimelineStatus(saveId, data);
+            } catch (e) {
+                console.error('Parse error:', e);
             }
         }
 
@@ -543,6 +571,13 @@ function updateTimelineStatus(saveId, data) {
             loadTasks();
             loadInsights();
         }
+    } else if (data.type === 'error') {
+        timeline[index].pending = false;
+        timeline[index].failed = true;
+        timeline[index].error = data.message || '保存失败';
+        pendingSaves.delete(saveId);
+        savePendingSaves();
+        renderTimeline();
     }
 }
 

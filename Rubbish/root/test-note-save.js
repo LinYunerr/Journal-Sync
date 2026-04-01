@@ -3,7 +3,7 @@
  * 验证 AI 分类、标签生成、元数据提取、总结功能
  */
 
-import { saveToObsidian } from './src/sync/journal-sync.js';
+import { saveToObsidian } from '../../src/sync/journal-sync.js';
 
 const testContent = `
 # 人工智能在医疗领域的应用
