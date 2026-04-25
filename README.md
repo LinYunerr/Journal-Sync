@@ -225,9 +225,10 @@ capabilities: {
 
 核心写入：
 
-- `POST /api/save-stream`：旧版保存接口，保存并流式返回插件状态
-  - 请求体会进行基础校验（`content/type/options/imageFilenames`）
-- `POST /api/save`：兼容旧接口
+- `GET/POST/DELETE /api/home-v2-draft`
+  - 主页输入区草稿读写与清空
+- `POST /api/save-local-v2`
+  - 当前主页的本地保存接口，只执行 Obsidian 本地保存插件
 
 Telegram：
 
