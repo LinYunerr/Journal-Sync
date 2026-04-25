@@ -20,6 +20,14 @@ Plugin/
     └── README.md
 ```
 
+## Discovery & Registration
+
+- 主程序会自动扫描 `Plugin/*/index.js` 并加载插件。
+- 被成功加载的插件会自动出现在 `/api/plugins/registry` 返回结果中。
+- 插件中心基于注册表动态渲染，无需在前端硬编码插件列表。
+- 插件若声明 `manifest.settings.sections/actions`，插件中心会自动渲染设置字段与动作按钮。
+- 插件若声明 `manifest.ui.homeV2`，重构主页会自动识别分区；插件关闭时不应在主页显示。
+
 ## Required Exports
 
 ```js
@@ -30,6 +38,13 @@ export const manifest = {
   description: 'Example description',
   category: 'general',
   enabledByDefault: false,
+  ui: {
+    homeV2: {
+      section: 'publish_simple',
+      order: 10,
+      label: 'Example'
+    }
+  },
   settings: {
     storage: 'plugin',
     sections: [],
@@ -58,8 +73,15 @@ export async function runAction(actionId, payload) {}
 - `description`: 简短说明
 - `category`: 插件分类
 - `enabledByDefault`: 默认是否启用
+- `ui.homeV2`: 重构主页分区声明（可选）
 - `settings`: 配置 schema
 - `capabilities`: 能力声明
+
+`ui.homeV2` 字段说明：
+
+- `section`: 所属分区，当前支持 `edit | publish_simple | publish_advanced | save_local`
+- `order`: 同分区排序（数字，越小越靠前）
+- `label`: 分区展示名（可选，默认使用 `name`）
 
 `settings.sections[].fields[]` 当前支持：
 

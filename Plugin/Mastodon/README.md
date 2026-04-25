@@ -22,6 +22,6 @@
 
 ## Usage
 
-1. 打开 `http://localhost:3000/plugins.html` 启用插件
-2. 在 `http://localhost:3000/settings.html` 保存配置
+1. 打开 `http://localhost:3000/?open=plugin-center`
+2. 在插件中心启用 Mastodon 插件并保存配置
 3. 使用插件动作测试连接

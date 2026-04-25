@@ -18,14 +18,17 @@
     }
   ],
   "defaultChannel": "-1000000000000",
-  "optimizePrompt": "Optional custom prompt"
+  "showLinkPreview": true,
+  "boldFirstLine": false,
+  "appendSourceTag": false,
+  "addLineBreakPerLine": false
 }
 ```
 
 ## Usage
 
-1. 打开 `http://localhost:3000/plugins.html` 启用插件
-2. 打开 `http://localhost:3000/settings.html` 完成配置
+1. 打开 `http://localhost:3000/?open=plugin-center`
+2. 在插件中心启用 Telegram 插件并完成配置
 3. 通过插件动作测试连接或拉取频道列表
 
 如需独立调试脚本：

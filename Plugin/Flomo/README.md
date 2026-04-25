@@ -14,8 +14,8 @@
 
 ## Usage
 
-1. 打开 `http://localhost:3000/plugins.html` 启用插件
-2. 在 `http://localhost:3000/settings.html` 检查配置
+1. 打开 `http://localhost:3000/?open=plugin-center`
+2. 在插件中心启用 Flomo 插件并检查配置
 
 ## Notes
 

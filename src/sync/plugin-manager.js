@@ -6,6 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PLUGINS_DIR = path.join(__dirname, '../../Plugin');
 const SENSITIVE_VALUE_MASK = '__SECRET_PRESENT__';
+const HOME_V2_SECTIONS = new Set(['edit', 'publish_simple', 'publish_advanced', 'save_local']);
 
 // Plugin registry
 const plugins = {};
@@ -51,6 +52,36 @@ function setValueAtPath(target, keyPath, value) {
 
 function getManifestFields(manifest) {
     return manifest?.settings?.sections?.flatMap(section => section.fields || []) || [];
+}
+
+function getDefaultHomeV2Section(pluginId) {
+    if (pluginId === 'flomo') return 'publish_simple';
+    if (pluginId === 'mastodon') return 'publish_simple';
+    if (pluginId === 'missky' || pluginId === 'misskey') return 'publish_simple';
+    if (pluginId === 'telegram') return 'publish_advanced';
+    if (pluginId === 'obsidian-local') return 'save_local';
+    return '';
+}
+
+function normalizeHomeV2Ui(pluginId, homeV2) {
+    const fallbackSection = getDefaultHomeV2Section(pluginId);
+    const section = typeof homeV2?.section === 'string' && HOME_V2_SECTIONS.has(homeV2.section)
+        ? homeV2.section
+        : fallbackSection;
+
+    if (!section) return null;
+
+    const parsedOrder = Number(homeV2?.order);
+    const order = Number.isFinite(parsedOrder) ? parsedOrder : 100;
+    const label = typeof homeV2?.label === 'string' && homeV2.label.trim()
+        ? homeV2.label.trim()
+        : '';
+
+    return {
+        section,
+        order,
+        ...(label ? { label } : {})
+    };
 }
 
 function isEmptyValue(value) {
@@ -253,6 +284,7 @@ function normalizeManifest(manifest, entryName) {
     const dependsOn = Array.isArray(manifest?.dependsOn)
         ? manifest.dependsOn.filter(item => typeof item === 'string' && item.trim())
         : [];
+    const homeV2 = normalizeHomeV2Ui(pluginId, manifest?.ui?.homeV2);
 
     return {
         id: pluginId,
@@ -272,12 +304,14 @@ function normalizeManifest(manifest, entryName) {
             storage: manifest?.settings?.storage || 'plugin',
             sections: manifest?.settings?.sections || [],
             actions: manifest?.settings?.actions || []
+        },
+        ui: {
+            homeV2
         }
     };
 }
 
 function getLegacyExecutionPriority(pluginId) {
-    if (pluginId === 'memu') return -10;
     if (pluginId === 'telegram') return 10;
     return 0;
 }
@@ -486,18 +520,16 @@ export async function executePlugins(content, type, options, coreConfig, onUpdat
     const pluginSettings = coreConfig?.plugins || {};
     const results = {};
 
-    // 用于收集 MemU 之类的推荐或依赖结果
     let context = {
         content,
         type,
         options,
-        images,       // 图片绝对路径列表，插件可按需使用
-        suggestion: null
+        images        // 图片绝对路径列表，插件可按需使用
     };
 
     const loadedKeys = resolvePluginExecutionOrder(Object.entries(plugins));
 
-    // 1. 顺序执行具备依赖属性的插件 (比如 MemU 可能生成供 Telegram 使用的 suggestion)
+    // 1. 顺序执行具备依赖属性的插件
     for (const key of loadedKeys) {
         const plugin = plugins[key];
         const configKey = plugin.manifest.id;
@@ -509,18 +541,10 @@ export async function executePlugins(content, type, options, coreConfig, onUpdat
         if (key === 'mastodon' && options.enableMastodon === false) shouldExecute = false;
         if (key === 'telegram' && !options.sendToTelegram) shouldExecute = false;
 
-        // Mem0 默认只有日记模式才会执行
-        if (key === 'mem0' && type !== 'diary') shouldExecute = false;
-
         if (shouldExecute) {
             try {
                 const result = await plugin.module.execute(context);
                 results[key] = result;
-
-                // 如果插件吐出了 suggestion，注入到 context 以供后续的插件（如 Telegram）使用
-                if (result.suggestion) {
-                    context.suggestion = result.suggestion;
-                }
 
                 if (onUpdate) onUpdate(configKey, result.success);
             } catch (error) {

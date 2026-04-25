@@ -9,16 +9,102 @@ import path from 'path';
 /**
  * 调用 AI API 的通用函数
  */
+function normalizeAiApiType(rawApiType) {
+  const normalized = String(rawApiType || '').trim().toLowerCase();
+  if (normalized === 'responses' || normalized === 'response') {
+    return 'responses';
+  }
+  return 'chat_completions';
+}
+
+function buildAiEndpointUrl(baseUrl, apiType) {
+  const url = new URL(baseUrl);
+  const endpointPath = normalizeAiApiType(apiType) === 'responses'
+    ? '/responses'
+    : '/chat/completions';
+  const normalizedPath = url.pathname.replace(/\/+$/, '');
+  const strippedPath = normalizedPath.replace(/\/(chat\/completions|responses)$/i, '');
+  if (!normalizedPath.endsWith(endpointPath)) {
+    url.pathname = `${strippedPath || ''}${endpointPath}`;
+  }
+  return url.toString();
+}
+
+function extractAiText(result) {
+  if (!result || typeof result !== 'object') return '';
+
+  if (typeof result.output_text === 'string' && result.output_text.trim()) {
+    return result.output_text.trim();
+  }
+
+  const firstChoice = Array.isArray(result.choices) ? result.choices[0] : null;
+  if (firstChoice && typeof firstChoice === 'object') {
+    if (typeof firstChoice.text === 'string' && firstChoice.text.trim()) {
+      return firstChoice.text.trim();
+    }
+
+    const message = firstChoice.message;
+    if (message && typeof message === 'object') {
+      if (typeof message.content === 'string' && message.content.trim()) {
+        return message.content.trim();
+      }
+
+      if (Array.isArray(message.content)) {
+        const text = message.content.map((part) => {
+          if (typeof part === 'string') return part;
+          if (!part || typeof part !== 'object') return '';
+          if (typeof part.text === 'string') return part.text;
+          if (typeof part.content === 'string') return part.content;
+          return '';
+        }).join('').trim();
+
+        if (text) return text;
+      }
+    }
+  }
+
+  if (Array.isArray(result.output)) {
+    const text = result.output.map((item) => {
+      if (!item || typeof item !== 'object' || !Array.isArray(item.content)) return '';
+      return item.content.map((part) => {
+        if (typeof part === 'string') return part;
+        if (!part || typeof part !== 'object') return '';
+        if (typeof part.text === 'string') return part.text;
+        if (typeof part.content === 'string') return part.content;
+        return '';
+      }).join('');
+    }).join('').trim();
+
+    if (text) return text;
+  }
+
+  return '';
+}
+
 async function callAI(config, systemPrompt, userPrompt) {
   if (!config?.ai?.baseUrl || !config?.ai?.apiKey || !config?.ai?.model) {
     throw new Error('AI 配置不完整');
   }
 
-  // Ensure the URL ends with /chat/completions
-  let apiUrl = config.ai.baseUrl;
-  if (!apiUrl.endsWith('/chat/completions')) {
-    apiUrl = apiUrl.replace(/\/$/, '') + '/chat/completions';
-  }
+  const apiType = normalizeAiApiType(config?.ai?.apiType);
+  const apiUrl = buildAiEndpointUrl(config.ai.baseUrl, apiType);
+  const requestBody = apiType === 'responses'
+    ? {
+      model: config.ai.model,
+      input: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.3
+    }
+    : {
+      model: config.ai.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.3
+    };
 
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -26,14 +112,7 @@ async function callAI(config, systemPrompt, userPrompt) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${config.ai.apiKey}`
     },
-    body: JSON.stringify({
-      model: config.ai.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.3
-    })
+    body: JSON.stringify(requestBody)
   });
 
   if (!response.ok) {
@@ -47,8 +126,9 @@ async function callAI(config, systemPrompt, userPrompt) {
     throw new Error(`AI 错误: ${result.error.message || JSON.stringify(result.error)}`);
   }
 
-  if (result.choices && result.choices[0] && result.choices[0].message) {
-    return result.choices[0].message.content;
+  const outputText = extractAiText(result);
+  if (outputText) {
+    return outputText;
   }
 
   throw new Error('AI 返回格式错误');

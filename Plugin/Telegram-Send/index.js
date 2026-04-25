@@ -14,10 +14,10 @@ const defaultConfig = {
     scriptPath: '/path/to/Journal-Sync/Plugin/Telegram-Send/telegram_send.py',
     channels: [],
     defaultChannel: '@LinYunChannel',
-    optimizePrompt: '',
     showLinkPreview: true,
     boldFirstLine: false,
-    appendSourceTag: false
+    appendSourceTag: false,
+    addLineBreakPerLine: false
 };
 
 export const manifest = {
@@ -26,8 +26,15 @@ export const manifest = {
     name: 'Telegram',
     description: '发送内容到 Telegram 频道',
     category: 'diary-sync',
-    dependsOn: ['memu'],
+    dependsOn: [],
     enabledByDefault: false,
+    ui: {
+        homeV2: {
+            section: 'publish_advanced',
+            order: 10,
+            label: 'Telegram'
+        }
+    },
     settings: {
         storage: 'plugin',
         sections: [
@@ -70,33 +77,40 @@ export const manifest = {
                             captionKey: 'username'
                         },
                         allowCustomValue: true
-                    },
-                    {
-                        key: 'optimizePrompt',
-                        type: 'textarea',
-                        label: 'TG 发布优化提示词',
-                        validate: {
-                            maxLength: 4000,
-                            message: 'TG 发布优化提示词过长'
-                        },
-                        placeholder: '留空则使用默认提示词'
-                    },
+                    }
+                ]
+            },
+            {
+                id: 'tgOptimize',
+                title: 'TG发布优化设置',
+                description: '仅在重构主页点击“TG”并执行“生成TG发布格式”后，发布到 Telegram 时生效。',
+                fields: [
                     {
                         key: 'showLinkPreview',
                         type: 'boolean',
                         label: '网址显示预览',
+                        description: '只影响 TG 本地格式工作区的预览显示。',
                         default: true
                     },
                     {
                         key: 'boldFirstLine',
                         type: 'boolean',
                         label: '笔记发布TG时首行加粗',
+                        description: '仅在点击“TG”并生成 TG 发布格式后生效。',
                         default: false
                     },
                     {
                         key: 'appendSourceTag',
                         type: 'boolean',
                         label: '笔记发布TG时结尾增加source标识',
+                        description: '仅在点击“TG”并生成 TG 发布格式后生效。',
+                        default: false
+                    },
+                    {
+                        key: 'addLineBreakPerLine',
+                        type: 'boolean',
+                        label: '为每一行添加换行',
+                        description: '仅在点击“TG”并生成 TG 发布格式后生效。',
                         default: false
                     }
                 ]
@@ -118,7 +132,17 @@ export const manifest = {
     capabilities: {
         execute: true,
         configure: true,
-        test: true
+        test: true,
+        media: {
+            acceptsImages: true,
+            acceptsInputImages: true,
+            mode: 'media_group',
+            maxImages: 9,
+            settingsDescription: '图片处理：发布时会按当前图片顺序发送到 Telegram。单张图片走 sendPhoto，多张图片走 sendMediaGroup；如果文字超过 caption 限制，脚本会先发图，再把剩余文字拆分补发。',
+            summary: '单张图片走 sendPhoto，多张图片走媒体组',
+            withImagesSummary: '当前会携带图片发送到 Telegram 频道',
+            withImagesNote: '若文案超过 caption 长度限制，会在图片成功后拆分补发文字。'
+        }
     }
 };
 
@@ -132,10 +156,10 @@ async function loadLegacyConfig() {
             scriptPath: diary.tgSendScript || '',
             channels: diary.tgChannels ? JSON.parse(diary.tgChannels) : [],
             defaultChannel: diary.tgDiaryChannel || '',
-            optimizePrompt: diary.tgOptimizePrompt || '',
             showLinkPreview: diary.tgShowLinkPreview !== undefined ? Boolean(diary.tgShowLinkPreview) : true,
             boldFirstLine: Boolean(diary.tgBoldFirstLine),
-            appendSourceTag: Boolean(diary.tgAppendSource)
+            appendSourceTag: Boolean(diary.tgAppendSource),
+            addLineBreakPerLine: Boolean(diary.tgAddLineBreakPerLine)
         };
     } catch (error) {
         return {};
@@ -258,14 +282,14 @@ export async function runAction(actionId, payload = {}) {
     throw new Error(`Unknown action: ${actionId}`);
 }
 
-export async function execute({ content, type, options, suggestion, images = [] }) {
+export async function execute({ content, type, options, images = [] }) {
     const config = await loadConfig();
 
     if (!config.scriptPath || !config.botToken) {
         return { success: false, error: 'Telegram 插件未配置' };
     }
 
-    const tgContent = suggestion || content;
+    const tgContent = content;
     const channel = options?.telegramChannel || config.defaultChannel || '@LinYunChannel';
 
     // 过滤掉正文中的 Markdown 图片引用，避免与实际图片发送重复
@@ -275,9 +299,13 @@ export async function execute({ content, type, options, suggestion, images = [] 
     // 基础参数：脚本路径 + 频道
     const args = [config.scriptPath, channel];
     const shouldBoldFirstLineForNote = type === 'note' && Boolean(config.boldFirstLine);
+    const shouldAddLineBreakPerLineForNote = type === 'note' && Boolean(config.addLineBreakPerLine);
 
     if (shouldBoldFirstLineForNote) {
         args.push('--bold-first-line');
+    }
+    if (shouldAddLineBreakPerLineForNote) {
+        args.push('--line-break-per-line');
     }
 
     // 如果有图片，追加 --images 参数

@@ -6,6 +6,7 @@ Telegram Channel Send - 改进版
 import json
 import mimetypes
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -61,8 +62,67 @@ def escape_html_attr(text):
     )
 
 
-def format_message_html(text, bold_first_line=False, source_url=None):
+def apply_line_break_per_line(text):
+    normalized = (text or "").replace("\r\n", "\n").strip()
+    if not normalized:
+        return ""
+
+    lines = normalized.split("\n")
+    output = []
+    for idx, line in enumerate(lines):
+        output.append(line)
+        if not line.strip():
+            continue
+        if idx >= len(lines) - 1:
+            continue
+        next_line = lines[idx + 1]
+        if not next_line.strip():
+            continue
+        output.append("")
+    return "\n".join(output).strip()
+
+
+def strip_trailing_source_artifacts(text, source_url):
+    normalized_text = text or ""
+    normalized_source = (source_url or "").strip()
+    if not normalized_text.strip() or not normalized_source:
+        return normalized_text, False
+
+    patterns = [
+        re.compile(rf"(?:\s|^)\[source\]\({re.escape(normalized_source)}\)\s*$", re.IGNORECASE | re.DOTALL),
+        re.compile(rf"(?:\s|^)(?:source)\s*[:：]?\s*(?:\n\s*)?{re.escape(normalized_source)}\s*$", re.IGNORECASE | re.DOTALL),
+        re.compile(rf"(?:\s|^){re.escape(normalized_source)}\s*$", re.IGNORECASE | re.DOTALL),
+    ]
+
+    stripped_text = normalized_text
+    stripped = False
+
+    while True:
+        changed = False
+        for pattern in patterns:
+            next_text = pattern.sub("", stripped_text)
+            next_text = re.sub(r"[ \t]+\n", "\n", next_text)
+            next_text = re.sub(r"\n{3,}", "\n\n", next_text).rstrip()
+            if next_text != stripped_text:
+                stripped_text = next_text
+                stripped = True
+                changed = True
+                break
+        if not changed:
+            break
+
+    return stripped_text, stripped
+
+
+def format_message_html(text, bold_first_line=False, source_url=None, line_break_per_line=False):
     normalized = (text or "").replace("\r\n", "\n")
+    if line_break_per_line:
+        normalized = apply_line_break_per_line(normalized)
+    normalized_source = (source_url or "").strip()
+
+    if normalized_source:
+        normalized, _ = strip_trailing_source_artifacts(normalized, normalized_source)
+
     escaped = escape_html(normalized)
     formatted = escaped
     if bold_first_line:
@@ -77,7 +137,6 @@ def format_message_html(text, bold_first_line=False, source_url=None):
             lines[first_non_empty] = f"<b>{lines[first_non_empty]}</b>"
             formatted = "\n".join(lines)
 
-    normalized_source = (source_url or "").strip()
     if not normalized_source:
         return formatted
 
@@ -86,7 +145,16 @@ def format_message_html(text, bold_first_line=False, source_url=None):
     base_text = formatted.rstrip()
     if not base_text:
         return source_link
-    return f"{base_text} {source_link}"
+
+    lines = base_text.split("\n")
+    for index in range(len(lines) - 1, -1, -1):
+        current = lines[index]
+        if not current.strip():
+            continue
+        lines[index] = f"{current.rstrip()} {source_link}"
+        return "\n".join(lines)
+
+    return source_link
 
 
 def read_token():
@@ -523,6 +591,7 @@ def main():
     plugin_config = load_plugin_config()
     show_link_preview = plugin_config.get("showLinkPreview", True)
     bold_first_line = False
+    line_break_per_line = False
 
     # 解析命令行参数：支持 --source-url <url> 和 --images path1 path2 ...
     raw_args = sys.argv[1:]
@@ -538,6 +607,10 @@ def main():
         token_arg = raw_args[idx]
         if token_arg == "--bold-first-line":
             bold_first_line = True
+            idx += 1
+            continue
+        if token_arg == "--line-break-per-line":
+            line_break_per_line = True
             idx += 1
             continue
         if token_arg == "--source-url":
@@ -681,7 +754,12 @@ def main():
         print("Empty message and no images.", file=sys.stderr)
         return 1
 
-    formatted_text = format_message_html(text, bold_first_line=bold_first_line, source_url=source_url)
+    formatted_text = format_message_html(
+        text,
+        bold_first_line=bold_first_line,
+        source_url=source_url,
+        line_break_per_line=line_break_per_line
+    )
 
     # 步骤 5: 发送消息（根据是否有图片选择不同方式）
     chat_id = chosen["id"]

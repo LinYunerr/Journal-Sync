@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Journal Sync - 主页</title>
+    <link rel="stylesheet" href="/home-v2.css">
+</head>
+
+<body>
+    <main class="page">
+        <header class="hero">
+            <div>
+                <h1>Journal Sync · 主页</h1>
+                <p>输入、发布、保存三段式工作流</p>
+            </div>
+            <div class="hero-actions">
+                <button id="openPluginCenterBtn" type="button" class="ghost-btn ghost-btn-as-button">插件中心</button>
+                <a href="/legacy-home.html" class="ghost-btn">旧入口说明</a>
+            </div>
+        </header>
+
+        <section class="panel">
+            <div class="panel-title-row">
+                <h2>1. 输入部分</h2>
+                <div class="panel-title-actions">
+                    <button id="tgInputModeBtn" type="button" class="tg-input-mode-btn" aria-pressed="false" style="display:none;">TG</button>
+                    <span id="editPluginHint" class="hint-text"></span>
+                </div>
+            </div>
+            <textarea id="v2ContentInput" placeholder="在这里输入原始信息..."></textarea>
+            <div class="input-media-bar">
+                <span class="input-media-tip">支持把图片拖入输入框或直接粘贴截图，缩略图可拖动排序。</span>
+                <span id="v2ImageUploadStatus" class="input-media-status"></span>
+            </div>
+            <div id="v2ImagePreviewGrid" class="media-thumb-grid"></div>
+            <div id="tgInputWorkspace" class="tg-input-workspace hidden">
+                <div class="target-sub">仅点击“生成TG发布格式”后，TG 发布优化设置才会生效。</div>
+                <button id="generateTgLocalBtn" class="primary-btn tg-generate-btn">生成TG发布格式</button>
+                <label for="tgFormattedOutputV2">TG 整理输出（Markdown）</label>
+                <textarea id="tgFormattedOutputV2" class="tg-preview-textarea" readonly></textarea>
+                <div class="target-sub">预览（根据 TG 发布优化设置即时展示）</div>
+                <div id="tgFormattedPreviewV2" class="tg-render-preview"></div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>2. 发布部分</h2>
+
+            <div class="sub-panel">
+                <div id="simpleTargetRows" class="target-list"></div>
+            </div>
+
+            <div id="tgAdvancedPanelV2" class="sub-panel">
+                <h3>Telegram</h3>
+                <div id="tgMediaHintV2" class="target-sub"></div>
+                <div class="tg-channel-block">
+                    <div id="tgChannelRows" class="target-list"></div>
+                </div>
+            </div>
+            <button id="sendSimpleBtn" class="primary-btn simple-send-btn">发布</button>
+            <div id="simplePublishStatus" class="status-box"></div>
+        </section>
+
+        <section class="panel">
+            <h2>3. 保存部分</h2>
+            <button id="saveLocalBtnV2" class="primary-btn">保存到 Obsidian</button>
+            <div id="saveLocalRows" class="target-list"></div>
+            <div id="saveLocalStatus" class="status-box"></div>
+        </section>
+    </main>
+
+    <div id="pluginCenterModal" class="settings-modal hidden" aria-hidden="true">
+        <div id="pluginCenterBackdrop" class="settings-backdrop"></div>
+        <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pluginCenterTitle">
+            <header class="settings-header">
+                <h2 id="pluginCenterTitle">插件中心 / 设置</h2>
+                <button id="closePluginCenterBtn" type="button" class="close-settings-btn" aria-label="关闭">×</button>
+            </header>
+            <div class="settings-layout">
+                <aside class="settings-sidebar">
+                    <div id="settingsNavList" class="settings-nav-list"></div>
+                </aside>
+                <div class="settings-content">
+                    <div id="settingsAlert" class="settings-alert"></div>
+                    <div id="settingsDetail" class="settings-detail"></div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div id="imagePreviewModalV2" class="media-preview-modal" aria-hidden="true">
+        <div class="media-preview-shell">
+            <button id="closeImagePreviewBtnV2" type="button" class="media-preview-close" aria-label="关闭预览">×</button>
+            <img id="imagePreviewModalImgV2" class="media-preview-image" src="" alt="预览图片">
+        </div>
+    </div>
+
+    <script src="/global-input-traits.js"></script>
+    <script src="/input-media-bridge.js"></script>
+    <script src="/home-v2.js"></script>
+</body>
+
+</html>

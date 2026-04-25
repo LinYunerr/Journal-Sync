@@ -3,247 +3,69 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🔌 插件管理 - Journal Sync</title>
+  <title>插件入口已迁移</title>
+  <meta http-equiv="refresh" content="2;url=/?open=plugin-center">
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    :root {
+      color-scheme: light;
+      --bg: #f4efe7;
+      --panel: #fffdf8;
+      --text: #1f2933;
+      --muted: #5b6773;
+      --accent: #1f6b5c;
+      --border: #d7e5df;
     }
+
+    * { box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 0;
       min-height: 100vh;
-      padding: 20px;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(31, 107, 92, 0.12), transparent 36%),
+        linear-gradient(180deg, #f1f7f4 0%, var(--bg) 100%);
+      color: var(--text);
     }
 
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
+    main {
+      width: min(560px, 100%);
+      padding: 32px;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: var(--panel);
+      box-shadow: 0 18px 48px rgba(31, 61, 55, 0.12);
     }
 
-    .header {
-      text-align: center;
-      color: white;
-      margin-bottom: 30px;
-    }
-
-    .header h1 {
-      font-size: 2.5em;
-      margin-bottom: 10px;
-      text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
-    }
-
-    .header p {
-      font-size: 1.1em;
-      opacity: 0.95;
-    }
-
-    .back-btn {
-      display: inline-block;
-      margin-bottom: 20px;
-      padding: 10px 20px;
-      background: rgba(255, 255, 255, 0.2);
-      color: white;
-      text-decoration: none;
-      border-radius: 8px;
-      transition: all 0.3s;
-    }
-
-    .back-btn:hover {
-      background: rgba(255, 255, 255, 0.3);
-    }
-
-    .card {
-      background: white;
-      border-radius: 15px;
-      padding: 30px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-      margin-bottom: 20px;
-    }
-
-    .info-box {
-      background: #f0f4ff;
-      border-left: 4px solid #667eea;
-      padding: 15px;
-      margin-bottom: 25px;
-      border-radius: 5px;
-      color: #555;
-    }
-
-    .plugin-item {
-      display: flex;
+    h1 { margin: 0 0 12px; font-size: 32px; }
+    p { margin: 0 0 14px; line-height: 1.6; color: var(--muted); }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+    a {
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 20px;
-      border: 2px solid #e0e0e0;
-      border-radius: 10px;
-      margin-bottom: 15px;
-      transition: all 0.3s;
-    }
-
-    .plugin-item:hover {
-      border-color: #667eea;
-      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
-    }
-
-    .plugin-info {
-      flex: 1;
-    }
-
-    .plugin-name {
-      font-size: 1.3em;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 999px;
+      text-decoration: none;
       font-weight: 600;
-      color: #333;
-      margin-bottom: 5px;
     }
-
-    .plugin-desc {
-      color: #666;
-      font-size: 0.95em;
-    }
-
-    .toggle-switch {
-      position: relative;
-      width: 60px;
-      height: 30px;
-    }
-
-    .toggle-switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background-color: #ccc;
-      transition: 0.4s;
-      border-radius: 30px;
-    }
-
-    .slider:before {
-      position: absolute;
-      content: "";
-      height: 22px;
-      width: 22px;
-      left: 4px;
-      bottom: 4px;
-      background-color: white;
-      transition: 0.4s;
-      border-radius: 50%;
-    }
-
-    input:checked + .slider {
-      background-color: #667eea;
-    }
-
-    input:checked + .slider:before {
-      transform: translateX(30px);
-    }
-
-    .success-message {
-      background: #d4edda;
-      color: #155724;
-      padding: 12px 20px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      display: none;
-    }
-
-    .success-message.show {
-      display: block;
-    }
+    .primary { background: var(--accent); color: #fff; }
+    .secondary { border: 1px solid var(--border); color: var(--text); }
   </style>
 </head>
 <body>
-  <div class="container">
-    <a href="/" class="back-btn">← 返回主页</a>
-
-    <div class="header">
-      <h1>🔌 插件管理</h1>
-      <p>启用或禁用日记同步插件</p>
+  <main>
+    <h1>插件页已迁移</h1>
+    <p>旧插件管理页已经退役，插件启停、配置和动作都统一放到新版主页的“插件中心”。</p>
+    <p>页面会自动跳转到新版入口；如果没有跳转，可手动点击下面的按钮。</p>
+    <div class="actions">
+      <a class="primary" href="/?open=plugin-center">打开插件中心</a>
+      <a class="secondary" href="/">返回主页</a>
     </div>
-
-    <div class="card">
-      <div id="successMessage" class="success-message"></div>
-
-      <div class="info-box">
-        💡 启用插件后，相关的配置项会出现在设置页面中。禁用插件后，该功能将不会被调用。
-      </div>
-
-      <div id="pluginList"></div>
-    </div>
-  </div>
-
-  <script>
-    async function loadPlugins() {
-      try {
-        const response = await fetch('/api/plugins/registry');
-        const data = await response.json();
-
-        if (data.ok && Array.isArray(data.plugins)) {
-          renderPlugins(data.plugins);
-        }
-      } catch (error) {
-        console.error('加载插件状态失败:', error);
-      }
-    }
-
-    function renderPlugins(plugins) {
-      const pluginList = document.getElementById('pluginList');
-      pluginList.innerHTML = plugins.map(plugin => `
-        <div class="plugin-item">
-          <div class="plugin-info">
-            <div class="plugin-name">${plugin.manifest.name}</div>
-            <div class="plugin-desc">${plugin.manifest.description || '暂无描述'}</div>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" ${plugin.enabled ? 'checked' : ''} onchange="togglePlugin('${plugin.id}', this.checked)">
-            <span class="slider"></span>
-          </label>
-        </div>
-      `).join('');
-    }
-
-    async function togglePlugin(pluginId, enabled) {
-      try {
-        const response = await fetch(`/api/plugins/${pluginId}/toggle`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled })
-        });
-
-        const data = await response.json();
-
-        if (data.ok) {
-          showSuccess(`${pluginId} 插件已${enabled ? '启用' : '禁用'}`);
-        } else {
-          alert('操作失败: ' + data.error);
-        }
-      } catch (error) {
-        alert('操作失败: ' + error.message);
-      }
-    }
-
-    // 显示成功消息
-    function showSuccess(message) {
-      const successEl = document.getElementById('successMessage');
-      successEl.textContent = message;
-      successEl.classList.add('show');
-      setTimeout(() => {
-        successEl.classList.remove('show');
-      }, 3000);
-    }
-
-    // 页面加载时加载插件状态
-    window.addEventListener('DOMContentLoaded', loadPlugins);
-  </script>
+  </main>
 </body>
 </html>

@@ -9,7 +9,8 @@
     }
   ],
   "defaultChannel": "CHANNEL_ID",
-  "optimizePrompt": "你的自定义提示词...",
   "showLinkPreview": true,
-  "boldFirstLine": false
+  "boldFirstLine": false,
+  "appendSourceTag": false,
+  "addLineBreakPerLine": false
 }

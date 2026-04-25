@@ -8,7 +8,7 @@ test('parseSSEEventsFromBuffer handles split chunks correctly', () => {
 
   const chunks = [
     'data: {"type":"status","plugin":"obsidian","success":true}\n\n',
-    'data: {"type":"status","plugin":"memu"',
+    'data: {"type":"status","plugin":"telegram"',
     ',"success":true}\n\n'
   ];
 
@@ -21,7 +21,7 @@ test('parseSSEEventsFromBuffer handles split chunks correctly', () => {
 
   assert.equal(parsedPayloads.length, 2);
   assert.equal(JSON.parse(parsedPayloads[0]).plugin, 'obsidian');
-  assert.equal(JSON.parse(parsedPayloads[1]).plugin, 'memu');
+  assert.equal(JSON.parse(parsedPayloads[1]).plugin, 'telegram');
 });
 
 test('parseSSEEventsFromBuffer keeps incomplete frame in rest', () => {
@@ -29,4 +29,3 @@ test('parseSSEEventsFromBuffer keeps incomplete frame in rest', () => {
   assert.equal(events.length, 0);
   assert.equal(rest, 'data: {"type":"error","message":"x"}');
 });
-

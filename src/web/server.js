@@ -3,55 +3,136 @@ import cors from 'cors';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { saveToObsidian, optimizeContent } from '../sync/journal-sync.js';
+import { optimizeContent } from '../sync/journal-sync.js';
 import { promises as fsPromises } from 'fs';
 import ConfigManager from '../utils/config-manager.js';
 import { applyNetworkProxy, normalizeNetworkProxy } from '../utils/network-proxy.js';
 import PluginManager from '../sync/plugin-manager.js';
 import multer from 'multer';
+import {
+  loadConfig as loadObsidianLocalPluginConfig,
+  saveConfig as saveObsidianLocalPluginConfig
+} from '../../Plugin/Obsidian-Local/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEFAULT_OBSIDIAN_DIR = '/path/to/obsidian/notes';
 
-const DEFAULT_MEM0_INSIGHTS = Object.freeze({
-  emotions: { weeklyKeywords: [], history: [], lastUpdated: null },
-  media: { items: [], history: [] },
-  work: { items: [], history: [] },
-  life: { items: [], history: [] }
-});
-
-function createDefaultMem0Insights() {
-  return JSON.parse(JSON.stringify(DEFAULT_MEM0_INSIGHTS));
-}
-
-function normalizeMem0Insights(insights) {
-  const merged = createDefaultMem0Insights();
-  if (!insights || typeof insights !== 'object') return merged;
-  if (Array.isArray(insights.emotions?.weeklyKeywords)) merged.emotions.weeklyKeywords = insights.emotions.weeklyKeywords;
-  if (Array.isArray(insights.emotions?.history)) merged.emotions.history = insights.emotions.history;
-  if (typeof insights.emotions?.lastUpdated === 'string' || insights.emotions?.lastUpdated === null) {
-    merged.emotions.lastUpdated = insights.emotions.lastUpdated;
+function normalizeAiApiType(rawApiType) {
+  const normalized = String(rawApiType || '').trim().toLowerCase();
+  if (normalized === 'responses' || normalized === 'response') {
+    return 'responses';
   }
-  if (Array.isArray(insights.media?.items)) merged.media.items = insights.media.items;
-  if (Array.isArray(insights.media?.history)) merged.media.history = insights.media.history;
-  if (Array.isArray(insights.work?.items)) merged.work.items = insights.work.items;
-  if (Array.isArray(insights.work?.history)) merged.work.history = insights.work.history;
-  if (Array.isArray(insights.life?.items)) merged.life.items = insights.life.items;
-  if (Array.isArray(insights.life?.history)) merged.life.history = insights.life.history;
-  return merged;
+  return 'chat_completions';
 }
 
-function getAiChatCompletionsUrl(baseUrl) {
+function getAiEndpointUrl(baseUrl, apiType = 'chat_completions') {
   const trimmed = String(baseUrl || '').trim();
   if (!trimmed) {
     throw new Error('AI baseUrl 不能为空');
   }
   const url = new URL(trimmed);
   const normalizedPath = url.pathname.replace(/\/+$/, '');
-  if (!normalizedPath.endsWith('/chat/completions')) {
-    url.pathname = `${normalizedPath || ''}/chat/completions`;
+  const strippedPath = normalizedPath.replace(/\/(chat\/completions|responses)$/i, '');
+  const endpointPath = normalizeAiApiType(apiType) === 'responses'
+    ? '/responses'
+    : '/chat/completions';
+  if (!normalizedPath.endsWith(endpointPath)) {
+    url.pathname = `${strippedPath || ''}${endpointPath}`;
   }
   return url.toString();
+}
+
+function buildAiRequestBody(aiConfig = {}, {
+  systemPrompt,
+  userPrompt,
+  temperature = 0.3,
+  maxTokens = 256
+} = {}) {
+  const apiType = normalizeAiApiType(aiConfig.apiType);
+
+  if (apiType === 'responses') {
+    const payload = {
+      model: aiConfig.model,
+      input: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    };
+    if (typeof temperature === 'number') {
+      payload.temperature = temperature;
+    }
+    if (Number.isFinite(maxTokens) && maxTokens > 0) {
+      payload.max_output_tokens = maxTokens;
+    }
+    return payload;
+  }
+
+  const payload = {
+    model: aiConfig.model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ]
+  };
+  if (typeof temperature === 'number') {
+    payload.temperature = temperature;
+  }
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    payload.max_tokens = maxTokens;
+  }
+  return payload;
+}
+
+function extractAiText(result) {
+  if (!result || typeof result !== 'object') return '';
+
+  if (typeof result.output_text === 'string' && result.output_text.trim()) {
+    return result.output_text.trim();
+  }
+
+  const firstChoice = Array.isArray(result.choices) ? result.choices[0] : null;
+  if (firstChoice && typeof firstChoice === 'object') {
+    if (typeof firstChoice.text === 'string' && firstChoice.text.trim()) {
+      return firstChoice.text.trim();
+    }
+
+    const message = firstChoice.message;
+    if (message && typeof message === 'object') {
+      if (typeof message.content === 'string' && message.content.trim()) {
+        return message.content.trim();
+      }
+
+      if (Array.isArray(message.content)) {
+        const text = message.content.map((part) => {
+          if (typeof part === 'string') return part;
+          if (!part || typeof part !== 'object') return '';
+          if (typeof part.text === 'string') return part.text;
+          if (typeof part.content === 'string') return part.content;
+          return '';
+        }).join('').trim();
+
+        if (text) return text;
+      }
+    }
+  }
+
+  if (Array.isArray(result.output)) {
+    const text = result.output.map((item) => {
+      if (!item || typeof item !== 'object' || !Array.isArray(item.content)) return '';
+      return item.content.map((part) => {
+        if (typeof part === 'string') return part;
+        if (!part || typeof part !== 'object') return '';
+        if (typeof part.text === 'string') return part.text;
+        if (typeof part.content === 'string') return part.content;
+        return '';
+      }).join('');
+    }).join('').trim();
+
+    if (text) return text;
+  }
+
+  return '';
 }
 
 function sanitizeAssetFilename(rawFilename) {
@@ -68,29 +149,116 @@ function isPathInsideDir(targetPath, baseDir) {
   return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
-function validateSaveStreamPayload(body = {}) {
-  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
-  const { content, type, options, imageFilenames } = payload;
-  if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
-  if (type !== undefined && !['diary', 'note'].includes(type)) return '类型必须是 diary 或 note';
-  if (options !== undefined && (typeof options !== 'object' || options === null || Array.isArray(options))) {
-    return 'options 必须是对象';
+function trimTrailingUrlPunctuation(url) {
+  return String(url || '').replace(/[)\],.!?;:，。！？；：》」』】）]+$/g, '');
+}
+
+function extractLastHttpsUrl(content) {
+  const text = String(content || '');
+  let cursor = text.length;
+
+  while (cursor > 0) {
+    const httpsIndex = text.lastIndexOf('https', cursor - 1);
+    if (httpsIndex < 0) return '';
+
+    const candidate = text.slice(httpsIndex);
+    const match = candidate.match(/^https:\/\/[^\s<>"']+/i);
+    if (match) {
+      return trimTrailingUrlPunctuation(match[0]);
+    }
+
+    cursor = httpsIndex;
   }
+
+  return '';
+}
+
+function normalizeSourceUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (!url) return '';
+
+  if (url.toLowerCase().includes('bilibili')) {
+    const bvMatch = url.match(/BV[0-9A-Za-z]{10}/);
+    if (bvMatch) {
+      return `https://www.bilibili.com/video/${bvMatch[0]}`;
+    }
+  }
+
+  return url;
+}
+
+async function loadObsidianStorageConfig(coreConfig = null) {
+  const config = coreConfig || await ConfigManager.loadConfig();
+  const pluginConfig = await loadObsidianLocalPluginConfig().catch(() => ({}));
+  const diaryPath = pluginConfig?.diaryPath || config?.diary?.obsidianPath || config?.obsidianPath || DEFAULT_OBSIDIAN_DIR;
+  const noteVaultPath = pluginConfig?.noteVaultPath || config?.note?.vaultPath || config?.obsidianPath || diaryPath || DEFAULT_OBSIDIAN_DIR;
+  const imageSavePath = pluginConfig?.imageSavePath || path.join(diaryPath, 'assets');
+
+  return {
+    diaryPath,
+    noteVaultPath,
+    imageSavePath,
+    filenameRule: pluginConfig?.filenameRule || 'YYYY-MM-DD 日记'
+  };
+}
+
+async function resolveCachedImagePaths(filenames = []) {
+  const resolved = [];
+
+  for (const rawFilename of Array.isArray(filenames) ? filenames : []) {
+    const filename = sanitizeAssetFilename(rawFilename);
+    if (!filename) continue;
+
+    const cachePath = path.resolve(IMAGE_CACHE_DIR, filename);
+    if (!isPathInsideDir(cachePath, IMAGE_CACHE_DIR)) continue;
+
+    try {
+      await fsPromises.access(cachePath);
+      resolved.push(cachePath);
+    } catch {}
+  }
+
+  return resolved;
+}
+
+function validateTelegramPublishPayload(body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+  const { content, channel, type, imageFilenames, sourceUrl, tgFormattingApplied } = payload;
+  if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
+  if (channel !== undefined && typeof channel !== 'string') return 'channel 必须是字符串';
+  if (type !== undefined && !['diary', 'note'].includes(type)) return 'type 必须是 diary 或 note';
+  if (sourceUrl !== undefined && typeof sourceUrl !== 'string') return 'sourceUrl 必须是字符串';
+  if (tgFormattingApplied !== undefined && typeof tgFormattingApplied !== 'boolean') return 'tgFormattingApplied 必须是布尔值';
   if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
     return 'imageFilenames 必须是字符串数组';
   }
   return null;
 }
 
-function validateTelegramPublishPayload(body = {}) {
+function validatePublishPayload(body = {}) {
   const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
-  const { content, channel, saveId, type, channelName, imageFilenames, sourceUrl } = payload;
+  const { content, targets, telegram, imageFilenames } = payload;
   if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
-  if (channel !== undefined && typeof channel !== 'string') return 'channel 必须是字符串';
-  if (saveId !== undefined && typeof saveId !== 'string' && typeof saveId !== 'number') return 'saveId 必须是字符串或数字';
+  if (!Array.isArray(targets) || !targets.every(item => typeof item === 'string')) return 'targets 必须是字符串数组';
+  if (telegram !== undefined && (typeof telegram !== 'object' || telegram === null || Array.isArray(telegram))) {
+    return 'telegram 必须是对象';
+  }
+  if (telegram?.channel !== undefined && typeof telegram.channel !== 'string') return 'telegram.channel 必须是字符串';
+  if (telegram?.content !== undefined && typeof telegram.content !== 'string') return 'telegram.content 必须是字符串';
+  if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
+    return 'imageFilenames 必须是字符串数组';
+  }
+  return null;
+}
+
+function validateSaveLocalPayload(body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+  const { content, type, options, imageFilenames } = payload;
+  if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
   if (type !== undefined && !['diary', 'note'].includes(type)) return 'type 必须是 diary 或 note';
-  if (channelName !== undefined && typeof channelName !== 'string') return 'channelName 必须是字符串';
-  if (sourceUrl !== undefined && typeof sourceUrl !== 'string') return 'sourceUrl 必须是字符串';
+  if (options !== undefined && (typeof options !== 'object' || options === null || Array.isArray(options))) {
+    return 'options 必须是对象';
+  }
   if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
     return 'imageFilenames 必须是字符串数组';
   }
@@ -108,9 +276,7 @@ async function initDataFiles() {
         "obsidianPath": "/path/to/obsidian/notes",
         "plugins": {}
       },
-      'history.json': [],
-      'tasks.json': [],
-      'mem0_insights.json': createDefaultMem0Insights()
+      'tasks.json': []
     };
 
     for (const [file, defaultData] of Object.entries(defaults)) {
@@ -125,21 +291,6 @@ async function initDataFiles() {
           console.error(`[Init] File access error for ${file}:`, err);
         }
       }
-    }
-
-    const mem0InsightsPath = path.join(dataDir, 'mem0_insights.json');
-    try {
-      const raw = await fsPromises.readFile(mem0InsightsPath, 'utf-8');
-      const parsed = JSON.parse(raw);
-      const normalized = normalizeMem0Insights(parsed);
-      if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
-        await fsPromises.writeFile(mem0InsightsPath, JSON.stringify(normalized, null, 2), 'utf-8');
-        console.log('[Init] Normalized mem0_insights.json structure');
-      }
-    } catch (error) {
-      const fallback = createDefaultMem0Insights();
-      await fsPromises.writeFile(mem0InsightsPath, JSON.stringify(fallback, null, 2), 'utf-8');
-      console.warn('[Init] Rebuilt invalid mem0_insights.json');
     }
   } catch (error) {
     console.error('[Init] Error initializing data files:', error);
@@ -184,6 +335,18 @@ const upload = multer({
 // 限制 CORS，防止跨站请求伪造利用本地服务 RCE
 app.use(cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }));
 app.use(express.json({ limit: '10mb' }));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../public/home-v2.html'));
+});
+app.get('/home-v2.html', (req, res) => {
+  res.redirect('/');
+});
+app.get('/legacy-home.html', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../public/index.html'));
+});
+app.get('/index.html', (req, res) => {
+  res.redirect('/legacy-home.html');
+});
 app.use(express.static(path.join(__dirname, '../../public')));
 
 /**
@@ -208,9 +371,11 @@ function parseContentImages(content, obsidianPath) {
   return { text: content, images };
 }
 
-// 历史记录存储
-const HISTORY_FILE = path.join(__dirname, '../../data/history.json');
+// 运行时缓存
 const CONFIG_FILE = path.join(__dirname, '../../data/config.json');
+const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
+const DRAFT_CACHE_DIR = path.join(__dirname, '../../data/draft-cache');
+const HOME_V2_DRAFT_FILE = path.join(DRAFT_CACHE_DIR, 'home-v2.json');
 
 function createDefaultPluginStates(registry) {
   return registry.reduce((states, plugin) => {
@@ -227,6 +392,98 @@ async function loadPluginStates() {
     ...defaults,
     ...(config.plugins || {})
   };
+}
+
+function normalizeDraftContent(rawContent) {
+  return String(rawContent || '').replace(/\r\n/g, '\n');
+}
+
+function normalizeDraftImageFilenames(rawFilenames = []) {
+  const seen = new Set();
+  const normalized = [];
+
+  for (const rawFilename of Array.isArray(rawFilenames) ? rawFilenames : []) {
+    const filename = sanitizeAssetFilename(rawFilename);
+    if (!filename || seen.has(filename)) continue;
+    seen.add(filename);
+    normalized.push(filename);
+  }
+
+  return normalized;
+}
+
+function buildHomeV2DraftPayload(rawDraft = {}) {
+  return {
+    content: normalizeDraftContent(rawDraft.content),
+    imageFilenames: normalizeDraftImageFilenames(rawDraft.imageFilenames),
+    updatedAt: typeof rawDraft.updatedAt === 'string' ? rawDraft.updatedAt : ''
+  };
+}
+
+function isHomeV2DraftEmpty(draft) {
+  const normalized = buildHomeV2DraftPayload(draft);
+  return !normalized.content.trim() && normalized.imageFilenames.length === 0;
+}
+
+async function loadHomeV2Draft() {
+  try {
+    const data = await fsPromises.readFile(HOME_V2_DRAFT_FILE, 'utf-8');
+    return buildHomeV2DraftPayload(JSON.parse(data));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.warn('[HomeV2Draft] 读取草稿失败:', error.message);
+    }
+    return buildHomeV2DraftPayload();
+  }
+}
+
+async function deleteCachedImages(filenames = []) {
+  for (const filename of normalizeDraftImageFilenames(filenames)) {
+    const cachePath = path.resolve(IMAGE_CACHE_DIR, filename);
+    if (!isPathInsideDir(cachePath, IMAGE_CACHE_DIR)) continue;
+    await fsPromises.unlink(cachePath).catch(() => {});
+  }
+}
+
+let homeV2DraftWriteQueue = Promise.resolve();
+
+async function saveHomeV2DraftInternal(rawDraft = {}) {
+  const previousDraft = await loadHomeV2Draft();
+  const nextDraft = {
+    content: normalizeDraftContent(rawDraft.content),
+    imageFilenames: normalizeDraftImageFilenames(rawDraft.imageFilenames),
+    updatedAt: new Date().toISOString()
+  };
+
+  const removedImages = previousDraft.imageFilenames.filter(filename => !nextDraft.imageFilenames.includes(filename));
+  if (removedImages.length > 0) {
+    await deleteCachedImages(removedImages);
+  }
+
+  if (isHomeV2DraftEmpty(nextDraft)) {
+    await fsPromises.unlink(HOME_V2_DRAFT_FILE).catch(() => {});
+    return buildHomeV2DraftPayload();
+  }
+
+  await fsPromises.mkdir(DRAFT_CACHE_DIR, { recursive: true });
+  await fsPromises.writeFile(HOME_V2_DRAFT_FILE, JSON.stringify(nextDraft, null, 2), 'utf-8');
+  return nextDraft;
+}
+
+async function saveHomeV2Draft(rawDraft = {}) {
+  const task = homeV2DraftWriteQueue.then(() => saveHomeV2DraftInternal(rawDraft));
+  homeV2DraftWriteQueue = task.catch(() => {});
+  return task;
+}
+
+function validateHomeV2DraftPayload(body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+  const { content, imageFilenames } = payload;
+  if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
+  if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
+    return 'imageFilenames 必须是字符串数组';
+  }
+  return null;
 }
 
 async function savePluginToggle(pluginId, enabled) {
@@ -271,75 +528,6 @@ function sendPluginError(res, error) {
     error: error.message
   });
 }
-
-
-
-/**
- * 加载历史记录
- */
-async function loadHistory() {
-  try {
-    const data = await fsPromises.readFile(HISTORY_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    return [];
-  }
-}
-
-/**
- * 保存历史记录
- */
-async function saveHistory(history) {
-  try {
-    await fsPromises.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf-8');
-  } catch (error) {
-    console.error('Failed to save history:', error);
-  }
-}
-
-/**
- * 添加或更新历史记录
- */
-let historyWriteQueue = Promise.resolve();
-
-async function updateOrAddToHistoryInternal(entry) {
-  const history = await loadHistory();
-  const existingIndex = history.findIndex(item => item.id === entry.id);
-
-  if (existingIndex !== -1) {
-    // 存在则更新状态
-    history[existingIndex] = {
-      ...history[existingIndex],
-      ...entry,
-      status: {
-        ...history[existingIndex].status,
-        ...(entry.status || {})
-      },
-      // 特殊处理 telegramSends
-      telegramSends: Array.from(new Set([
-        ...(history[existingIndex].telegramSends || []),
-        ...(entry.telegramSends || [])
-      ]))
-    };
-  } else {
-    // 不存在则新增
-    history.unshift(entry);
-  }
-
-  // 只保留最近 100 条
-  if (history.length > 100) {
-    history.splice(100);
-  }
-
-  await saveHistory(history);
-}
-
-async function updateOrAddToHistory(entry) {
-  const task = historyWriteQueue.then(() => updateOrAddToHistoryInternal(entry));
-  historyWriteQueue = task.catch(() => {});
-  return task;
-}
-
 // API 路由
 
 /**
@@ -349,12 +537,65 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/api/home-v2-draft', async (req, res) => {
+  try {
+    const draft = await loadHomeV2Draft();
+    res.json({
+      ok: true,
+      hasDraft: !isHomeV2DraftEmpty(draft),
+      draft
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/home-v2-draft', async (req, res) => {
+  try {
+    const payloadError = validateHomeV2DraftPayload(req.body);
+    if (payloadError) {
+      return res.status(400).json({ ok: false, error: payloadError });
+    }
+
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const draft = await saveHomeV2Draft(payload);
+    res.json({
+      ok: true,
+      hasDraft: !isHomeV2DraftEmpty(draft),
+      draft
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.delete('/api/home-v2-draft', async (req, res) => {
+  try {
+    const draft = await saveHomeV2Draft({ content: '', imageFilenames: [] });
+    res.json({
+      ok: true,
+      hasDraft: false,
+      draft
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
 /**
  * 图片上传：保存到临时缓存目录 data/image-cache/（不直接写入 Obsidian）
- * 只有在用户点击保存后，才会在 save-stream 中将缓存图片移入 obsidian/assets/
+ * 发布链路只读取缓存图片；Obsidian 本地保存插件会按需复制到本地图片目录。
  * 返回: { success, filename, previewUrl }
  */
-const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
 
 app.post('/api/upload-image', upload.single('image'), async (req, res) => {
   try {
@@ -420,11 +661,8 @@ app.get('/api/image-cache/:filename', async (req, res) => {
     } catch {}
 
     // 2. 再查 obsidian/assets/ 目录
-    const config = await ConfigManager.loadConfig();
-    const obsidianPath = config?.diary?.obsidianPath
-      || config?.obsidianPath
-      || '/path/to/obsidian/notes';
-    const assetsPath = path.join(obsidianPath, 'assets', filename);
+    const storageConfig = await loadObsidianStorageConfig();
+    const assetsPath = path.join(storageConfig.imageSavePath, filename);
     try {
       await fsPromises.access(assetsPath);
       return res.sendFile(assetsPath);
@@ -437,234 +675,170 @@ app.get('/api/image-cache/:filename', async (req, res) => {
 });
 
 /**
- * 确保图片出现在 obsidianPath/assets/ 目录（幂等）
- * - 如果文件在缓存目录：移过去
- * - 如果文件已在 assets 目录：直接用
- * - 否则：跳过并打印 warning
- * @param {string[]} filenames
- * @param {string} obsidianPath
- * @returns {string[]} assets 目录下的绝对路径列表
+ * 发布编排接口：仅执行发布目标，不保存 Obsidian
  */
-async function ensureImagesInAssets(filenames, obsidianPath) {
-  if (!filenames || filenames.length === 0) return [];
-
-  const assetsDir = path.join(obsidianPath, 'assets');
-  await fsPromises.mkdir(assetsDir, { recursive: true });
-
-  const result = [];
-  for (const rawFilename of filenames) {
-    const filename = sanitizeAssetFilename(rawFilename);
-    if (!filename) {
-      console.warn(`[ImageAssets] 非法文件名已忽略: ${rawFilename}`);
-      continue;
-    }
-    const destPath = path.resolve(assetsDir, filename);
-    if (!isPathInsideDir(destPath, assetsDir)) {
-      console.warn(`[ImageAssets] 越界路径已忽略: ${rawFilename}`);
-      continue;
-    }
-
-    // 1. 已经在 assets 了，直接用
-    try {
-      await fsPromises.access(destPath);
-      result.push(destPath);
-      console.log(`[ImageAssets] 已在 assets: ${filename}`);
-      continue;
-    } catch {}
-
-    // 2. 在缓存目录，移过去
-    const cachePath = path.resolve(IMAGE_CACHE_DIR, filename);
-    if (!isPathInsideDir(cachePath, IMAGE_CACHE_DIR)) {
-      console.warn(`[ImageAssets] 非法缓存路径已忽略: ${rawFilename}`);
-      continue;
-    }
-    try {
-      await fsPromises.access(cachePath);
-      await fsPromises.copyFile(cachePath, destPath);
-      await fsPromises.unlink(cachePath).catch(() => {});
-      result.push(destPath);
-      console.log(`[ImageAssets] 移动到 assets: ${filename}`);
-      continue;
-    } catch {}
-
-    console.warn(`[ImageAssets] 找不到图片: ${filename}`);
-  }
-  return result;
-}
-
-
-/**
- * 保存日记/笔记（流式响应，实时更新状态）
- */
-app.post('/api/save-stream', async (req, res) => {
+app.post('/api/publish', async (req, res) => {
   try {
-    const payloadError = validateSaveStreamPayload(req.body);
+    const payloadError = validatePublishPayload(req.body);
     if (payloadError) {
-      return res.status(400).json({ error: payloadError });
+      return res.status(400).json({ ok: false, error: payloadError });
     }
 
     const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
-    const { content, type = 'diary', options = {}, saveId, imageFilenames = [] } = payload;
-    const normalizedSaveId = saveId === undefined || saveId === null ? '' : String(saveId).trim();
-    const effectiveSaveId = normalizedSaveId
-      ? normalizedSaveId
-      : `save_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const { content = '', targets = [], telegram = {}, imageFilenames = [] } = payload;
+    const normalizedContent = optimizeContent(content || '');
+    const requestedTargets = [...new Set(targets.map(item => String(item).trim()).filter(Boolean))];
 
-    if ((!content || !content.trim()) && imageFilenames.length === 0) {
-      return res.status(400).json({ error: '内容不能为空' });
+    if (!normalizedContent && imageFilenames.length === 0) {
+      return res.status(400).json({ ok: false, error: '内容不能为空' });
     }
-    if (!['diary', 'note'].includes(type)) return res.status(400).json({ error: '类型必须是 diary 或 note' });
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    const optimized = optimizeContent(content || '');
-    const config = await ConfigManager.loadConfig();
-
-    const obsidianPath = type === 'note'
-      ? (config?.note?.vaultPath || config?.obsidianPath || '/path/to/obsidian/notes')
-      : (config?.diary?.obsidianPath || config?.obsidianPath || '/path/to/obsidian/notes');
-
-    // 保存时：确保图片在 obsidianPath/assets/（幂等，无论图片在缓存还是已在 assets）
-    const movedImagePaths = await ensureImagesInAssets(imageFilenames, obsidianPath);
-
-    // 将图片的 Markdown 引用追加到 content 中（给 Obsidian 保存用）
-    let contentWithImages = optimized;
-    if (movedImagePaths.length > 0) {
-      const imageRefs = movedImagePaths.map(p => {
-        const fname = path.basename(p);
-        return `![image](assets/${fname})`;
-      }).join('\n');
-      contentWithImages = optimized
-        ? optimized + '\n\n' + imageRefs
-        : imageRefs;
+    if (requestedTargets.length === 0) {
+      return res.status(400).json({ ok: false, error: '至少要选择一个发布目标' });
     }
 
-    const obsidianResult = await saveToObsidian(contentWithImages, type, options);
-    res.write(`data: ${JSON.stringify({ type: 'status', plugin: 'obsidian', success: obsidianResult.success })}\n\n`);
+    const pluginStates = await loadPluginStates();
+    const cachedImagePaths = await resolveCachedImagePaths(imageFilenames);
+    const results = {};
 
-    // 插件收到原始文字 content + 图片绝对路径列表
-    const pluginResults = await PluginManager.executePlugins(optimized, type, options, config, (plugin, success) => {
-      res.write(`data: ${JSON.stringify({ type: 'status', plugin, success })}\n\n`);
-    }, movedImagePaths);
+    for (const targetId of requestedTargets) {
+      const plugin = PluginManager.getPlugin(targetId);
+      if (!plugin) {
+        results[targetId] = { success: false, message: '插件不存在' };
+        continue;
+      }
 
-    const historyStatus = { obsidian: obsidianResult.success ? 'success' : 'failed' };
-    for (const [key, result] of Object.entries(pluginResults)) {
-      if (result.skipped) historyStatus[key] = 'skipped';
-      else historyStatus[key] = result.success ? 'success' : 'failed';
+      const isEnabled = pluginStates[targetId] ?? plugin.manifest.enabledByDefault ?? false;
+      if (!isEnabled) {
+        results[targetId] = { success: false, skipped: true, message: '插件未启用' };
+        continue;
+      }
+
+      if (typeof plugin.module.execute !== 'function') {
+        results[targetId] = { success: false, message: '插件不支持 execute' };
+        continue;
+      }
+
+      try {
+        if (targetId === 'telegram') {
+          const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
+          const telegramChannel = (telegram.channel || '').trim() || (telegramConfig.defaultChannel || '').trim();
+          const telegramContent = optimizeContent(telegram.content || normalizedContent);
+
+          if (!telegramChannel) {
+            results[targetId] = { success: false, message: 'Telegram 频道不能为空' };
+            continue;
+          }
+
+          const executeResult = await plugin.module.execute({
+            content: telegramContent,
+            type: 'diary',
+            options: { telegramChannel },
+            images: cachedImagePaths
+          });
+          results[targetId] = executeResult;
+          continue;
+        }
+
+        const executeResult = await plugin.module.execute({
+          content: normalizedContent,
+          type: 'diary',
+          options: {},
+          images: cachedImagePaths
+        });
+        results[targetId] = executeResult;
+      } catch (error) {
+        results[targetId] = { success: false, message: error.message };
+      }
     }
 
-    await updateOrAddToHistory({
-      id: effectiveSaveId,
-      timestamp: new Date().toISOString(),
-      type,
-      content: contentWithImages,
-      status: historyStatus,
-      suggestion: pluginResults.memu?.suggestion || null
-    });
+    const failedTargets = Object.entries(results)
+      .filter(([, result]) => result?.success === false && !result?.skipped)
+      .map(([id]) => id);
 
-    res.write(`data: ${JSON.stringify({ type: 'complete', saveId: effectiveSaveId, suggestion: pluginResults.memu?.suggestion })}\n\n`);
-    res.end();
-  } catch (error) {
-    res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
-    res.end();
-  }
-});
-
-/**
- * 保存日记/笔记（原有端点，保持兼容）
- */
-app.post('/api/save', async (req, res) => {
-  try {
-    const { content, type = 'diary', options = {} } = req.body;
-    if (!content || !content.trim()) return res.status(400).json({ error: '内容不能为空' });
-    if (!['diary', 'note'].includes(type)) return res.status(400).json({ error: '类型必须是 diary 或 note' });
-
-    const optimized = optimizeContent(content);
-    const config = await ConfigManager.loadConfig();
-
-    const obsidianResult = await saveToObsidian(optimized, type, options);
-    const pluginResults = await PluginManager.executePlugins(optimized, type, options, config, null);
-
-    const historyStatus = { obsidian: obsidianResult.success };
-    for (const [key, result] of Object.entries(pluginResults)) {
-      historyStatus[key] = result.success || false;
-    }
-
-    await updateOrAddToHistory({
-      id: Date.now().toString(),
-      timestamp: new Date().toISOString(),
-      type,
-      content,
-      status: historyStatus,
-      suggestion: pluginResults.memu?.suggestion || null
-    });
-
-    res.json({ success: true, results: { obsidian: obsidianResult, ...pluginResults }, message: '保存成功' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-/**
- * 获取历史记录
- */
-app.get('/api/history', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 20;
-    const history = await loadHistory();
     res.json({
-      success: true,
-      history: history.slice(0, limit)
+      ok: failedTargets.length === 0,
+      requestedTargets,
+      failedTargets,
+      results
     });
   } catch (error) {
-    console.error('Get history error:', error);
     res.status(500).json({
-      success: false,
+      ok: false,
       error: error.message
     });
   }
 });
 
 /**
- * 清空历史记录
+ * 主页保存链路：仅执行 Obsidian 今日日记保存
  */
-app.delete('/api/history', async (req, res) => {
+app.post('/api/save-local-v2', async (req, res) => {
   try {
-    await saveHistory([]);
-    res.json({ success: true, message: '历史记录已清空' });
-  } catch (error) {
-    console.error('Clear history error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
+    const payloadError = validateSaveLocalPayload(req.body);
+    if (payloadError) {
+      return res.status(400).json({ ok: false, error: payloadError });
+    }
+
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const {
+      content = '',
+      options = {},
+      imageFilenames = []
+    } = payload;
+    const rawContent = String(content || '').replace(/\r\n/g, '\n').trim();
+
+    if (!rawContent && imageFilenames.length === 0) {
+      return res.status(400).json({ ok: false, error: '内容不能为空' });
+    }
+
+    const pluginStates = await loadPluginStates();
+    const pluginResults = {};
+    const pluginId = 'obsidian-local';
+    const plugin = PluginManager.getPlugin(pluginId);
+    if (!plugin) {
+      return res.status(500).json({
+        ok: false,
+        error: 'Obsidian 本地保存插件不存在'
+      });
+    }
+
+    const isEnabled = pluginStates[pluginId] ?? plugin.manifest.enabledByDefault ?? false;
+    if (!isEnabled) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Obsidian 本地保存插件未启用'
+      });
+    }
+
+    const cachedImagePaths = await resolveCachedImagePaths(imageFilenames);
+
+    try {
+      pluginResults[pluginId] = await plugin.module.execute({
+        content: rawContent,
+        type: 'diary',
+        options,
+        images: cachedImagePaths,
+        imageFilenames
+      });
+    } catch (error) {
+      pluginResults[pluginId] = { success: false, message: error.message };
+    }
+
+    const failedPlugins = Object.entries(pluginResults)
+      .filter(([, result]) => result?.success === false && !result?.skipped)
+      .map(([pluginId]) => pluginId);
+
+    res.json({
+      ok: failedPlugins.length === 0,
+      requestedPlugins: [pluginId],
+      failedPlugins,
+      results: {
+        plugins: pluginResults
+      }
     });
-  }
-});
-
-/**
- * 获取统计信息
- */
-app.get('/api/stats', async (req, res) => {
-  try {
-    const history = await loadHistory();
-
-    const stats = {
-      total: history.length,
-      diary: history.filter(h => h.type === 'diary').length,
-      note: history.filter(h => h.type === 'note').length,
-      today: history.filter(h => {
-        const today = new Date().toISOString().split('T')[0];
-        return h.timestamp.startsWith(today);
-      }).length
-    };
-
-    res.json({ success: true, stats });
   } catch (error) {
-    console.error('Get stats error:', error);
     res.status(500).json({
-      success: false,
+      ok: false,
       error: error.message
     });
   }
@@ -711,10 +885,10 @@ app.post('/api/browse-folder', async (req, res) => {
  */
 app.get('/api/config/obsidian', async (req, res) => {
   try {
-    const config = await ConfigManager.loadConfig();
+    const storageConfig = await loadObsidianStorageConfig();
     res.json({
       success: true,
-      path: config.obsidianPath
+      path: storageConfig.diaryPath
     });
   } catch (error) {
     console.error('Get config error:', error);
@@ -731,44 +905,39 @@ app.get('/api/config/obsidian', async (req, res) => {
 app.get('/api/config/diary', async (req, res) => {
   try {
     const config = await ConfigManager.loadConfig();
+    const obsidianStorage = await loadObsidianStorageConfig(config);
     const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
     const flomoConfig = await PluginManager.getPluginConfig('flomo').catch(() => ({}));
     const mastodonConfig = await PluginManager.getPluginConfig('mastodon').catch(() => ({}));
-    const memuConfig = await PluginManager.getPluginConfig('memu').catch(() => ({}));
 
     // 默认值（从 journal-sync.js 中的常量）
     const defaults = {
       obsidianPath: '/path/to/obsidian/notes',
       flomoApi: '',
-      memuBridgeScript: '/path/to/memu_bridge.py',
-      memuUserId: 'linyun',
       tgDiaryChannel: '@LinYunChannel',
       tgBotToken: '',
       tgChannels: '[]',
-      tgOptimizePrompt: '',
       tgShowLinkPreview: true,
       tgBoldFirstLine: false,
-      tgAppendSource: false
+      tgAppendSource: false,
+      tgAddLineBreakPerLine: false
     };
 
     res.json({
       ok: true,
       config: {
-        obsidianPath: config?.diary?.obsidianPath || config?.obsidianPath || defaults.obsidianPath,
+        obsidianPath: obsidianStorage.diaryPath || defaults.obsidianPath,
         flomoApi: '',
-        memuBridgeScript: memuConfig?.memuBridgeScript || config?.diary?.memuBridgeScript || defaults.memuBridgeScript,
-        memuUserId: memuConfig?.memuUserId || config?.diary?.memuUserId || defaults.memuUserId,
         tgDiaryChannel: telegramConfig?.defaultChannel || defaults.tgDiaryChannel,
         tgBotToken: '',
         tgChannels: JSON.stringify(telegramConfig?.channels || []),
-        tgOptimizePrompt: telegramConfig?.optimizePrompt || defaults.tgOptimizePrompt,
         tgShowLinkPreview: telegramConfig?.showLinkPreview ?? defaults.tgShowLinkPreview,
         tgBoldFirstLine: telegramConfig?.boldFirstLine ?? defaults.tgBoldFirstLine,
         tgAppendSource: telegramConfig?.appendSourceTag ?? defaults.tgAppendSource,
+        tgAddLineBreakPerLine: telegramConfig?.addLineBreakPerLine ?? defaults.tgAddLineBreakPerLine,
         mastodonInstanceUrl: mastodonConfig?.instanceUrl || '',
         mastodonAccessToken: '',
-        mastodonVisibility: mastodonConfig?.visibility || 'unlisted',
-        mem0Insights: config?.mem0Insights || {}
+        mastodonVisibility: mastodonConfig?.visibility || 'unlisted'
       }
     });
   } catch (error) {
@@ -785,10 +954,11 @@ app.get('/api/config/diary', async (req, res) => {
 app.get('/api/config/note', async (req, res) => {
   try {
     const config = await ConfigManager.loadConfig();
+    const obsidianStorage = await loadObsidianStorageConfig(config);
     res.json({
       ok: true,
       config: {
-        vaultPath: config?.note?.vaultPath || ''
+        vaultPath: obsidianStorage.noteVaultPath || ''
       }
     });
   } catch (error) {
@@ -813,9 +983,17 @@ app.post('/api/config/obsidian', async (req, res) => {
       });
     }
 
-    const config = await ConfigManager.loadConfig();
-    config.obsidianPath = obsidianPath.trim();
-    await ConfigManager.saveConfig(config);
+    const pluginConfig = await loadObsidianLocalPluginConfig();
+    const previousDiaryPath = pluginConfig.diaryPath || DEFAULT_OBSIDIAN_DIR;
+    const previousDefaultImagePath = path.join(previousDiaryPath, 'assets');
+    const nextConfig = {
+      ...pluginConfig,
+      diaryPath: obsidianPath.trim()
+    };
+    if (!pluginConfig.imageSavePath || pluginConfig.imageSavePath === previousDefaultImagePath) {
+      nextConfig.imageSavePath = path.join(nextConfig.diaryPath, 'assets');
+    }
+    await saveObsidianLocalPluginConfig(nextConfig);
 
     res.json({
       success: true,
@@ -842,7 +1020,8 @@ app.get('/api/config/full', async (req, res) => {
         ai: {
           baseUrl: config?.ai?.baseUrl || '',
           apiKey: config?.ai?.apiKey || '',
-          model: config?.ai?.model || ''
+          model: config?.ai?.model || '',
+          apiType: normalizeAiApiType(config?.ai?.apiType)
         },
         network: {
           proxy: config?.network?.proxy || ''
@@ -871,6 +1050,30 @@ app.post('/api/config/set', async (req, res) => {
       });
     }
 
+    if (configPath === 'diary.obsidianPath' || configPath === 'note.vaultPath') {
+      const pluginConfig = await loadObsidianLocalPluginConfig();
+      const nextConfig = { ...pluginConfig };
+
+      if (configPath === 'diary.obsidianPath') {
+        const nextDiaryPath = String(value || '').trim();
+        const previousDiaryPath = pluginConfig.diaryPath || DEFAULT_OBSIDIAN_DIR;
+        const previousDefaultImagePath = path.join(previousDiaryPath, 'assets');
+        nextConfig.diaryPath = nextDiaryPath;
+        if (!pluginConfig.imageSavePath || pluginConfig.imageSavePath === previousDefaultImagePath) {
+          nextConfig.imageSavePath = path.join(nextDiaryPath, 'assets');
+        }
+      } else {
+        nextConfig.noteVaultPath = String(value || '').trim();
+      }
+
+      await saveObsidianLocalPluginConfig(nextConfig);
+
+      return res.json({
+        ok: true,
+        message: '配置已更新'
+      });
+    }
+
     // 特殊处理 Telegram 配置，保存到插件配置文件
     if (configPath.startsWith('diary.tg')) {
       const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
@@ -878,18 +1081,16 @@ app.post('/api/config/set', async (req, res) => {
         botToken: '',
         channels: [],
         defaultChannel: '',
-        optimizePrompt: '',
         showLinkPreview: true,
         boldFirstLine: false,
-        appendSourceTag: false
+        appendSourceTag: false,
+        addLineBreakPerLine: false
       };
 
       if (configPath === 'diary.tgBotToken') {
         telegramConfig.botToken = value;
       } else if (configPath === 'diary.tgDiaryChannel') {
         telegramConfig.defaultChannel = value;
-      } else if (configPath === 'diary.tgOptimizePrompt') {
-        telegramConfig.optimizePrompt = value;
       } else if (configPath === 'diary.tgChannels') {
         if (typeof value === 'string') {
           try {
@@ -921,6 +1122,8 @@ app.post('/api/config/set', async (req, res) => {
         telegramConfig.boldFirstLine = Boolean(value);
       } else if (configPath === 'diary.tgAppendSource') {
         telegramConfig.appendSourceTag = Boolean(value);
+      } else if (configPath === 'diary.tgAddLineBreakPerLine') {
+        telegramConfig.addLineBreakPerLine = Boolean(value);
       }
 
       await telegramConfigMod.saveConfig(telegramConfig);
@@ -941,22 +1144,6 @@ app.post('/api/config/set', async (req, res) => {
       res.json({
         ok: true,
         message: 'Flomo 配置已更新'
-      });
-      return;
-    }
-
-    if (configPath === 'diary.memuBridgeScript' || configPath === 'diary.memuUserId') {
-      const memuConfig = await PluginManager.getPluginConfig('memu').catch(() => ({}));
-      if (configPath === 'diary.memuBridgeScript') {
-        memuConfig.memuBridgeScript = value;
-      } else {
-        memuConfig.memuUserId = value;
-      }
-      await PluginManager.savePluginConfig('memu', memuConfig);
-
-      res.json({
-        ok: true,
-        message: 'MemU 配置已更新'
       });
       return;
     }
@@ -1014,9 +1201,13 @@ app.post('/api/config/set', async (req, res) => {
       }
       current = current[keys[i]];
     }
+    const normalizedAiApiType = configPath === 'ai.apiType'
+      ? normalizeAiApiType(value)
+      : null;
+
     current[keys[keys.length - 1]] = configPath === 'network.proxy'
       ? normalizedNetworkProxy
-      : value;
+      : (configPath === 'ai.apiType' ? normalizedAiApiType : value);
 
     await ConfigManager.saveConfig(config);
 
@@ -1033,7 +1224,8 @@ app.post('/api/config/set', async (req, res) => {
 
     res.json({
       ok: true,
-      message: '配置已更新'
+      message: '配置已更新',
+      ...(configPath === 'ai.apiType' ? { value: normalizedAiApiType } : {})
     });
   } catch (error) {
     res.status(500).json({
@@ -1049,8 +1241,19 @@ app.post('/api/config/set', async (req, res) => {
 app.post('/api/config/test-ai', async (req, res) => {
   try {
     const config = await ConfigManager.loadConfig();
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body))
+      ? req.body
+      : {};
+    const aiPayload = (payload.ai && typeof payload.ai === 'object' && !Array.isArray(payload.ai))
+      ? payload.ai
+      : null;
+    const aiConfig = {
+      ...(config?.ai || {}),
+      ...(aiPayload || {})
+    };
+    aiConfig.apiType = normalizeAiApiType(aiConfig.apiType);
 
-    if (!config?.ai?.baseUrl || !config?.ai?.apiKey || !config?.ai?.model) {
+    if (!aiConfig?.baseUrl || !aiConfig?.apiKey || !aiConfig?.model) {
       return res.status(400).json({
         ok: false,
         success: false,
@@ -1060,41 +1263,59 @@ app.post('/api/config/test-ai', async (req, res) => {
 
     // 简单的测试请求
     const startTime = Date.now();
-    const apiUrl = getAiChatCompletionsUrl(config.ai.baseUrl);
+    const apiUrl = getAiEndpointUrl(aiConfig.baseUrl, aiConfig.apiType);
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.ai.apiKey}`
+        'Authorization': `Bearer ${aiConfig.apiKey}`
       },
-      body: JSON.stringify({
-        model: config.ai.model,
-        messages: [
-          { role: 'system', content: '你是一个测试助手。' },
-          { role: 'user', content: '请返回 "连接成功"' }
-        ],
-        max_tokens: 10
-      })
+      body: JSON.stringify(buildAiRequestBody(aiConfig, {
+        systemPrompt: '你是一个测试助手。',
+        userPrompt: '请返回 "连接成功"',
+        maxTokens: 10,
+        temperature: 0
+      }))
     });
 
     const duration = Date.now() - startTime;
 
+    const rawData = await response.text();
+    let result = null;
+    if (rawData && rawData.trim()) {
+      try {
+        result = JSON.parse(rawData);
+      } catch {
+        result = rawData;
+      }
+    }
+
     if (response.ok) {
-      const result = await response.json();
+      const outputText = extractAiText(result);
+      if (!outputText) {
+        return res.status(500).json({
+          ok: false,
+          success: false,
+          error: 'AI 返回空内容，请更换支持文本输出的模型或接口',
+          message: 'AI 连接测试失败',
+          response: result
+        });
+      }
+
       res.json({
         ok: true,
         success: true,
         message: 'AI 连接测试成功',
         duration: `${duration}ms`,
-        model: config.ai.model,
+        model: aiConfig.model,
+        apiType: aiConfig.apiType,
         response: result
       });
     } else {
-      const error = await response.text();
       res.status(500).json({
         ok: false,
         success: false,
-        error: error,
+        error: result?.error?.message || String(result || '').slice(0, 300),
         message: 'AI 连接测试失败'
       });
     }
@@ -1189,8 +1410,8 @@ app.get('/api/folders', async (req, res) => {
  */
 app.post('/api/folders/rebuild', async (req, res) => {
   try {
-    const config = await ConfigManager.loadConfig();
-    const vaultPath = config?.note?.vaultPath;
+    const storageConfig = await loadObsidianStorageConfig();
+    const vaultPath = storageConfig.noteVaultPath;
 
     if (!vaultPath) {
       return res.status(400).json({
@@ -1294,65 +1515,6 @@ app.post('/api/folders/delete', async (req, res) => {
       ok: true,
       message: '文件夹删除成功',
       count: folders.length
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 获取插件状态
- */
-app.get('/api/plugins', async (req, res) => {
-  try {
-    const registry = await buildPluginRegistryResponse();
-    const plugins = registry.plugins.reduce((states, plugin) => {
-      states[plugin.id] = plugin.enabled;
-      return states;
-    }, {});
-
-    res.json({
-      ok: true,
-      plugins
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 切换插件状态
- */
-app.post('/api/plugins/toggle', async (req, res) => {
-  try {
-    const { plugin, enabled } = req.body;
-
-    if (!plugin || typeof enabled !== 'boolean') {
-      return res.status(400).json({
-        ok: false,
-        error: '参数错误'
-      });
-    }
-
-    const pluginEntry = PluginManager.getPlugin(plugin);
-    if (!pluginEntry) {
-      return res.status(404).json({
-        ok: false,
-        error: '插件不存在'
-      });
-    }
-
-    await savePluginToggle(plugin, enabled);
-
-    res.json({
-      ok: true,
-      message: `插件 ${plugin} 已${enabled ? '启用' : '禁用'}`
     });
   } catch (error) {
     res.status(500).json({
@@ -1551,6 +1713,99 @@ app.post('/api/telegram/test', async (req, res) => {
   }
 });
 
+app.post('/api/telegram/test-ai', async (req, res) => {
+  try {
+    const config = await ConfigManager.loadConfig();
+    const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
+    const tgAiConfig = telegramConfig?.ai || {};
+    const useGeneralAi = tgAiConfig.useGeneral !== false;
+    const aiConfig = useGeneralAi
+      ? { ...(config?.ai || {}) }
+      : {
+        baseUrl: tgAiConfig.baseUrl || '',
+        apiKey: tgAiConfig.apiKey || '',
+        model: tgAiConfig.model || '',
+        apiType: normalizeAiApiType(tgAiConfig.apiType)
+      };
+    aiConfig.apiType = normalizeAiApiType(aiConfig.apiType);
+
+    if (!aiConfig?.baseUrl || !aiConfig?.apiKey || !aiConfig?.model) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: useGeneralAi
+          ? '常规 AI 配置不完整，请先配置后再测试'
+          : 'Telegram AI 配置不完整，请先配置后再测试'
+      });
+    }
+
+    const startTime = Date.now();
+    const apiUrl = getAiEndpointUrl(aiConfig.baseUrl, aiConfig.apiType);
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${aiConfig.apiKey}`
+      },
+      body: JSON.stringify(buildAiRequestBody(aiConfig, {
+        systemPrompt: '你是一个测试助手。',
+        userPrompt: '请返回 "连接成功"',
+        maxTokens: 10,
+        temperature: 0
+      }))
+    });
+
+    const duration = Date.now() - startTime;
+    const rawData = await response.text();
+    let result = null;
+    if (rawData && rawData.trim()) {
+      try {
+        result = JSON.parse(rawData);
+      } catch {
+        result = rawData;
+      }
+    }
+
+    if (!response.ok) {
+      return res.status(500).json({
+        ok: false,
+        success: false,
+        error: result?.error?.message || String(result || '').slice(0, 300),
+        message: 'AI 连接测试失败'
+      });
+    }
+
+    const outputText = extractAiText(result);
+    if (!outputText) {
+      return res.status(500).json({
+        ok: false,
+        success: false,
+        error: 'AI 返回空内容，请更换支持文本输出的模型或接口',
+        message: 'AI 连接测试失败',
+        response: result
+      });
+    }
+
+    res.json({
+      ok: true,
+      success: true,
+      source: useGeneralAi ? 'general' : 'telegram',
+      message: 'AI 连接测试成功',
+      duration: `${duration}ms`,
+      model: aiConfig.model,
+      apiType: aiConfig.apiType,
+      response: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      success: false,
+      error: error.message,
+      message: 'AI 连接测试失败'
+    });
+  }
+});
+
 /**
  * 优化内容为 Telegram 发布格式
  */
@@ -1567,15 +1822,27 @@ app.post('/api/telegram/optimize', async (req, res) => {
     }
 
     const config = await ConfigManager.loadConfig();
-    const aiConfig = config?.ai;
     const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
     const telegramConfig = await telegramConfigMod.loadConfig();
+    const tgAiConfig = telegramConfig?.ai || {};
+    const useGeneralAi = tgAiConfig.useGeneral !== false;
+    const aiConfig = useGeneralAi
+      ? { ...(config?.ai || {}) }
+      : {
+        baseUrl: tgAiConfig.baseUrl || '',
+        apiKey: tgAiConfig.apiKey || '',
+        model: tgAiConfig.model || '',
+        apiType: normalizeAiApiType(tgAiConfig.apiType)
+      };
+    aiConfig.apiType = normalizeAiApiType(aiConfig.apiType);
 
     if (!aiConfig || !aiConfig.baseUrl || !aiConfig.apiKey || !aiConfig.model) {
       return res.json({
         ok: false,
         success: false,
-        error: 'AI 配置不完整，请先在设置中配置 AI 模型'
+        error: useGeneralAi
+          ? 'AI 配置不完整，请先在常规设置中配置 AI 模型'
+          : 'Telegram 插件 AI 配置不完整，请先在 Telegram 插件设置中配置'
       });
     }
 
@@ -1584,27 +1851,18 @@ app.post('/api/telegram/optimize', async (req, res) => {
     const systemPrompt = customPrompt || '你是一个专业的内容编辑，擅长将笔记内容优化为适合 Telegram 频道发布的格式。要求：1. 保持原意，简洁明了 2. 适当使用 emoji 3. 分段清晰 4. 适合社交媒体阅读';
 
     // 调用 AI 优化内容（使用 fetch，复用全局代理）
-    const apiUrl = getAiChatCompletionsUrl(aiConfig.baseUrl);
+    const apiUrl = getAiEndpointUrl(aiConfig.baseUrl, aiConfig.apiType);
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${aiConfig.apiKey}`
       },
-      body: JSON.stringify({
-        model: aiConfig.model,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content}`
-          }
-        ],
+      body: JSON.stringify(buildAiRequestBody(aiConfig, {
+        systemPrompt,
+        userPrompt: `请将以下内容优化为适合 Telegram 发布的格式：\n\n${content}`,
         temperature: 0.7
-      })
+      }))
     });
     const rawData = await response.text();
     if (!rawData || rawData.trim() === '') {
@@ -1638,8 +1896,8 @@ app.post('/api/telegram/optimize', async (req, res) => {
         error: `AI 错误: ${result.error.message || JSON.stringify(result.error)} `
       });
     }
-    if (result.choices && result.choices[0] && result.choices[0].message) {
-      const optimized = result.choices[0].message.content;
+    const optimized = extractAiText(result);
+    if (optimized) {
       return res.json({
         ok: true,
         success: true,
@@ -1649,7 +1907,7 @@ app.post('/api/telegram/optimize', async (req, res) => {
     res.json({
       ok: false,
       success: false,
-      error: 'AI 返回格式错误: ' + JSON.stringify(result)
+      error: 'AI 返回空内容，请检查模型是否支持文本输出'
     });
   } catch (error) {
     res.status(500).json({
@@ -1675,7 +1933,7 @@ app.post('/api/telegram/publish', async (req, res) => {
     }
 
     const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
-    const { content, channel, saveId, type = 'diary', channelName, imageFilenames = [], sourceUrl = '' } = payload;
+    const { content, channel, type = 'diary', imageFilenames = [], sourceUrl = '', tgFormattingApplied = false } = payload;
 
     if (!content && imageFilenames.length === 0) {
       return res.status(400).json({
@@ -1712,7 +1970,7 @@ app.post('/api/telegram/publish', async (req, res) => {
       });
     }
 
-    // 收集图片文件名：来自前端传入 + 从 content 中解析 + 从历史记录查找
+    // 收集图片文件名：来自前端传入 + 从 content 中解析
     const allFilenames = new Set(imageFilenames);
 
     // 从 content 中提取 ![...](assets/xxx) 引用
@@ -1722,27 +1980,8 @@ app.post('/api/telegram/publish', async (req, res) => {
       allFilenames.add(imgMatch[1]);
     }
 
-    // 从历史记录中查找同 saveId 的条目的图片引用
-    if (saveId) {
-      try {
-        const history = await loadHistory();
-        const historyItem = history.find(h => h.id === saveId);
-        if (historyItem?.content) {
-          const histContentRegex = /!\[[^\]]*\]\(assets\/([^)]+)\)/g;
-          let hm;
-          while ((hm = histContentRegex.exec(historyItem.content)) !== null) {
-            allFilenames.add(hm[1]);
-          }
-        }
-      } catch {}
-    }
-
-    // 确保所有图片都在 assets/ 目录（幂等移动）
-    const obsidianPath = config?.diary?.obsidianPath
-      || config?.obsidianPath
-      || '/path/to/obsidian/notes';
-
-    const validImagePaths = await ensureImagesInAssets(Array.from(allFilenames), obsidianPath);
+    // 发布只读取输入缓存图片，不把图片写入 Obsidian assets。
+    const validImagePaths = await resolveCachedImagePaths(Array.from(allFilenames));
 
     // 构建 Python 脚本参数
     const { spawn } = await import('child_process');
@@ -1756,14 +1995,22 @@ app.post('/api/telegram/publish', async (req, res) => {
 
     const args = [scriptToUse, channel];
     const isNotePublish = type === 'note';
-    const enableBoldFirstLineForNote = isNotePublish && Boolean(telegramConfig?.boldFirstLine);
-    const enableAppendSourceForNote = isNotePublish && Boolean(telegramConfig?.appendSourceTag);
-    const normalizedSourceUrl = enableAppendSourceForNote && typeof sourceUrl === 'string'
-      ? sourceUrl.trim()
+    // TG 发布优化设置只在“TG 按钮 + 本地生成格式”后生效，避免普通发布误触发。
+    const shouldApplyTgOptimizeSettings = isNotePublish && tgFormattingApplied === true;
+    const enableBoldFirstLineForNote = shouldApplyTgOptimizeSettings && Boolean(telegramConfig?.boldFirstLine);
+    const enableLineBreakPerLineForNote = shouldApplyTgOptimizeSettings && Boolean(telegramConfig?.addLineBreakPerLine);
+    const enableAppendSourceForNote = shouldApplyTgOptimizeSettings && Boolean(telegramConfig?.appendSourceTag);
+    const sourceUrlFromPayload = typeof sourceUrl === 'string' ? sourceUrl.trim() : '';
+    const sourceUrlFromContent = normalizeSourceUrl(extractLastHttpsUrl(content || ''));
+    const normalizedSourceUrl = enableAppendSourceForNote
+      ? normalizeSourceUrl(sourceUrlFromPayload || sourceUrlFromContent)
       : '';
 
     if (enableBoldFirstLineForNote) {
       args.push('--bold-first-line');
+    }
+    if (enableLineBreakPerLineForNote) {
+      args.push('--line-break-per-line');
     }
 
     if (normalizedSourceUrl) {
@@ -1812,43 +2059,18 @@ app.post('/api/telegram/publish', async (req, res) => {
     }
     pythonProcess.stdin.end();
 
-    // 构建带图片引用的 content 用于历史记录
-    const imageRefs = validImagePaths.map(p => `![image](assets/${path.basename(p)})`).join('\n');
-    const contentWithImages = textContent
-      ? (imageRefs ? textContent + '\n\n' + imageRefs : textContent)
-      : imageRefs;
-
-    pythonProcess.on('close', async (code) => {
+    pythonProcess.on('close', (code) => {
       if (isResolved) return;
       isResolved = true;
       const stdout = Buffer.concat(stdoutChunks).toString('utf8');
       const stderr = Buffer.concat(stderrChunks).toString('utf8');
 
       if (code === 0) {
-        if (saveId && channelName) {
-          await updateOrAddToHistory({
-            id: saveId,
-            timestamp: new Date().toISOString(),
-            type: type,
-            content: contentWithImages,
-            telegramSends: [channelName],
-            status: { telegram: 'success' }
-          });
-        }
         res.json({
           ok: true,
           message: '发布成功'
         });
       } else {
-        if (saveId) {
-          await updateOrAddToHistory({
-            id: saveId,
-            timestamp: new Date().toISOString(),
-            type: type,
-            content: contentWithImages,
-            status: { telegram: 'failed' }
-          });
-        }
         res.json({
           ok: false,
           error: `发布失败(退出码 ${code}): ${stderr || stdout} `
@@ -1905,51 +2127,6 @@ async function scanFolders(basePath) {
   return folders;
 }
 
-/**
- * Mem0 配置 API
- */
-// 获取 Mem0 配置
-app.get('/api/mem0/config', async (req, res) => {
-  try {
-    const config = await PluginManager.getPluginConfig('mem0', { sanitize: true });
-    res.json({
-      ok: true,
-      config
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// 保存 Mem0 配置
-app.post('/api/mem0/config', async (req, res) => {
-  try {
-    await PluginManager.savePluginConfig('mem0', req.body);
-    res.json({ ok: true });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// 测试 Mem0 连接
-app.post('/api/mem0/test', async (req, res) => {
-  try {
-    const result = await PluginManager.runPluginAction('mem0', 'testConnection', {
-      config: req.body?.config || {}
-    });
-
-    res.json({
-      ok: true,
-      ...result
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
 // 测试长毛象连接
 app.post('/api/mastodon/test', async (req, res) => {
   try {
@@ -1964,179 +2141,6 @@ app.post('/api/mastodon/test', async (req, res) => {
     res.status(500).json({
       ok: false,
       error: '连接出现异常: ' + error.message
-    });
-  }
-});
-
-// 获取任务列表
-app.get('/api/mem0/tasks', async (req, res) => {
-  try {
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-    if (!config) {
-      return res.json({ ok: true, tasks: [] });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const tasks = await client.getTasks();
-
-    res.json({
-      ok: true,
-      tasks
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-// 删除任务
-app.delete('/api/mem0/tasks/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-
-    if (!config) {
-      return res.status(404).json({
-        ok: false,
-        error: 'Mem0 配置未找到'
-      });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const result = await client.deleteTask(id);
-
-    if (result.success) {
-      res.json({ ok: true });
-    } else {
-      res.status(500).json({ ok: false, error: result.error });
-    }
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-// 获取洞察数据
-app.get('/api/mem0/insights', async (req, res) => {
-  try {
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-    if (!config) {
-      return res.json({ ok: true, insights: null });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const insights = await client.getInsights();
-
-    res.json({ ok: true, insights });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-// 分析情绪
-app.post('/api/mem0/analyze-emotions', async (req, res) => {
-  try {
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-    if (!config) {
-      return res.status(404).json({
-        ok: false,
-        error: 'Mem0 配置未找到'
-      });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const result = await client.analyzeEmotions();
-
-    res.json({ ok: true, result });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-// 更新媒体项可见性
-app.post('/api/mem0/media/:id/visibility', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { visible } = req.body;
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-
-    if (!config) {
-      return res.status(404).json({
-        ok: false,
-        error: 'Mem0 配置未找到'
-      });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const result = await client.updateMediaVisibility(id, visible);
-
-    if (result.success) {
-      res.json({ ok: true });
-    } else {
-      res.status(500).json({ ok: false, error: result.error });
-    }
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-// 更新工作/生活项可见性
-app.post('/api/mem0/:category/:id/visibility', async (req, res) => {
-  try {
-    const { category, id } = req.params;
-    const { visible } = req.body;
-    const mem0ConfigMod = await import('../../Plugin/Mem0/index.js');
-    const config = await mem0ConfigMod.loadConfig();
-
-    if (!config) {
-      return res.status(404).json({
-        ok: false,
-        error: 'Mem0 配置未找到'
-      });
-    }
-
-    const mem0ClientMod = await import('../../Plugin/Mem0/mem0_client.js');
-    const Mem0Client = mem0ClientMod.default || mem0ClientMod.Mem0Client;
-    const client = new Mem0Client(config);
-    const result = await client.updateItemVisibility(category, id, visible);
-
-    if (result.success) {
-      res.json({ ok: true });
-    } else {
-      res.status(500).json({ ok: false, error: result.error });
-    }
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
     });
   }
 });
@@ -2160,7 +2164,6 @@ app.listen(PORT, () => {
   console.log('═══════════════════════════════════════════════════════');
   console.log(`  🌐 Server running at: http://localhost:${PORT}`);
   console.log(`  📁 Public directory: ${path.join(__dirname, '../../public')}`);
-  console.log(`  💾 History file: ${HISTORY_FILE}`);
   console.log('═══════════════════════════════════════════════════════');
   console.log('  Press Ctrl+C to stop');
   console.log('');

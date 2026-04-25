@@ -1,0 +1,6 @@
+{
+  "instanceUrl": "https://misskey.io",
+  "apiKey": "YOUR_MISSKEY_API_TOKEN",
+  "visibility": "public",
+  "localOnly": false
+}

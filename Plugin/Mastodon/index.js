@@ -17,6 +17,13 @@ export const manifest = {
     description: '同步内容到 Mastodon',
     category: 'diary-sync',
     enabledByDefault: false,
+    ui: {
+        homeV2: {
+            section: 'publish_simple',
+            order: 20,
+            label: 'CMX'
+        }
+    },
     settings: {
         storage: 'plugin',
         sections: [
@@ -73,7 +80,17 @@ export const manifest = {
     capabilities: {
         execute: true,
         configure: true,
-        test: true
+        test: true,
+        media: {
+            acceptsImages: true,
+            acceptsInputImages: true,
+            mode: 'upload',
+            maxImages: 4,
+            settingsDescription: '图片处理：发布时会按当前图片顺序依次上传到实例的 /api/v1/media，再把返回的 media_ids 绑定到状态里。单条状态最多发送 4 张图，超出部分会自动截断。',
+            summary: '会先上传图片，再通过 media_ids 发表到时间线',
+            withImagesSummary: '当前会上传图片到 CMX 实例并附在帖子里',
+            withImagesNote: 'Mastodon 单条状态最多附带 4 张图片，超过部分会自动忽略。'
+        }
     }
 };
 
@@ -224,6 +241,7 @@ export async function execute({ content, options, images = [] }) {
     try {
         const url = new URL('/api/v1/statuses', config.instanceUrl).href;
         const visibility = config.visibility || 'unlisted';
+        const warnings = [];
 
         // 去掉正文中的图片 Markdown 引用，避免与实际上传的图片重复
         const textContent = content.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
@@ -234,6 +252,7 @@ export async function execute({ content, options, images = [] }) {
             const toUpload = images.slice(0, 4);
             if (images.length > 4) {
                 console.warn(`[Mastodon Plugin] 图片数量 ${images.length} 超过4张限制，仅发送前4张`);
+                warnings.push(`图片数量超过 4 张限制，仅发送前 ${toUpload.length} 张`);
             }
             const uploaded = await Promise.all(
                 toUpload.map(imgPath => uploadImageToMastodon(imgPath, config))
@@ -264,7 +283,7 @@ export async function execute({ content, options, images = [] }) {
             return { success: false, error: result.error || 'Mastodon 发布失败' };
         }
 
-        return { success: true, response: result, mediaCount: mediaIds.length };
+        return { success: true, response: result, mediaCount: mediaIds.length, warnings };
     } catch (error) {
         console.error('[Mastodon Plugin] 发送失败:', error);
         return { success: false, error: error.message };
