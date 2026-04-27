@@ -14,13 +14,27 @@ import time
 from difflib import SequenceMatcher
 
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
+CONFIGURED_DATA_DIR = os.environ.get("JOURNAL_SYNC_DATA_DIR", "").strip()
+DEFAULT_USER_DATA_DIR = (
+    os.path.abspath(os.path.expanduser(CONFIGURED_DATA_DIR))
+    if CONFIGURED_DATA_DIR
+    else os.path.join(PROJECT_DIR, "user-data")
+)
+DEFAULT_PLUGIN_DATA_DIR = os.path.join(DEFAULT_USER_DATA_DIR, "plugins", "telegram")
+DEFAULT_TOKEN_FALLBACK_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "telegram_bot_token.txt")
+DEFAULT_KNOWN_CHANNELS_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "channels.json")
+DEFAULT_PLUGIN_CONFIG_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "config.json")
 TOKEN_FALLBACK_PATH = os.path.expanduser(
-    os.environ.get("TELEGRAM_BOT_TOKEN_FILE", "~/.config/journal-sync/telegram_bot_token.txt")
+    os.environ.get("TELEGRAM_BOT_TOKEN_FILE", DEFAULT_TOKEN_FALLBACK_PATH)
 )
 KNOWN_CHANNELS_PATH = os.path.expanduser(
-    os.environ.get("TELEGRAM_CHANNELS_FILE", "~/.config/journal-sync/telegram_channels.json")
+    os.environ.get("TELEGRAM_CHANNELS_FILE", DEFAULT_KNOWN_CHANNELS_PATH)
 )
-PLUGIN_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+PLUGIN_CONFIG_PATH = os.path.expanduser(
+    os.environ.get("JOURNAL_SYNC_TELEGRAM_CONFIG_FILE", DEFAULT_PLUGIN_CONFIG_PATH)
+)
 
 # 频道别名映射：别名 -> 目标频道标识（可以是频道名、用户名或 chat_id）
 # 用于将常见称呼映射到具体频道
@@ -201,6 +215,9 @@ def read_token():
     token = os.environ.get(TOKEN_ENV)
     if token:
         return token.strip()
+    plugin_config_token = str(load_plugin_config().get("botToken", "")).strip()
+    if plugin_config_token:
+        return plugin_config_token
     if os.path.exists(TOKEN_FALLBACK_PATH):
         with open(TOKEN_FALLBACK_PATH, "r", encoding="utf-8") as f:
             return f.read().strip()

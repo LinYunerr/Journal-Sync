@@ -2,11 +2,17 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+    getDataPath,
+    getPluginConfigPath,
+    getPluginDataPath
+} from '../../src/utils/app-paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
+const CONFIG_FILE = getPluginConfigPath('telegram');
+const CHANNELS_FILE = getPluginDataPath('telegram', 'channels.json');
+const CORE_CONFIG_FILE = getDataPath('config.json');
 const SCRIPT_PATH = path.join(__dirname, 'telegram_send.py');
 
 let configCache = null;
@@ -176,7 +182,12 @@ async function listChannels(botToken) {
     }
 
     return new Promise((resolve, reject) => {
-        const env = { ...process.env, TELEGRAM_BOT_TOKEN: botToken };
+        const env = {
+            ...process.env,
+            TELEGRAM_BOT_TOKEN: botToken,
+            JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: CONFIG_FILE,
+            TELEGRAM_CHANNELS_FILE: CHANNELS_FILE
+        };
         const tgProcess = spawn('python3', [SCRIPT_PATH, '--list-channels'], { env });
         const stdoutChunks = [];
         const stderrChunks = [];
@@ -252,6 +263,7 @@ export async function loadConfig() {
 
 export async function saveConfig(config) {
     configCache = normalizeConfig(config);
+    await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
     await fs.writeFile(CONFIG_FILE, JSON.stringify(configCache, null, 2), 'utf-8');
 }
 
@@ -339,7 +351,12 @@ export async function execute({ content, type, options, images = [] }) {
     }
 
     return new Promise((resolve) => {
-        const env = { ...process.env, TELEGRAM_BOT_TOKEN: config.botToken };
+        const env = {
+            ...process.env,
+            TELEGRAM_BOT_TOKEN: config.botToken,
+            JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: CONFIG_FILE,
+            TELEGRAM_CHANNELS_FILE: CHANNELS_FILE
+        };
         const tgProcess = spawn('python3', args, { env });
 
         const outputChunks = [];

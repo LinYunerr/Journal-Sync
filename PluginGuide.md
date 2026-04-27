@@ -4,15 +4,17 @@
 
 目标不是讨论理想设计，而是把“现在主程序真正支持什么、插件应该怎么接入”写清楚，作为后续新增插件的统一约定。
 
+除非特别说明，本文中的源码路径都相对于 `Journal-Sync/app/`；运行时配置路径都位于外层 `Journal-Sync/user-data/`。
+
 ## 1. 适用范围
 
 当前插件体系由以下部分组成：
 
-- 插件目录：`Plugin/<PluginName>/`
+- 插件目录：`Journal-Sync/app/Plugin/<PluginName>/`
 - 插件加载器：`src/sync/plugin-manager.js`
 - 插件中心与设置 UI：`public/home-v2.js`
 - 插件 API：`src/web/server.js`
-- 插件启停状态：`data/config.json` 中的 `plugins` 字段
+- 插件启停状态：外层 `Journal-Sync/user-data/config.json` 中的 `plugins` 字段
 
 本规范以这些文件的现有实现为准。
 
@@ -21,12 +23,16 @@
 每个插件放在 `Plugin/` 目录下的一个独立子目录中，建议结构如下：
 
 ```text
-Plugin/
-└── ExamplePlugin/
-    ├── index.js
-    ├── config.example.json
-    ├── README.md
-    └── config.json
+Journal-Sync/
+├── app/
+│   └── Plugin/
+│       └── ExamplePlugin/
+│           ├── index.js
+│           ├── config.example.json
+│           └── README.md
+└── user-data/
+    └── plugins/
+        └── example/config.json
 ```
 
 说明：
@@ -34,17 +40,17 @@ Plugin/
 - `index.js`：插件入口，必须存在。
 - `config.example.json`：示例配置，推荐提供，不能放真实凭据。
 - `README.md`：插件说明，推荐提供。
-- `config.json`：插件私有配置，本地使用，不提交版本库。
+- 插件私有配置统一存放在外层 `Journal-Sync/user-data/plugins/<pluginId>/config.json`，不要写在插件源码目录里。
 
-当前仓库 `.gitignore` 已忽略 `Plugin/*/config.json`。
+当前仓库 `.gitignore` 已忽略 `user-data/`，并保留 `Plugin/*/config.json` 与 `app/Plugin/*/config.json` 忽略规则用于兼容历史布局。
 
 ## 3. 插件发现与加载规则
 
-主程序会自动扫描 `Plugin/*/index.js`。
+主程序会自动扫描 `Journal-Sync/app/Plugin/*/index.js`。
 
 加载规则如下：
 
-- 只有 `Plugin/<目录名>/index.js` 会被自动发现。
+- 只有 `app/Plugin/<目录名>/index.js` 会被自动发现。
 - 加载成功后，插件会进入注册表，并出现在 `/api/plugins/registry` 返回结果里。
 - 如果目录下没有 `index.js`，或者模块加载失败，该目录会被跳过。
 
@@ -197,7 +203,7 @@ settings: {
 storage: 'plugin'
 ```
 
-表示配置保存在插件自己的 `Plugin/<PluginName>/config.json` 中。
+表示配置保存在外层 `Journal-Sync/user-data/plugins/<pluginId>/config.json` 中。
 
 #### `settings.sections`
 
@@ -373,9 +379,9 @@ capabilities: {
 
 ### 6.1 存储位置
 
-- 主程序总配置：`data/config.json`
-- 插件私有配置：`Plugin/<PluginName>/config.json`
-- 插件启停状态：`data/config.json` 的 `plugins.<pluginId>`，不是插件私有配置
+- 主程序总配置：`Journal-Sync/user-data/config.json`
+- 插件私有配置：`Journal-Sync/user-data/plugins/<pluginId>/config.json`
+- 插件启停状态：`Journal-Sync/user-data/config.json` 的 `plugins.<pluginId>`，不是插件私有配置
 
 约束：
 
@@ -388,7 +394,7 @@ capabilities: {
 
 职责：
 
-- 读取插件自己的 `config.json`
+- 读取插件自己的 `Journal-Sync/user-data/plugins/<pluginId>/config.json`
 - 必要时合并默认值
 - 必要时兼容旧配置迁移
 - 返回普通对象
@@ -404,7 +410,7 @@ capabilities: {
 
 - 接收已经过主程序校验的配置对象
 - 做必要的 normalize
-- 落盘保存到插件目录
+- 落盘保存到 `Journal-Sync/user-data/plugins/<pluginId>/config.json`
 
 约束：
 
@@ -593,7 +599,7 @@ export async function runAction(actionId, payload = {}) {
 
 ### 10.3 配置迁移
 
-如果历史版本把配置放在 `data/config.json`，新插件实现可以在 `loadConfig()` 中读取旧值并迁移为 fallback，但规范上新字段应写回插件自己的 `config.json`。
+如果历史版本把配置放在 `data/config.json`、`Plugin/<PluginName>/config.json`、`app/data/` 或 `app/Plugin/<PluginName>/config.json`，新插件实现可以在 `loadConfig()` 中读取旧值作为 fallback，但规范上新字段应写回 `Journal-Sync/user-data/plugins/<pluginId>/config.json`。
 
 ### 10.4 可观测性
 
@@ -606,11 +612,9 @@ export async function runAction(actionId, payload = {}) {
 ```js
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getPluginConfigPath } from '../../src/utils/app-paths.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CONFIG_FILE = getPluginConfigPath('example');
 
 const defaultConfig = {
   endpoint: '',
@@ -703,6 +707,7 @@ export async function loadConfig() {
 
 export async function saveConfig(config) {
   configCache = { ...defaultConfig, ...(config || {}) };
+  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
   await fs.writeFile(CONFIG_FILE, JSON.stringify(configCache, null, 2), 'utf-8');
 }
 
@@ -762,7 +767,7 @@ export default {
 - 设置页所需字段都写进 `settings.sections[].fields`
 - 测试按钮或拉取动作都写进 `settings.actions`
 - 敏感字段都标了 `sensitive: true`
-- 插件配置保存到 `Plugin/<PluginName>/config.json`
+- 插件配置保存到 `Journal-Sync/user-data/plugins/<pluginId>/config.json`
 - `ui.homeV2` 已声明主页分区和排序
 - 如涉及图片，已补全 `capabilities.media`
 - `execute` 返回结构化结果

@@ -2,6 +2,8 @@
 
 Journal Sync 是一个本地优先的日记/笔记发布与保存工具。主页输入会先进入本地草稿缓存；发布和保存是两条独立链路：发布会直接分发到 flomo、Telegram、Mastodon/Missky 等目标，只有点击“保存到 Obsidian”时才会写入本地 Obsidian 日记。
 
+当前仓库采用便携目录布局：程序文件放在 `app/`，运行时数据放在同级的 `user-data/`。更新软件时只替换 `app/`，保留 `user-data/`。
+
 ## 功能总览
 
 - 主页采用“输入 / 发布 / 保存”三段式工作流
@@ -21,7 +23,7 @@ Journal Sync 是一个本地优先的日记/笔记发布与保存工具。主页
   - 单输入框 + 发布/保存解耦工作流 + 插件分区渲染
   - 支持拖拽/粘贴图片到输入框，显示方形缩略图，并按插件差异展示图片状态
   - 通过插件中心弹窗管理全局和插件配置
-  - 文字和图片会自动同步到 `data/draft-cache/home-v2.json`，程序重启后仍可恢复
+  - 文字和图片会自动同步到 `user-data/draft-cache/home-v2.json`，程序重启后仍可恢复
 - 插件中心直达：`http://localhost:3000/?open=plugin-center`
   - 统一处理插件启停、配置与动作执行
 
@@ -33,7 +35,10 @@ Journal Sync 是一个本地优先的日记/笔记发布与保存工具。主页
 
 ## 快速开始
 
+从外层 `Journal-Sync/` 进入应用目录后启动：
+
 ```bash
+cd app
 npm install
 npm start
 ```
@@ -52,14 +57,22 @@ npm stop
 npm test
 ```
 
+更新新版时只替换外层 `Journal-Sync/app/`，保留 `Journal-Sync/user-data/`。替换后仍在 `app/` 内执行 `npm install` 和 `npm start`。
+
+## 相关文档
+
+- 快速上手：[QUICKSTART.md](./QUICKSTART.md)
+- 插件开发规范：[PluginGuide.md](./PluginGuide.md)
+- 便携用户数据目录改造记录：[PORTABLE_USER_DATA_PLAN.md](./PORTABLE_USER_DATA_PLAN.md)
+
 ## 插件系统
 
-插件位于 `Plugin/*`，通过 `index.js` 暴露统一接口。
+插件位于 `app/Plugin/*`，通过 `index.js` 暴露统一接口。
 
 设计规范（主页与插件中心）：
 
 - 解耦：插件只通过 `manifest + execute/loadConfig/saveConfig/runAction` 与主程序协作，不直接耦合页面实现。
-- 自动发现：后端会自动扫描 `Plugin/*/index.js`，发现后加入注册表，无需手工硬编码插件列表。
+- 自动发现：后端会自动扫描 `app/Plugin/*/index.js`，发现后加入注册表，无需手工硬编码插件列表。
 - 自动注册到插件中心：插件中心基于 `/api/plugins/registry` 动态渲染，目录存在且可加载的插件会自动出现在设置侧栏。
 - 设置自动识别：插件在 `manifest.settings.sections/actions` 中声明字段与动作后，插件中心会自动渲染对应设置页面与按钮。
 - 主页自动识别：插件声明 `manifest.ui.homeV2` 后，可自动进入对应分区；未启用插件不会在主页显示，启用后立即可见。
@@ -111,31 +124,45 @@ export async function runAction(actionId, payload) {}
 
 配置存储策略：
 
-- 主配置：`data/config.json`
-- 插件私有配置：`Plugin/<plugin>/config.json`
+- 主配置：`Journal-Sync/user-data/config.json`
+- 插件私有配置：`Journal-Sync/user-data/plugins/<plugin>/config.json`
 - 敏感字段读取时会脱敏，保存空字符串时保留旧值
 - 插件执行顺序支持显式依赖：`manifest.dependsOn: string[]`
 - 主页分区声明：`manifest.ui.homeV2`
+
+### 用户数据目录
+
+程序代码位于 `Journal-Sync/app/`，默认运行数据统一保存在同级的 `Journal-Sync/user-data/`。这里保存配置、历史、主页草稿、图片缓存和插件私有配置。
+
+如果需要把数据放到其它位置，可以设置环境变量。建议使用绝对路径，避免相对路径受当前工作目录影响：
+
+```bash
+JOURNAL_SYNC_DATA_DIR=/path/to/journal-sync-data npm start
+```
+
+首次启动新版时，会把旧版 `data/`、`Plugin/*/config.json`、`app/data/` 和 `app/Plugin/*/config.json` 中的数据复制到 `user-data/`。迁移只复制、不删除旧数据；只要新目录已经有有效数据，就不会用旧数据覆盖。
+
+更新软件时保留 `Journal-Sync/user-data/`，只替换 `Journal-Sync/app/`。不要删除 `user-data/`，除非明确想清空配置、历史、草稿和缓存。`user-data/` 已被 `.gitignore` 忽略，不应提交到版本控制。
 
 ### 图片输入与插件通信
 
 主页的图片机制不是把上传逻辑塞进每个发布按钮，而是拆成了独立输入层：
 
-- 输入层：`public/input-media-bridge.js`
+- 输入层：`app/public/input-media-bridge.js`
   - 负责输入框拖拽/粘贴图片、缩略图渲染、预览弹层、删除图片、拖动排序
-  - 调用 `POST /api/upload-image` 将图片先缓存到 `data/image-cache/`
+  - 调用 `POST /api/upload-image` 将图片先缓存到 `user-data/image-cache/`
   - 只负责输入 UI 和上传，不再单独承担恢复逻辑
-- 页面层：`public/home-v2.js`
+- 页面层：`app/public/home-v2.js`
   - 维护文本输入和图片状态（`state.inputMedia`）
   - 在文本输入、图片新增、图片删除、图片重排时防抖同步整份草稿到服务端
   - 发布时把文本与 `imageFilenames` 一起交给接收端
   - 当输入区没有图片时，不展示任何图片状态
   - 当输入区有图片时，只根据插件能力渲染短状态：`无图片` / `上传x张图` / `上传前x张图`
   - 技术性图片说明只显示在插件中心的各插件设置页顶部
-- 服务层：`src/web/server.js`
-  - 通过 `GET/POST/DELETE /api/home-v2-draft` 维护 `data/draft-cache/home-v2.json`
-  - 草稿文件只保存文字和图片文件名列表，图片实体仍在 `data/image-cache/`
-  - 草稿更新时会删除已从输入区移除且仍位于 `data/image-cache/` 的缓存图
+- 服务层：`app/src/web/server.js`
+  - 通过 `GET/POST/DELETE /api/home-v2-draft` 维护 `user-data/draft-cache/home-v2.json`
+  - 草稿文件只保存文字和图片文件名列表，图片实体仍在 `user-data/image-cache/`
+  - 草稿更新时会删除已从输入区移除且仍位于 `user-data/image-cache/` 的缓存图
   - 在 `publish/save-local/telegram-publish` 入口统一校验 `imageFilenames`
   - 发布入口只解析缓存图片路径，不写入 Obsidian `assets/`
   - 本地保存入口把缓存图片路径交给 Obsidian 本地保存插件，由插件自行写入图片目录
@@ -204,7 +231,7 @@ capabilities: {
   - 单图走 `sendPhoto`
   - 多图走 `sendMediaGroup`
   - 若文案超过 Telegram caption 长度限制，会在图片成功后拆分补发文字
-- `CMX`（`Plugin/Mastodon`）
+- `CMX`（`app/Plugin/Mastodon`）
   - 先上传图片到实例，再通过 `media_ids` 发表状态
   - 单条状态最多附带 4 张图，超过部分会被忽略并返回 warning
 - `Missky`
@@ -230,7 +257,7 @@ Telegram：
   - 请求体会进行基础校验（`content/channel/type/imageFilenames/sourceUrl`）
 - `POST /api/publish`
   - 发布编排接口（只发布，不保存）
-  - 也支持 `imageFilenames`，服务端只从 `data/image-cache/` 解析图片路径后分发给插件
+  - 也支持 `imageFilenames`，服务端只从 `user-data/image-cache/` 解析图片路径后分发给插件
 
 图片相关：
 
@@ -239,13 +266,13 @@ Telegram：
   - 返回文字内容和图片文件名列表
 - `POST /api/home-v2-draft`
   - 用当前输入区完整状态覆盖草稿文件
-  - 草稿文件位置：`data/draft-cache/home-v2.json`
+  - 草稿文件位置：`user-data/draft-cache/home-v2.json`
 - `DELETE /api/home-v2-draft`
   - 当输入区清空时删除草稿文件
   - 同时清理本次草稿中不再引用的缓存图片
 - `POST /api/upload-image`
   - 前端拖拽/粘贴图片时使用
-  - 只写入 `data/image-cache/`，不会直接落到 Obsidian
+  - 只写入 `user-data/image-cache/`，不会直接落到 Obsidian
 - `GET /api/image-cache/:filename`
   - 先从缓存目录取图
   - 缓存不存在时会回退查询 Obsidian `assets/`
@@ -266,10 +293,10 @@ Telegram：
 
 ## 输入框自适应高度（全局能力）
 
-- 共享实现：`public/global-input-traits.js`
+- 共享实现：`app/public/global-input-traits.js`
 - 全局对象：`window.GlobalInputTraits`
 - 现有接入：
-  - 主页 `public/home-v2.html` + `public/home-v2.js`
+  - 主页 `app/public/home-v2.html` + `app/public/home-v2.js`
 
 常用调用方式：
 
@@ -290,20 +317,20 @@ window.GlobalInputTraits.mountAutoGrowTextarea('unique-key', textareaElement, {
 
 涉及文件：
 
-- `public/home-v2.html`
+- `app/public/home-v2.html`
   - 输入区增加图片状态栏、缩略图网格、预览弹层
-- `public/home-v2.css`
+- `app/public/home-v2.css`
   - 输入框拖拽高亮、缩略图样式、拖动排序态、预览弹层样式、插件图片状态标签样式
-- `public/input-media-bridge.js`
+- `app/public/input-media-bridge.js`
   - 抽离的图片输入桥接层
   - 负责缩略图 UI、排序和上传
-- `public/home-v2.js`
+- `app/public/home-v2.js`
   - 读取桥接层状态
   - 将文字内容和 `imageFilenames` 防抖同步到 `/api/home-v2-draft`
   - 将 `imageFilenames` 发给 `/api/publish`、`/api/save-local-v2`、`/api/telegram/publish`
   - 根据插件的 `capabilities.media` 动态渲染短状态
   - 插件中心设置页顶部单独渲染图片技术说明
-- `src/web/server.js`
+- `app/src/web/server.js`
   - 维护主页草稿文件和缓存图片清理
   - 校验图片参数
   - 发布时只读取缓存图片路径
@@ -312,13 +339,13 @@ window.GlobalInputTraits.mountAutoGrowTextarea('unique-key', textareaElement, {
 关键流程：
 
 1. 用户在 `#v2ContentInput` 中输入文字，或拖拽 / 粘贴图片
-2. `input-media-bridge.js` 调用 `/api/upload-image`，服务端将图片暂存到 `data/image-cache/`
+2. `input-media-bridge.js` 调用 `/api/upload-image`，服务端将图片暂存到 `user-data/image-cache/`
 3. `home-v2.js` 在文本变化、图片新增、图片删除、图片重排后，防抖调用 `/api/home-v2-draft`
-4. 服务端把当前整份输入态写入 `data/draft-cache/home-v2.json`
-5. 如果某张图已从输入区移除，服务端会把仍留在 `data/image-cache/` 的对应缓存文件删掉
+4. 服务端把当前整份输入态写入 `user-data/draft-cache/home-v2.json`
+5. 如果某张图已从输入区移除，服务端会把仍留在 `user-data/image-cache/` 的对应缓存文件删掉
 6. 页面重开或程序崩溃重启后，前端先读取 `/api/home-v2-draft` 恢复文字和图片
 7. 用户点击发布或保存时，前端按当前顺序把 `imageFilenames` 连同文本一起提交
-8. 发布链路只从 `data/image-cache/` 解析图片路径并交给发布插件
+8. 发布链路只从 `user-data/image-cache/` 解析图片路径并交给发布插件
 9. Obsidian 本地保存插件单独把缓存图片写入本地图片目录
 
 这样做的几个原因：
@@ -330,24 +357,36 @@ window.GlobalInputTraits.mountAutoGrowTextarea('unique-key', textareaElement, {
 ## 目录结构
 
 ```text
-.
-├── Plugin/                   # 各插件实现与私有配置
-├── public/                   # 前端页面与静态资源
-├── src/
-│   ├── sync/                 # 保存与插件执行逻辑
-│   ├── utils/                # 配置/代理等工具
-│   └── web/                  # Express 服务
-├── data/                     # 运行时数据（config、tasks、draft-cache、image-cache 等）
-├── test/                     # Node 内置测试
-├── README.md
-├── QUICKSTART.md
-└── PluginGuide.md
+Journal-Sync/
+├── app/
+│   ├── Plugin/               # 各插件实现
+│   ├── public/               # 前端页面与静态资源
+│   ├── src/
+│   │   ├── sync/             # 保存与插件执行逻辑
+│   │   ├── utils/            # 配置/代理等工具
+│   │   └── web/              # Express 服务
+│   ├── test/                 # Node 内置测试
+│   ├── package.json
+│   ├── package-lock.json
+│   └── stop.sh
+├── README.md                 # 完整项目说明
+├── QUICKSTART.md             # 快速上手
+├── PluginGuide.md            # 插件开发规范
+├── PORTABLE_USER_DATA_PLAN.md
+├── LICENSE
+└── user-data/                # 运行时数据，不随 app/ 更新包替换
+    ├── config.json
+    ├── draft-cache/
+    ├── image-cache/
+    └── plugins/
+        └── <pluginId>/config.json
 ```
 
 ## 数据与安全说明
 
-- 不要提交 `Plugin/*/config.json`（含敏感凭据）
-- 不要提交 `data/` 下运行时数据
+- 不要提交 `user-data/` 下运行时数据（含敏感凭据）
+- 更新软件时只替换 `Journal-Sync/app/`，保留 `Journal-Sync/user-data/`
+- 旧版 `Plugin/*/config.json`、`app/Plugin/*/config.json`、`data/` 和 `app/data/` 仍被忽略，用于兼容历史布局
 - 本地服务默认只允许 `localhost/127.0.0.1:3000` 的 CORS 来源
 - 代理配置可在设置中启用（用于 AI/外部请求）
 - 图片文件名在写入 `assets/` 前会做路径约束，拒绝路径穿越输入

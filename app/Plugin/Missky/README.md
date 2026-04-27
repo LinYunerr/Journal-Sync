@@ -4,7 +4,7 @@
 
 ## Config
 
-在 `config.json` 中配置：
+在插件中心保存后，配置会写入外层 `Journal-Sync/user-data/plugins/missky/config.json`：
 
 - `instanceUrl`
 - `apiKey`
@@ -27,3 +27,7 @@
 1. 打开重构主页中的插件中心启用 `Missky`
 2. 填写实例地址和 API Token
 3. 点击“测试连通性”
+
+## Notes
+
+- `Journal-Sync/user-data/plugins/missky/config.json` 不应提交到版本控制，也不应随 `app/` 更新包覆盖

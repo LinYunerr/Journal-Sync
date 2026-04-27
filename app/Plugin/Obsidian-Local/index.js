@@ -1,12 +1,13 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import ConfigManager from '../../src/utils/config-manager.js';
+import {
+    getDataDirPath,
+    getPluginConfigPath
+} from '../../src/utils/app-paths.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
+const CONFIG_FILE = getPluginConfigPath('obsidian-local');
+const IMAGE_CACHE_DIR = getDataDirPath('image-cache');
 const DEFAULT_DIARY_PATH = process.env.JOURNAL_SYNC_OBSIDIAN_PATH || '';
 const DEFAULT_FILENAME_RULE = 'YYYY-MM-DD 日记';
 
@@ -86,6 +87,7 @@ export async function loadConfig() {
 export async function saveConfig(config) {
     const normalized = normalizeConfig(config);
     configCache = normalized;
+    await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
     await fs.writeFile(CONFIG_FILE, JSON.stringify(normalized, null, 2), 'utf-8');
 }
 

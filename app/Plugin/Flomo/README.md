@@ -4,7 +4,7 @@
 
 ## Config
 
-复制 `config.example.json` 为 `config.json`：
+在插件中心保存后，配置会写入外层 `Journal-Sync/user-data/plugins/flomo/config.json`。如需手工准备，可参考 `config.example.json`：
 
 ```json
 {
@@ -19,5 +19,5 @@
 
 ## Notes
 
-- `config.json` 不应提交到版本控制
+- `Journal-Sync/user-data/plugins/flomo/config.json` 不应提交到版本控制，也不应随 `app/` 更新包覆盖
 - `apiUrl` 必须是有效的 flomo webhook 地址

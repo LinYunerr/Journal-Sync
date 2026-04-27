@@ -5,6 +5,15 @@ import { fileURLToPath } from 'url';
 import { optimizeContent } from '../sync/journal-sync.js';
 import { promises as fsPromises } from 'fs';
 import ConfigManager from '../utils/config-manager.js';
+import {
+  getDataDirPath,
+  getDataPath,
+  getUserDataDir,
+  getPluginConfigPath,
+  getPluginDataPath,
+  ensureUserDataLayout,
+  migrateLegacyUserData
+} from '../utils/app-paths.js';
 import { applyNetworkProxy, normalizeNetworkProxy } from '../utils/network-proxy.js';
 import PluginManager from '../sync/plugin-manager.js';
 import multer from 'multer';
@@ -291,9 +300,8 @@ function validateSaveLocalPayload(body = {}) {
 
 // 初始化数据目录和基础配置
 async function initDataFiles() {
-  const dataDir = path.join(__dirname, '../../data');
   try {
-    await fsPromises.mkdir(dataDir, { recursive: true });
+    await ensureUserDataLayout();
 
     const defaults = {
       'config.json': {
@@ -304,7 +312,7 @@ async function initDataFiles() {
     };
 
     for (const [file, defaultData] of Object.entries(defaults)) {
-      const filePath = path.join(dataDir, file);
+      const filePath = getDataPath(file);
       try {
         await fsPromises.access(filePath);
       } catch (err) {
@@ -337,6 +345,10 @@ async function initNetworkProxy() {
 // 启动时初始化文件然后加载插件
 const APP_INFO = await loadAppInfo();
 
+const migrationResult = await migrateLegacyUserData();
+if (migrationResult.migrated) {
+  console.log(`[Migration] 已复制 ${migrationResult.copied} 项旧数据到 ${getUserDataDir()}`);
+}
 await initDataFiles();
 await initNetworkProxy();
 await PluginManager.loadPlugins();
@@ -370,8 +382,8 @@ app.get('/home-v2.html', (req, res) => {
 app.use(express.static(path.join(__dirname, '../../public')));
 
 // 运行时缓存
-const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
-const DRAFT_CACHE_DIR = path.join(__dirname, '../../data/draft-cache');
+const IMAGE_CACHE_DIR = getDataDirPath('image-cache');
+const DRAFT_CACHE_DIR = getDataDirPath('draft-cache');
 const HOME_V2_DRAFT_FILE = path.join(DRAFT_CACHE_DIR, 'home-v2.json');
 
 function createDefaultPluginStates(registry) {
@@ -593,7 +605,7 @@ app.delete('/api/home-v2-draft', async (req, res) => {
 });
 
 /**
- * 图片上传：保存到临时缓存目录 data/image-cache/（不直接写入 Obsidian）
+ * 图片上传：保存到临时缓存目录 user-data/image-cache/（不直接写入 Obsidian）
  * 发布链路只读取缓存图片；Obsidian 本地保存插件会按需复制到本地图片目录。
  * 返回: { success, filename, previewUrl }
  */
@@ -1346,7 +1358,12 @@ app.post('/api/telegram/publish', async (req, res) => {
 
     // 构建 Python 脚本参数
     const { spawn } = await import('child_process');
-    const env = { ...process.env, TELEGRAM_BOT_TOKEN: tgBotToken };
+    const env = {
+      ...process.env,
+      TELEGRAM_BOT_TOKEN: tgBotToken,
+      JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: getPluginConfigPath('telegram'),
+      TELEGRAM_CHANNELS_FILE: getPluginDataPath('telegram', 'channels.json')
+    };
     // 去掉内容中的图片 markdown 引用
     const textContent = (content || '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
 

@@ -18,14 +18,14 @@ __pycache__/
 *.pyd
 
 # Data files
-data/config.json
-data/history.json
-data/tasks.json
-data/image-cache/
-data/draft-cache/
+user-data/
+data/
+app/user-data/
+app/data/
 
 # Plugin configs (sensitive information)
 Plugin/*/config.json
+app/Plugin/*/config.json
 
 # Backups
 backups/

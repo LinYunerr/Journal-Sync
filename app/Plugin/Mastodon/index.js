@@ -1,11 +1,12 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import {
+    getDataPath,
+    getPluginConfigPath
+} from '../../src/utils/app-paths.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
+const CONFIG_FILE = getPluginConfigPath('mastodon');
+const CORE_CONFIG_FILE = getDataPath('config.json');
 
 let configCache = null;
 const defaultConfig = { instanceUrl: '', accessToken: '', visibility: 'unlisted' };
@@ -133,6 +134,7 @@ export async function loadConfig() {
 
 export async function saveConfig(config) {
     configCache = config;
+    await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true });
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
 }
 
