@@ -1,6 +1,6 @@
 # Journal Sync
 
-Journal Sync 是一个本地优先的日记/笔记同步工具。内容先落地到 Obsidian，再按插件配置分发到 flomo、Telegram、Mastodon 等目标。
+Journal Sync 是一个本地优先的日记/笔记发布与保存工具。主页输入会先进入本地草稿缓存；发布和保存是两条独立链路：发布会直接分发到 flomo、Telegram、Mastodon/Missky 等目标，只有点击“保存到 Obsidian”时才会写入本地 Obsidian 日记。
 
 ## 功能总览
 
@@ -9,7 +9,7 @@ Journal Sync 是一个本地优先的日记/笔记同步工具。内容先落地
 - 图片拖拽/粘贴上传，输入阶段只写入临时缓存
 - 主页图片输入桥接：输入区独立管理图片，发布/保存插件统一作为接收端
 - 主页图片缩略图与大图预览（点击缩略图放大，点空白/右上角/`Esc` 关闭）
-- 保存和发布过程实时状态反馈（Obsidian + 各插件）
+- 保存和发布过程状态反馈（Obsidian 本地保存 + 各发布插件）
 - Telegram 频道发布（支持多频道、图片、本地格式优化、来源链接）
 - 插件中心（启停、配置、动作执行）
 - 插件中心统一管理 AI、代理、插件配置和插件动作
@@ -19,7 +19,7 @@ Journal Sync 是一个本地优先的日记/笔记同步工具。内容先落地
 
 - 主页：`http://localhost:3000/`
   - 单输入框 + 发布/保存解耦工作流 + 插件分区渲染
-  - 支持拖拽/粘贴图片到输入框，显示方形缩略图，并按插件差异展示图片处理说明
+  - 支持拖拽/粘贴图片到输入框，显示方形缩略图，并按插件差异展示图片状态
   - 通过插件中心弹窗管理全局和插件配置
   - 文字和图片会自动同步到 `data/draft-cache/home-v2.json`，程序重启后仍可恢复
 - 插件中心直达：`http://localhost:3000/?open=plugin-center`
@@ -28,7 +28,7 @@ Journal Sync 是一个本地优先的日记/笔记同步工具。内容先落地
 ## 技术栈与要求
 
 - Node.js `>=18`
-- 本地可写 Obsidian 目录
+- 如启用本地保存：需准备本地可写 Obsidian 目录
 - 如启用第三方同步/AI：需准备对应凭据（Token/API Key）
 
 ## 快速开始
@@ -68,10 +68,10 @@ npm test
 
 ```js
 export const manifest = {
-  id: 'telegram',
+  id: 'example-publisher',
   version: '1.0.0',
-  name: 'Telegram',
-  description: '发送内容到 Telegram 频道',
+  name: 'Example Publisher',
+  description: '发送内容到示例目标',
   dependsOn: [], // 可选：声明执行依赖
   enabledByDefault: false,
   ui: {
@@ -106,6 +106,7 @@ export async function runAction(actionId, payload) {}
 - `textarea`
 - `boolean`
 - `select`
+- `checkboxGroup`
 - `number`
 
 配置存储策略：
@@ -138,10 +139,10 @@ export async function runAction(actionId, payload) {}
   - 在 `publish/save-local/telegram-publish` 入口统一校验 `imageFilenames`
   - 发布入口只解析缓存图片路径，不写入 Obsidian `assets/`
   - 本地保存入口把缓存图片路径交给 Obsidian 本地保存插件，由插件自行写入图片目录
-  - 再把图片路径数组 `images[]` 交给各插件
+  - 发布时把图片路径数组 `images[]` 交给各发布插件
 - 插件层：
   - 各插件通过 `execute({ content, type, options, images })` 接收图片
-  - 各自决定是上传附件、忽略、只记录元信息，还是附带 warning
+  - 各自决定是上传附件、忽略，还是附带 warning
 
 这套结构的目标是把“输入部分”和“输出部分”分开维护：
 
@@ -213,9 +214,6 @@ capabilities: {
   - 官方 Webhook 支持 `content` 和 `image_urls`
   - 但 `image_urls` 必须是公网可访问 URL
   - 这意味着本地拖拽/粘贴图片无法直接发送给 flomo；当前实现会发送文字，并在有本地图片时返回 warning
-- `Mem0`
-  - 当前只把“附图 N 张”写入上下文，不做图像识别
-  - 这样检索和总结时知道这条记录附带了图片，但不误报已理解图片内容
 
 ## 常用 API
 
@@ -264,7 +262,7 @@ Telegram：
 主页本地保存：
 
 - `POST /api/save-local-v2`
-  - 仅保存到 Obsidian，并按需执行 `save_local` 分区插件
+  - 仅执行 `obsidian-local` 插件，保存到 Obsidian 本地日记
 
 ## 输入框自适应高度（全局能力）
 
@@ -310,7 +308,6 @@ window.GlobalInputTraits.mountAutoGrowTextarea('unique-key', textareaElement, {
   - 校验图片参数
   - 发布时只读取缓存图片路径
   - 本地保存时把缓存图片路径交给 Obsidian 本地保存插件
-  - 再传给各插件执行
 
 关键流程：
 
