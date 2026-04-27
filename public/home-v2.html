@@ -17,7 +17,6 @@
             </div>
             <div class="hero-actions">
                 <button id="openPluginCenterBtn" type="button" class="ghost-btn ghost-btn-as-button">插件中心</button>
-                <a href="/legacy-home.html" class="ghost-btn">旧入口说明</a>
             </div>
         </header>
 
@@ -25,13 +24,12 @@
             <div class="panel-title-row">
                 <h2>1. 输入部分</h2>
                 <div class="panel-title-actions">
-                    <button id="tgInputModeBtn" type="button" class="tg-input-mode-btn" aria-pressed="false" style="display:none;">TG</button>
+                    <button id="tgInputModeBtn" type="button" class="tg-input-mode-btn" aria-pressed="false" style="display:none;">Telegram</button>
                     <span id="editPluginHint" class="hint-text"></span>
                 </div>
             </div>
             <textarea id="v2ContentInput" placeholder="在这里输入原始信息..."></textarea>
             <div class="input-media-bar">
-                <span class="input-media-tip">支持把图片拖入输入框或直接粘贴截图，缩略图可拖动排序。</span>
                 <span id="v2ImageUploadStatus" class="input-media-status"></span>
             </div>
             <div id="v2ImagePreviewGrid" class="media-thumb-grid"></div>
@@ -45,7 +43,7 @@
             </div>
         </section>
 
-        <section class="panel">
+        <section class="panel workflow-panel" data-workflow-panel="publish">
             <h2>2. 发布部分</h2>
 
             <div class="sub-panel">
@@ -59,14 +57,23 @@
                     <div id="tgChannelRows" class="target-list"></div>
                 </div>
             </div>
-            <button id="sendSimpleBtn" class="primary-btn simple-send-btn">发布</button>
+            <button id="sendSimpleBtn" class="primary-btn simple-send-btn" data-workflow-action="primary">发布</button>
             <div id="simplePublishStatus" class="status-box"></div>
         </section>
 
-        <section class="panel">
+        <button
+            id="publishSaveLinkConnector"
+            type="button"
+            class="workflow-link-connector"
+            data-workflow-link="publish-save"
+            aria-label="联动发布部分和保存部分"
+            aria-pressed="false"
+        ></button>
+
+        <section class="panel workflow-panel" data-workflow-panel="save">
             <h2>3. 保存部分</h2>
-            <button id="saveLocalBtnV2" class="primary-btn">保存到 Obsidian</button>
             <div id="saveLocalRows" class="target-list"></div>
+            <button id="saveLocalBtnV2" class="primary-btn save-local-btn" data-workflow-action="primary">保存到 Obsidian</button>
             <div id="saveLocalStatus" class="status-box"></div>
         </section>
     </main>

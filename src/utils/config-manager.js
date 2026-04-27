@@ -20,7 +20,7 @@ export async function loadConfig(forceReload = false) {
         // 如果文件不存在，返回空或初始配置
         if (!stats) {
             return {
-                obsidianPath: '/path/to/obsidian/notes',
+                obsidianPath: process.env.JOURNAL_SYNC_OBSIDIAN_PATH || '',
                 plugins: {}
             };
         }

@@ -65,3 +65,15 @@ test('telegram sender still appends source link when source text is absent', () 
     '这是一段内容 <a href="https://example.com/post">source</a>'
   );
 });
+
+test('telegram sender rewrites normalized bilibili source with trailing slash', () => {
+  const html = formatMessageHtml({
+    text: 'source https://www.bilibili.com/video/BV1zNoVB1EWb/',
+    sourceUrl: 'https://www.bilibili.com/video/BV1zNoVB1EWb'
+  });
+
+  assert.equal(
+    html,
+    '<a href="https://www.bilibili.com/video/BV1zNoVB1EWb">source</a>'
+  );
+});

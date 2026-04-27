@@ -11,7 +11,7 @@ const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 let configCache = null;
 const defaultConfig = {
     botToken: '',
-    scriptPath: '/path/to/Journal-Sync/Plugin/Telegram-Send/telegram_send.py',
+    scriptPath: path.join(__dirname, 'telegram_send.py'),
     channels: [],
     defaultChannel: '@LinYunChannel',
     showLinkPreview: true,
@@ -233,16 +233,19 @@ export async function loadConfig() {
     const legacyConfig = await loadLegacyConfig();
     try {
         const data = await fs.readFile(CONFIG_FILE, 'utf-8');
+        const fileConfig = JSON.parse(data);
         configCache = {
             ...defaultConfig,
             ...legacyConfig,
-            ...JSON.parse(data)
+            ...fileConfig,
+            scriptPath: fileConfig.scriptPath || legacyConfig.scriptPath || defaultConfig.scriptPath
         };
         return configCache;
     } catch (error) {
         configCache = {
             ...defaultConfig,
-            ...legacyConfig
+            ...legacyConfig,
+            scriptPath: legacyConfig.scriptPath || defaultConfig.scriptPath
         };
         return configCache;
     }

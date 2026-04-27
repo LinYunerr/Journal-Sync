@@ -81,6 +81,73 @@ body {
     box-shadow: 0 8px 20px rgba(18, 46, 88, 0.06);
 }
 
+.workflow-link-connector {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 20px;
+    margin: -18px 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.workflow-link-connector::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    background: #8fb0dd;
+    border-radius: 999px;
+    opacity: 0;
+    transform: translateX(-50%) scaleY(0.45);
+    transform-origin: center;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.workflow-link-connector::after {
+    content: "+";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #8fb0dd;
+    border-radius: 999px;
+    background: #fff;
+    color: var(--accent);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 8px 18px rgba(18, 46, 88, 0.16);
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.88);
+    transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+}
+
+.workflow-link-connector:hover::after,
+.workflow-link-connector:focus-visible::after {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+.workflow-link-connector.linked::before {
+    opacity: 1;
+    transform: translateX(-50%) scaleY(1);
+}
+
+.workflow-link-connector.linked::after {
+    content: "-";
+    background: var(--accent);
+    color: #fff;
+}
+
 .panel h2 {
     margin: 0 0 12px;
     font-size: 20px;
@@ -276,6 +343,12 @@ select {
 }
 
 .simple-send-btn {
+    margin-top: 14px;
+    width: 100%;
+}
+
+.save-local-btn {
+    margin-top: 6px;
     width: 100%;
 }
 

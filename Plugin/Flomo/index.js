@@ -111,7 +111,9 @@ export async function loadConfig() {
         };
         return configCache;
     } catch (error) {
-        console.error('[Flomo Plugin] 配置找不到:', error.message);
+        if (error.code !== 'ENOENT') {
+            console.error('[Flomo Plugin] 配置读取失败:', error.message);
+        }
         configCache = {
             ...defaultConfig,
             ...legacyConfig

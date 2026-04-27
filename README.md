@@ -12,7 +12,7 @@ Journal Sync 是一个本地优先的日记/笔记同步工具。内容先落地
 - 保存和发布过程实时状态反馈（Obsidian + 各插件）
 - Telegram 频道发布（支持多频道、图片、本地格式优化、来源链接）
 - 插件中心（启停、配置、动作执行）
-- 设置页统一管理 AI/代理/分类/目录等配置
+- 插件中心统一管理 AI、代理、插件配置和插件动作
 - 输入框自适应高度（按内容自动增高，已抽为全局可复用能力）
 
 ## 页面与入口
@@ -22,10 +22,6 @@ Journal Sync 是一个本地优先的日记/笔记同步工具。内容先落地
   - 支持拖拽/粘贴图片到输入框，显示方形缩略图，并按插件差异展示图片处理说明
   - 通过插件中心弹窗管理全局和插件配置
   - 文字和图片会自动同步到 `data/draft-cache/home-v2.json`，程序重启后仍可恢复
-- 设置页：`http://localhost:3000/settings.html`
-  - 过渡入口，会自动跳转到新版主页中的插件中心
-- 插件页：`http://localhost:3000/plugins.html`
-  - 过渡入口，会自动跳转到新版主页中的插件中心
 - 插件中心直达：`http://localhost:3000/?open=plugin-center`
   - 统一处理插件启停、配置与动作执行
 
@@ -232,7 +228,6 @@ capabilities: {
 
 Telegram：
 
-- `POST /api/telegram/test`
 - `POST /api/telegram/publish`
   - 请求体会进行基础校验（`content/channel/type/imageFilenames/sourceUrl`）
 - `POST /api/publish`
@@ -264,6 +259,7 @@ Telegram：
 - `POST /api/plugins/:id/config`
 - `POST /api/plugins/:id/toggle`
 - `POST /api/plugins/:id/actions/:actionId`
+  - 插件测试、频道发现等动作统一走这个入口
 
 主页本地保存：
 

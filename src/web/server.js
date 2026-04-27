@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath } from 'url';
 import { optimizeContent } from '../sync/journal-sync.js';
 import { promises as fsPromises } from 'fs';
@@ -10,13 +9,12 @@ import { applyNetworkProxy, normalizeNetworkProxy } from '../utils/network-proxy
 import PluginManager from '../sync/plugin-manager.js';
 import multer from 'multer';
 import {
-  loadConfig as loadObsidianLocalPluginConfig,
-  saveConfig as saveObsidianLocalPluginConfig
+  loadConfig as loadObsidianLocalPluginConfig
 } from '../../Plugin/Obsidian-Local/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DEFAULT_OBSIDIAN_DIR = '/path/to/obsidian/notes';
+const DEFAULT_OBSIDIAN_DIR = process.env.JOURNAL_SYNC_OBSIDIAN_PATH || '';
 
 function normalizeAiApiType(rawApiType) {
   const normalized = String(rawApiType || '').trim().toLowerCase();
@@ -273,7 +271,7 @@ async function initDataFiles() {
 
     const defaults = {
       'config.json': {
-        "obsidianPath": "/path/to/obsidian/notes",
+        "obsidianPath": DEFAULT_OBSIDIAN_DIR,
         "plugins": {}
       },
       'tasks.json': []
@@ -341,38 +339,9 @@ app.get('/', (req, res) => {
 app.get('/home-v2.html', (req, res) => {
   res.redirect('/');
 });
-app.get('/legacy-home.html', (req, res) => {
-  res.sendFile(path.join(__dirname, '../../public/index.html'));
-});
-app.get('/index.html', (req, res) => {
-  res.redirect('/legacy-home.html');
-});
 app.use(express.static(path.join(__dirname, '../../public')));
 
-/**
- * 从 Markdown 内容中提取图片引用，转换为绝对路径列表
- * @param {string} content - 包含 ![...](assets/xxx) 的 markdown 内容
- * @param {string} obsidianPath - obsidian 保存目录（绝对路径）
- * @returns {{ text: string, images: string[] }}
- */
-function parseContentImages(content, obsidianPath) {
-  // 匹配 ![任意文字](路径)，提取路径部分
-  const imageRegex = /!\[[^\]]*\]\(([^)]+)\)/g;
-  const images = [];
-  let match;
-  while ((match = imageRegex.exec(content)) !== null) {
-    const imgPath = match[1].trim();
-    // 转为绝对路径（支持相对路径如 assets/xxx.png）
-    const absPath = path.isAbsolute(imgPath)
-      ? imgPath
-      : path.join(obsidianPath, imgPath);
-    images.push(absPath);
-  }
-  return { text: content, images };
-}
-
 // 运行时缓存
-const CONFIG_FILE = path.join(__dirname, '../../data/config.json');
 const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
 const DRAFT_CACHE_DIR = path.join(__dirname, '../../data/draft-cache');
 const HOME_V2_DRAFT_FILE = path.join(DRAFT_CACHE_DIR, 'home-v2.json');
@@ -845,171 +814,7 @@ app.post('/api/save-local-v2', async (req, res) => {
 });
 
 /**
- * 浏览文件夹（用于文件选择器）
- */
-app.post('/api/browse-folder', async (req, res) => {
-  try {
-    let { startPath } = req.body;
-
-    // 路径规范化，防止类似于 startPath=../../../../ 形式的不受限遍历
-    let basePath = os.homedir();
-    if (startPath && typeof startPath === 'string') {
-      basePath = path.resolve(startPath);
-    }
-
-    const entries = await fsPromises.readdir(basePath, { withFileTypes: true });
-    const folders = entries
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
-      .map(entry => ({
-        name: entry.name,
-        path: path.join(basePath, entry.name)
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
-
-    res.json({
-      ok: true,
-      currentPath: basePath,
-      parentPath: path.dirname(basePath),
-      folders
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 获取 Obsidian 配置
- */
-app.get('/api/config/obsidian', async (req, res) => {
-  try {
-    const storageConfig = await loadObsidianStorageConfig();
-    res.json({
-      success: true,
-      path: storageConfig.diaryPath
-    });
-  } catch (error) {
-    console.error('Get config error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 获取日记配置
- */
-app.get('/api/config/diary', async (req, res) => {
-  try {
-    const config = await ConfigManager.loadConfig();
-    const obsidianStorage = await loadObsidianStorageConfig(config);
-    const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
-    const flomoConfig = await PluginManager.getPluginConfig('flomo').catch(() => ({}));
-    const mastodonConfig = await PluginManager.getPluginConfig('mastodon').catch(() => ({}));
-
-    // 默认值（从 journal-sync.js 中的常量）
-    const defaults = {
-      obsidianPath: '/path/to/obsidian/notes',
-      flomoApi: '',
-      tgDiaryChannel: '@LinYunChannel',
-      tgBotToken: '',
-      tgChannels: '[]',
-      tgShowLinkPreview: true,
-      tgBoldFirstLine: false,
-      tgAppendSource: false,
-      tgAddLineBreakPerLine: false
-    };
-
-    res.json({
-      ok: true,
-      config: {
-        obsidianPath: obsidianStorage.diaryPath || defaults.obsidianPath,
-        flomoApi: '',
-        tgDiaryChannel: telegramConfig?.defaultChannel || defaults.tgDiaryChannel,
-        tgBotToken: '',
-        tgChannels: JSON.stringify(telegramConfig?.channels || []),
-        tgShowLinkPreview: telegramConfig?.showLinkPreview ?? defaults.tgShowLinkPreview,
-        tgBoldFirstLine: telegramConfig?.boldFirstLine ?? defaults.tgBoldFirstLine,
-        tgAppendSource: telegramConfig?.appendSourceTag ?? defaults.tgAppendSource,
-        tgAddLineBreakPerLine: telegramConfig?.addLineBreakPerLine ?? defaults.tgAddLineBreakPerLine,
-        mastodonInstanceUrl: mastodonConfig?.instanceUrl || '',
-        mastodonAccessToken: '',
-        mastodonVisibility: mastodonConfig?.visibility || 'unlisted'
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 获取笔记配置
- */
-app.get('/api/config/note', async (req, res) => {
-  try {
-    const config = await ConfigManager.loadConfig();
-    const obsidianStorage = await loadObsidianStorageConfig(config);
-    res.json({
-      ok: true,
-      config: {
-        vaultPath: obsidianStorage.noteVaultPath || ''
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 保存 Obsidian 配置
- */
-app.post('/api/config/obsidian', async (req, res) => {
-  try {
-    const { path: obsidianPath } = req.body;
-
-    if (!obsidianPath || !obsidianPath.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Obsidian 路径不能为空'
-      });
-    }
-
-    const pluginConfig = await loadObsidianLocalPluginConfig();
-    const previousDiaryPath = pluginConfig.diaryPath || DEFAULT_OBSIDIAN_DIR;
-    const previousDefaultImagePath = path.join(previousDiaryPath, 'assets');
-    const nextConfig = {
-      ...pluginConfig,
-      diaryPath: obsidianPath.trim()
-    };
-    if (!pluginConfig.imageSavePath || pluginConfig.imageSavePath === previousDefaultImagePath) {
-      nextConfig.imageSavePath = path.join(nextConfig.diaryPath, 'assets');
-    }
-    await saveObsidianLocalPluginConfig(nextConfig);
-
-    res.json({
-      success: true,
-      message: '配置保存成功'
-    });
-  } catch (error) {
-    console.error('Save config error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 获取完整配置（用于设置页面）
+ * 获取完整配置（用于新版插件中心）
  */
 app.get('/api/config/full', async (req, res) => {
   try {
@@ -1050,130 +855,20 @@ app.post('/api/config/set', async (req, res) => {
       });
     }
 
-    if (configPath === 'diary.obsidianPath' || configPath === 'note.vaultPath') {
-      const pluginConfig = await loadObsidianLocalPluginConfig();
-      const nextConfig = { ...pluginConfig };
-
-      if (configPath === 'diary.obsidianPath') {
-        const nextDiaryPath = String(value || '').trim();
-        const previousDiaryPath = pluginConfig.diaryPath || DEFAULT_OBSIDIAN_DIR;
-        const previousDefaultImagePath = path.join(previousDiaryPath, 'assets');
-        nextConfig.diaryPath = nextDiaryPath;
-        if (!pluginConfig.imageSavePath || pluginConfig.imageSavePath === previousDefaultImagePath) {
-          nextConfig.imageSavePath = path.join(nextDiaryPath, 'assets');
-        }
-      } else {
-        nextConfig.noteVaultPath = String(value || '').trim();
-      }
-
-      await saveObsidianLocalPluginConfig(nextConfig);
-
-      return res.json({
-        ok: true,
-        message: '配置已更新'
+    const allowedConfigPaths = new Set([
+      'ai.baseUrl',
+      'ai.apiKey',
+      'ai.model',
+      'ai.apiType',
+      'network.proxy'
+    ]);
+    if (!allowedConfigPaths.has(configPath)) {
+      return res.status(400).json({
+        ok: false,
+        error: '不支持的配置路径'
       });
     }
 
-    // 特殊处理 Telegram 配置，保存到插件配置文件
-    if (configPath.startsWith('diary.tg')) {
-      const telegramConfigMod = await import('../../Plugin/Telegram-Send/index.js');
-      const telegramConfig = await telegramConfigMod.loadConfig() || {
-        botToken: '',
-        channels: [],
-        defaultChannel: '',
-        showLinkPreview: true,
-        boldFirstLine: false,
-        appendSourceTag: false,
-        addLineBreakPerLine: false
-      };
-
-      if (configPath === 'diary.tgBotToken') {
-        telegramConfig.botToken = value;
-      } else if (configPath === 'diary.tgDiaryChannel') {
-        telegramConfig.defaultChannel = value;
-      } else if (configPath === 'diary.tgChannels') {
-        if (typeof value === 'string') {
-          try {
-            telegramConfig.channels = JSON.parse(value);
-          } catch {
-            return res.status(400).json({
-              ok: false,
-              error: 'tgChannels 必须是合法 JSON 字符串'
-            });
-          }
-        } else if (Array.isArray(value)) {
-          telegramConfig.channels = value;
-        } else {
-          return res.status(400).json({
-            ok: false,
-            error: 'tgChannels 必须是 JSON 字符串或数组'
-          });
-        }
-
-        if (!Array.isArray(telegramConfig.channels)) {
-          return res.status(400).json({
-            ok: false,
-            error: 'tgChannels 解析后必须是数组'
-          });
-        }
-      } else if (configPath === 'diary.tgShowLinkPreview') {
-        telegramConfig.showLinkPreview = Boolean(value);
-      } else if (configPath === 'diary.tgBoldFirstLine') {
-        telegramConfig.boldFirstLine = Boolean(value);
-      } else if (configPath === 'diary.tgAppendSource') {
-        telegramConfig.appendSourceTag = Boolean(value);
-      } else if (configPath === 'diary.tgAddLineBreakPerLine') {
-        telegramConfig.addLineBreakPerLine = Boolean(value);
-      }
-
-      await telegramConfigMod.saveConfig(telegramConfig);
-
-      res.json({
-        ok: true,
-        message: 'Telegram 配置已更新'
-      });
-      return;
-    }
-
-    // 特殊处理 Flomo 配置，保存到插件配置文件
-    if (configPath === 'diary.flomoApi') {
-      const flomoConfig = await PluginManager.getPluginConfig('flomo').catch(() => ({ apiUrl: '' }));
-      flomoConfig.apiUrl = value;
-      await PluginManager.savePluginConfig('flomo', flomoConfig);
-
-      res.json({
-        ok: true,
-        message: 'Flomo 配置已更新'
-      });
-      return;
-    }
-
-    // 特殊处理 Mastodon 配置
-    if (configPath.startsWith('diary.mastodon')) {
-      const mastodonConfig = await PluginManager.getPluginConfig('mastodon').catch(() => ({
-        instanceUrl: '',
-        accessToken: '',
-        visibility: 'unlisted'
-      }));
-
-      if (configPath === 'diary.mastodonInstanceUrl') {
-        mastodonConfig.instanceUrl = value;
-      } else if (configPath === 'diary.mastodonAccessToken') {
-        mastodonConfig.accessToken = value;
-      } else if (configPath === 'diary.mastodonVisibility') {
-        mastodonConfig.visibility = value;
-      }
-
-      await PluginManager.savePluginConfig('mastodon', mastodonConfig);
-
-      res.json({
-        ok: true,
-        message: 'Mastodon 配置已更新'
-      });
-      return;
-    }
-
-    // 其他配置保存到主配置文件
     const config = await ConfigManager.loadConfig();
 
     // 解析路径并设置值，防御原型污染
@@ -1329,201 +1024,6 @@ app.post('/api/config/test-ai', async (req, res) => {
   }
 });
 
-/**
- * 获取分类规则
- */
-app.get('/api/classification-rules', async (req, res) => {
-  try {
-    const config = await ConfigManager.loadConfig();
-    const rules = config?.classification?.rules || [];
-    res.json({
-      ok: true,
-      rules
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 保存分类规则
- */
-app.post('/api/classification-rules', async (req, res) => {
-  try {
-    const { rules } = req.body;
-
-    if (!Array.isArray(rules)) {
-      return res.status(400).json({
-        ok: false,
-        error: '规则必须是数组'
-      });
-    }
-
-    const config = await ConfigManager.loadConfig();
-
-    if (!config.classification) {
-      config.classification = {};
-    }
-    config.classification.rules = rules;
-
-    await ConfigManager.saveConfig(config);
-
-    res.json({
-      ok: true,
-      message: '规则保存成功'
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 获取文件夹索引
- */
-app.get('/api/folders', async (req, res) => {
-  try {
-    const config = await ConfigManager.loadConfig();
-    const folders = config?.folders || [];
-
-    res.json({
-      ok: true,
-      folders: folders,
-      count: folders.length,
-      generatedAt: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 重建文件夹索引
- */
-app.post('/api/folders/rebuild', async (req, res) => {
-  try {
-    const storageConfig = await loadObsidianStorageConfig();
-    const vaultPath = storageConfig.noteVaultPath;
-
-    if (!vaultPath) {
-      return res.status(400).json({
-        ok: false,
-        error: '笔记 Vault 路径未配置，请先在设置中配置路径'
-      });
-    }
-
-    // 扫描文件夹
-    const folders = await scanFolders(vaultPath);
-
-    config.folders = folders;
-    await ConfigManager.saveConfig(config);
-
-    res.json({
-      ok: true,
-      count: folders.length,
-      message: '索引已重建'
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 添加文件夹到索引
- */
-app.post('/api/folders/add', async (req, res) => {
-  try {
-    const { folder } = req.body;
-
-    if (!folder || typeof folder !== 'string') {
-      return res.status(400).json({
-        ok: false,
-        error: '文件夹路径不能为空'
-      });
-    }
-
-    const config = await ConfigManager.loadConfig();
-    const folders = config?.folders || [];
-
-    if (folders.includes(folder)) {
-      return res.status(400).json({
-        ok: false,
-        error: '文件夹已存在'
-      });
-    }
-
-    folders.push(folder);
-    folders.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-
-    config.folders = folders;
-    await ConfigManager.saveConfig(config);
-
-    res.json({
-      ok: true,
-      message: '文件夹添加成功',
-      count: folders.length
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 从索引删除文件夹
- */
-app.post('/api/folders/delete', async (req, res) => {
-  try {
-    const { folder } = req.body;
-
-    if (!folder || typeof folder !== 'string') {
-      return res.status(400).json({
-        ok: false,
-        error: '文件夹路径不能为空'
-      });
-    }
-
-    const config = await ConfigManager.loadConfig();
-    const folders = config?.folders || [];
-
-    const index = folders.indexOf(folder);
-    if (index === -1) {
-      return res.status(400).json({
-        ok: false,
-        error: '文件夹不存在'
-      });
-    }
-
-    folders.splice(index, 1);
-    config.folders = folders;
-    await ConfigManager.saveConfig(config);
-
-    res.json({
-      ok: true,
-      message: '文件夹删除成功',
-      count: folders.length
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
 app.get('/api/plugins/registry', async (req, res) => {
   try {
     res.json(await buildPluginRegistryResponse());
@@ -1614,195 +1114,6 @@ app.post('/api/plugins/:id/actions/:actionId', async (req, res) => {
     });
   } catch (error) {
     sendPluginError(res, error);
-  }
-});
-
-/**
- * 获取分类方法
- */
-app.get('/api/classification-method', async (req, res) => {
-  try {
-    const config = await ConfigManager.loadConfig();
-    const method = config?.classification?.method || '中图法分类';
-
-    res.json({
-      ok: true,
-      method
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 设置分类方法
- */
-app.post('/api/classification-method', async (req, res) => {
-  try {
-    const { method } = req.body;
-
-    if (!method || typeof method !== 'string') {
-      return res.status(400).json({
-        ok: false,
-        error: '分类方法不能为空'
-      });
-    }
-
-    const config = await ConfigManager.loadConfig();
-
-    if (!config.classification) {
-      config.classification = {};
-    }
-    config.classification.method = method;
-
-    await ConfigManager.saveConfig(config);
-
-    res.json({
-      ok: true,
-      message: '分类方法保存成功'
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * 测试 Telegram 连接并获取频道列表
- * 使用 Python 脚本的 --list-channels 功能
- */
-app.post('/api/telegram/test', async (req, res) => {
-  try {
-    const { botToken } = req.body;
-
-    if (!botToken) {
-      return res.status(400).json({
-        ok: false,
-        success: false,
-        error: 'Bot Token 不能为空'
-      });
-    }
-    await PluginManager.savePluginConfig('telegram', { botToken });
-    const result = await PluginManager.runPluginAction('telegram', 'discoverChannels', {
-      config: { botToken }
-    });
-    if (!result.success) {
-      return res.status(500).json({
-        ok: false,
-        success: false,
-        error: result.message || '获取频道列表失败'
-      });
-    }
-    res.json({
-      ok: true,
-      success: true,
-      channels: result.data?.channels || [],
-      message: result.message
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-app.post('/api/telegram/test-ai', async (req, res) => {
-  try {
-    const config = await ConfigManager.loadConfig();
-    const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
-    const tgAiConfig = telegramConfig?.ai || {};
-    const useGeneralAi = tgAiConfig.useGeneral !== false;
-    const aiConfig = useGeneralAi
-      ? { ...(config?.ai || {}) }
-      : {
-        baseUrl: tgAiConfig.baseUrl || '',
-        apiKey: tgAiConfig.apiKey || '',
-        model: tgAiConfig.model || '',
-        apiType: normalizeAiApiType(tgAiConfig.apiType)
-      };
-    aiConfig.apiType = normalizeAiApiType(aiConfig.apiType);
-
-    if (!aiConfig?.baseUrl || !aiConfig?.apiKey || !aiConfig?.model) {
-      return res.status(400).json({
-        ok: false,
-        success: false,
-        error: useGeneralAi
-          ? '常规 AI 配置不完整，请先配置后再测试'
-          : 'Telegram AI 配置不完整，请先配置后再测试'
-      });
-    }
-
-    const startTime = Date.now();
-    const apiUrl = getAiEndpointUrl(aiConfig.baseUrl, aiConfig.apiType);
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.apiKey}`
-      },
-      body: JSON.stringify(buildAiRequestBody(aiConfig, {
-        systemPrompt: '你是一个测试助手。',
-        userPrompt: '请返回 "连接成功"',
-        maxTokens: 10,
-        temperature: 0
-      }))
-    });
-
-    const duration = Date.now() - startTime;
-    const rawData = await response.text();
-    let result = null;
-    if (rawData && rawData.trim()) {
-      try {
-        result = JSON.parse(rawData);
-      } catch {
-        result = rawData;
-      }
-    }
-
-    if (!response.ok) {
-      return res.status(500).json({
-        ok: false,
-        success: false,
-        error: result?.error?.message || String(result || '').slice(0, 300),
-        message: 'AI 连接测试失败'
-      });
-    }
-
-    const outputText = extractAiText(result);
-    if (!outputText) {
-      return res.status(500).json({
-        ok: false,
-        success: false,
-        error: 'AI 返回空内容，请更换支持文本输出的模型或接口',
-        message: 'AI 连接测试失败',
-        response: result
-      });
-    }
-
-    res.json({
-      ok: true,
-      success: true,
-      source: useGeneralAi ? 'general' : 'telegram',
-      message: 'AI 连接测试成功',
-      duration: `${duration}ms`,
-      model: aiConfig.model,
-      apiType: aiConfig.apiType,
-      response: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      success: false,
-      error: error.message,
-      message: 'AI 连接测试失败'
-    });
   }
 });
 
@@ -1953,7 +1264,7 @@ app.post('/api/telegram/publish', async (req, res) => {
     const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
     const tgSendScript = telegramConfig?.scriptPath
       || config?.diary?.tgSendScript
-      || '/path/to/telegram_channel_send.py';
+      || path.join(__dirname, '../../Plugin/Telegram-Send/telegram_send.py');
     const tgBotToken = telegramConfig?.botToken || config?.diary?.tgBotToken;
 
     if (!tgSendScript) {
@@ -2093,54 +1404,6 @@ app.post('/api/telegram/publish', async (req, res) => {
     res.status(500).json({
       ok: false,
       error: error.message
-    });
-  }
-});
-
-/**
- * 扫描文件夹（辅助函数）
- */
-async function scanFolders(basePath) {
-  const folders = [];
-
-  async function scan(dir, relativePath = '') {
-    try {
-      const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          const folderPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
-          folders.push(folderPath);
-
-          const fullPath = path.join(dir, entry.name);
-          await scan(fullPath, folderPath);
-        }
-      }
-    } catch (error) {
-      console.error(`扫描文件夹失败: ${dir}`, error);
-    }
-  }
-
-  await scan(basePath);
-  folders.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-
-  return folders;
-}
-
-// 测试长毛象连接
-app.post('/api/mastodon/test', async (req, res) => {
-  try {
-    const result = await PluginManager.runPluginAction('mastodon', 'testConnection', {
-      config: req.body || {}
-    });
-    res.json({
-      ok: result.success,
-      ...result
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: '连接出现异常: ' + error.message
     });
   }
 });

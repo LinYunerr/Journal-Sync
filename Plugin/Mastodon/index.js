@@ -121,7 +121,9 @@ export async function loadConfig() {
         };
         return configCache;
     } catch (error) {
-        console.error('[Mastodon Plugin] 配置文件读取失败:', error.message);
+        if (error.code !== 'ENOENT') {
+            console.error('[Mastodon Plugin] 配置文件读取失败:', error.message);
+        }
         configCache = {
             ...defaultConfig,
             ...legacyConfig

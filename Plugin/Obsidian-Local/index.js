@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const IMAGE_CACHE_DIR = path.join(__dirname, '../../data/image-cache');
-const DEFAULT_DIARY_PATH = '/path/to/obsidian/notes';
+const DEFAULT_DIARY_PATH = process.env.JOURNAL_SYNC_OBSIDIAN_PATH || '';
 const DEFAULT_FILENAME_RULE = 'YYYY-MM-DD 日记';
 
 let configCache = null;
@@ -30,6 +30,7 @@ function sanitizeFilename(rawValue) {
 }
 
 function resolveDefaultImageSavePath(diaryPath) {
+    if (!diaryPath) return '';
     return path.join(diaryPath, 'assets');
 }
 

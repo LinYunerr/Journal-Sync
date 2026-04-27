@@ -7,6 +7,7 @@ const state = {
     simpleTargets: [],
     simpleToggleMap: {},
     saveLocalToggleMap: {},
+    workflowPanelLinks: {},
     inputMedia: {
         images: [],
         count: 0,
@@ -66,6 +67,7 @@ const tgFormattedPreview = document.getElementById('tgFormattedPreviewV2');
 const tgAdvancedPanel = document.getElementById('tgAdvancedPanelV2');
 const tgChannelRows = document.getElementById('tgChannelRows');
 const tgMediaHint = document.getElementById('tgMediaHintV2');
+const workflowLinkToggles = Array.from(document.querySelectorAll('[data-workflow-link]'));
 
 const openPluginCenterBtn = document.getElementById('openPluginCenterBtn');
 const pluginCenterModal = document.getElementById('pluginCenterModal');
@@ -80,11 +82,19 @@ const GlobalInputTraits = window.GlobalInputTraits || {
 const createInputMediaBridge = window.createInputMediaBridge || null;
 const HOME_V2_DRAFT_ENDPOINT = '/api/home-v2-draft';
 const HOME_V2_DRAFT_DEBOUNCE_MS = 400;
+const WORKFLOW_PANEL_LINK_STORAGE_KEY = 'journal-sync-home-v2-workflow-panel-links';
+const WORKFLOW_PANEL_LINKS = [
+    {
+        id: 'publish-save',
+        panels: ['publish', 'save']
+    }
+];
 
 let inputMediaBridge = null;
 let draftSyncTimer = null;
 let isApplyingServerDraft = false;
 let lastSavedDraftSignature = '';
+const workflowPanelActions = new Map();
 
 function buildDraftImageState(imageFilenames = []) {
     return (Array.isArray(imageFilenames) ? imageFilenames : [])
@@ -184,6 +194,95 @@ function setStatus(el, message, type = '') {
     }
 }
 
+function readWorkflowPanelLinks() {
+    let savedLinks = {};
+    try {
+        savedLinks = JSON.parse(window.localStorage.getItem(WORKFLOW_PANEL_LINK_STORAGE_KEY) || '{}') || {};
+    } catch (error) {
+        savedLinks = {};
+    }
+
+    for (const link of WORKFLOW_PANEL_LINKS) {
+        state.workflowPanelLinks[link.id] = Boolean(savedLinks[link.id]);
+    }
+}
+
+function persistWorkflowPanelLinks() {
+    try {
+        window.localStorage.setItem(WORKFLOW_PANEL_LINK_STORAGE_KEY, JSON.stringify(state.workflowPanelLinks));
+    } catch (error) {
+        console.error('[WorkflowLinks] 保存联动状态失败:', error);
+    }
+}
+
+function renderWorkflowPanelLinks() {
+    for (const toggle of workflowLinkToggles) {
+        const linkId = toggle.dataset.workflowLink;
+        const isLinked = Boolean(state.workflowPanelLinks[linkId]);
+        toggle.classList.toggle('linked', isLinked);
+        toggle.setAttribute('aria-pressed', isLinked ? 'true' : 'false');
+        toggle.title = isLinked ? '取消联动发布部分和保存部分' : '联动发布部分和保存部分';
+    }
+}
+
+function setWorkflowPanelLinkActive(linkId, active) {
+    if (!WORKFLOW_PANEL_LINKS.some(link => link.id === linkId)) return;
+    state.workflowPanelLinks[linkId] = Boolean(active);
+    persistWorkflowPanelLinks();
+    renderWorkflowPanelLinks();
+}
+
+function getLinkedWorkflowPanelIds(panelId) {
+    const linkedPanelIds = [];
+    for (const link of WORKFLOW_PANEL_LINKS) {
+        if (!state.workflowPanelLinks[link.id] || !link.panels.includes(panelId)) continue;
+        linkedPanelIds.push(...link.panels.filter(item => item !== panelId));
+    }
+    return [...new Set(linkedPanelIds)];
+}
+
+function getWorkflowPanelIdForAction(actionEl) {
+    return actionEl?.closest?.('[data-workflow-panel]')?.dataset?.workflowPanel || '';
+}
+
+function getWorkflowPanelPrimaryAction(panelId) {
+    return document.querySelector(`[data-workflow-panel="${panelId}"] [data-workflow-action="primary"]`);
+}
+
+function registerWorkflowPanelAction(panelId, handler) {
+    if (!panelId || typeof handler !== 'function') return;
+    workflowPanelActions.set(panelId, handler);
+}
+
+async function runWorkflowPanelAction(panelId, visited = new Set()) {
+    if (!panelId || visited.has(panelId)) return;
+    const handler = workflowPanelActions.get(panelId);
+    if (!handler) return;
+
+    const primaryAction = getWorkflowPanelPrimaryAction(panelId);
+    if (primaryAction?.disabled) return;
+
+    visited.add(panelId);
+    await handler();
+
+    const linkedPanelIds = getLinkedWorkflowPanelIds(panelId);
+    for (const linkedPanelId of linkedPanelIds) {
+        await runWorkflowPanelAction(linkedPanelId, visited);
+    }
+}
+
+function initializeWorkflowPanelLinks() {
+    readWorkflowPanelLinks();
+    renderWorkflowPanelLinks();
+
+    for (const toggle of workflowLinkToggles) {
+        toggle.addEventListener('click', () => {
+            const linkId = toggle.dataset.workflowLink;
+            setWorkflowPanelLinkActive(linkId, !state.workflowPanelLinks[linkId]);
+        });
+    }
+}
+
 function ensureMainInputTraits() {
     const mount = (key, textarea) => {
         if (!textarea) return;
@@ -233,6 +332,22 @@ function escapeRegExp(text) {
     return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function buildEquivalentSourceUrlPatterns(sourceUrl, { markdown = false } = {}) {
+    const normalizedUrl = normalizeSourceUrl(sourceUrl);
+    if (!normalizedUrl) return [];
+
+    const patterns = [escapeRegExp(normalizedUrl)];
+    if (normalizedUrl.toLowerCase().includes('bilibili')) {
+        const bvMatch = normalizedUrl.match(/BV[0-9A-Za-z]{10}/);
+        if (bvMatch) {
+            const tailExclusions = markdown ? `\\s<>"')` : `\\s<>"'`;
+            patterns.push(`https?:\\/\\/(?:www\\.)?bilibili\\.com\\/video\\/${escapeRegExp(bvMatch[0])}\\/?(?:[?#][^${tailExclusions}]*)?`);
+        }
+    }
+
+    return [...new Set(patterns)];
+}
+
 function stripTrailingSourceArtifacts(content, sourceUrl) {
     const normalizedContent = String(content || '');
     const normalizedUrl = normalizeSourceUrl(sourceUrl);
@@ -240,10 +355,12 @@ function stripTrailingSourceArtifacts(content, sourceUrl) {
         return { content: normalizedContent, stripped: false };
     }
 
+    const markdownUrlPatterns = buildEquivalentSourceUrlPatterns(normalizedUrl, { markdown: true });
+    const inlineUrlPatterns = buildEquivalentSourceUrlPatterns(normalizedUrl);
     const patterns = [
-        new RegExp(`(?:\\s|^)\\[source\\]\\(${escapeRegExp(normalizedUrl)}\\)\\s*$`, 'i'),
-        new RegExp(`(?:\\s|^)(?:source)\\s*[:：]?\\s*(?:\\n\\s*)?${escapeRegExp(normalizedUrl)}\\s*$`, 'i'),
-        new RegExp(`(?:\\s|^)${escapeRegExp(normalizedUrl)}\\s*$`, 'i')
+        ...markdownUrlPatterns.map(pattern => new RegExp(`(?:\\s|^)\\[source\\]\\(${pattern}\\)\\s*$`, 'i')),
+        ...inlineUrlPatterns.map(pattern => new RegExp(`(?:\\s|^)(?:source)\\s*[:：]?\\s*(?:\\n\\s*)?${pattern}\\s*$`, 'i')),
+        ...inlineUrlPatterns.map(pattern => new RegExp(`(?:\\s|^)${pattern}\\s*$`, 'i'))
     ];
 
     let strippedContent = normalizedContent;
@@ -870,7 +987,7 @@ function renderSaveLocalTargets() {
 function renderEditHint() {
     const editPlugins = getPluginsBySection('edit', { enabledOnly: true });
     if (editPlugins.length === 0) {
-        editPluginHint.textContent = '当前没有启用编辑分区插件';
+        editPluginHint.textContent = '';
         return;
     }
     editPluginHint.textContent = `编辑分区插件：${editPlugins.map(plugin => plugin.name).join('、')}`;
@@ -1019,7 +1136,7 @@ async function loadRegistry() {
     syncMainHomePanels();
 }
 
-sendSimpleBtn.addEventListener('click', async () => {
+async function runPublishPanelAction() {
     const pipelineContent = getCurrentContent({ channel: 'pipeline' });
     const imageFilenames = getPendingImageFilenames();
     if (!pipelineContent && imageFilenames.length === 0) {
@@ -1136,7 +1253,7 @@ sendSimpleBtn.addEventListener('click', async () => {
     } finally {
         refreshPublishButtonState();
     }
-});
+}
 
 tgInputModeBtn.addEventListener('click', () => {
     setTgInputMode(!state.tgInputModeEnabled);
@@ -1156,7 +1273,7 @@ contentInput.addEventListener('input', () => {
     }
 });
 
-saveLocalBtn.addEventListener('click', async () => {
+async function runSavePanelAction() {
     const content = getCurrentContent({ channel: 'pipeline' });
     const imageFilenames = getPendingImageFilenames();
     if (!content && imageFilenames.length === 0) {
@@ -1210,6 +1327,15 @@ saveLocalBtn.addEventListener('click', async () => {
     } finally {
         saveLocalBtn.disabled = false;
     }
+}
+
+registerWorkflowPanelAction('publish', runPublishPanelAction);
+registerWorkflowPanelAction('save', runSavePanelAction);
+
+document.querySelectorAll('[data-workflow-action="primary"]').forEach(actionEl => {
+    actionEl.addEventListener('click', () => {
+        runWorkflowPanelAction(getWorkflowPanelIdForAction(actionEl));
+    });
 });
 
 function setSettingsAlert(message, type = 'info') {
@@ -2134,6 +2260,7 @@ document.addEventListener('keydown', (event) => {
 async function init() {
     ensureMainInputTraits();
     initializeInputMediaBridge();
+    initializeWorkflowPanelLinks();
     setTgInputMode(false);
     renderTgFormattedPreview();
 

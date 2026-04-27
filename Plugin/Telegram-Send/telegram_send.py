@@ -14,8 +14,12 @@ import time
 from difflib import SequenceMatcher
 
 TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
-TOKEN_FALLBACK_PATH = "/path/to/local/config/telegram_bot_token.txt"
-KNOWN_CHANNELS_PATH = "/path/to/local/config/telegram_channels.json"
+TOKEN_FALLBACK_PATH = os.path.expanduser(
+    os.environ.get("TELEGRAM_BOT_TOKEN_FILE", "~/.config/journal-sync/telegram_bot_token.txt")
+)
+KNOWN_CHANNELS_PATH = os.path.expanduser(
+    os.environ.get("TELEGRAM_CHANNELS_FILE", "~/.config/journal-sync/telegram_channels.json")
+)
 PLUGIN_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 # 频道别名映射：别名 -> 目标频道标识（可以是频道名、用户名或 chat_id）
@@ -88,10 +92,32 @@ def strip_trailing_source_artifacts(text, source_url):
     if not normalized_text.strip() or not normalized_source:
         return normalized_text, False
 
+    def build_source_url_patterns(markdown=False):
+        patterns = [re.escape(normalized_source)]
+        if "bilibili" in normalized_source.lower():
+            bv_match = re.search(r"BV[0-9A-Za-z]{10}", normalized_source)
+            if bv_match:
+                tail_exclusions = r"\s<>\"')" if markdown else r"\s<>\"'"
+                patterns.append(
+                    rf"https?://(?:www\.)?bilibili\.com/video/{re.escape(bv_match.group(0))}/?(?:[?#][^{tail_exclusions}]*)?"
+                )
+        return list(dict.fromkeys(patterns))
+
+    markdown_url_patterns = build_source_url_patterns(markdown=True)
+    inline_url_patterns = build_source_url_patterns()
     patterns = [
-        re.compile(rf"(?:\s|^)\[source\]\({re.escape(normalized_source)}\)\s*$", re.IGNORECASE | re.DOTALL),
-        re.compile(rf"(?:\s|^)(?:source)\s*[:：]?\s*(?:\n\s*)?{re.escape(normalized_source)}\s*$", re.IGNORECASE | re.DOTALL),
-        re.compile(rf"(?:\s|^){re.escape(normalized_source)}\s*$", re.IGNORECASE | re.DOTALL),
+        *[
+            re.compile(rf"(?:\s|^)\[source\]\({pattern}\)\s*$", re.IGNORECASE | re.DOTALL)
+            for pattern in markdown_url_patterns
+        ],
+        *[
+            re.compile(rf"(?:\s|^)(?:source)\s*[:：]?\s*(?:\n\s*)?{pattern}\s*$", re.IGNORECASE | re.DOTALL)
+            for pattern in inline_url_patterns
+        ],
+        *[
+            re.compile(rf"(?:\s|^){pattern}\s*$", re.IGNORECASE | re.DOTALL)
+            for pattern in inline_url_patterns
+        ],
     ]
 
     stripped_text = normalized_text
@@ -579,7 +605,7 @@ def output_channel_choice(options, query=None):
 def main():
     token = read_token()
     if not token:
-        print("Missing bot token. Set TELEGRAM_BOT_TOKEN or create /path/to/local/config/telegram_bot_token.txt", file=sys.stderr)
+        print(f"Missing bot token. Set {TOKEN_ENV} or create {TOKEN_FALLBACK_PATH}", file=sys.stderr)
         return 1
 
     try:

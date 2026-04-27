@@ -5,6 +5,12 @@ node_modules/
 logs/
 *.log
 
+# Local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # Python cache
 __pycache__/
 *.pyc
@@ -18,6 +24,7 @@ data/tasks.json
 data/mem0_insights.json
 data/mem0_vectors/
 data/image-cache/
+data/draft-cache/
 
 # Plugin configs (sensitive information)
 Plugin/*/config.json
@@ -29,7 +36,9 @@ backups/
 .DS_Store
 Thumbs.db
 *.bak
+*.bak-*
 *.backup
+*.backup-*
 
 # IDE
 .vscode/

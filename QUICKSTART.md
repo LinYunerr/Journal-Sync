@@ -19,7 +19,6 @@ npm start
 先打开新版插件中心，配置 Obsidian 本地保存插件并启用需要的插件：
 
 - `http://localhost:3000/?open=plugin-center`
-- 旧入口 `http://localhost:3000/settings.html` 和 `http://localhost:3000/plugins.html` 会自动跳转
 
 插件敏感信息保存在各插件目录下的 `config.json` 中。
 
