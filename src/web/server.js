@@ -15,6 +15,13 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_OBSIDIAN_DIR = process.env.JOURNAL_SYNC_OBSIDIAN_PATH || '';
+const SENSITIVE_VALUE_MASK = '__SECRET_PRESENT__';
+
+function isSensitiveNoopValue(value) {
+  if (value === undefined || value === null) return false;
+  const normalized = String(value).trim();
+  return normalized === '' || normalized === '****' || normalized === SENSITIVE_VALUE_MASK;
+}
 
 function normalizeAiApiType(rawApiType) {
   const normalized = String(rawApiType || '').trim().toLowerCase();
@@ -221,12 +228,13 @@ async function resolveCachedImagePaths(filenames = []) {
 
 function validateTelegramPublishPayload(body = {}) {
   const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
-  const { content, channel, type, imageFilenames, sourceUrl, tgFormattingApplied } = payload;
+  const { content, channel, type, imageFilenames, sourceUrl, tgFormattingApplied, tgBoldFirstLineApplied } = payload;
   if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
   if (channel !== undefined && typeof channel !== 'string') return 'channel 必须是字符串';
   if (type !== undefined && !['diary', 'note'].includes(type)) return 'type 必须是 diary 或 note';
   if (sourceUrl !== undefined && typeof sourceUrl !== 'string') return 'sourceUrl 必须是字符串';
   if (tgFormattingApplied !== undefined && typeof tgFormattingApplied !== 'boolean') return 'tgFormattingApplied 必须是布尔值';
+  if (tgBoldFirstLineApplied !== undefined && typeof tgBoldFirstLineApplied !== 'boolean') return 'tgBoldFirstLineApplied 必须是布尔值';
   if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
     return 'imageFilenames 必须是字符串数组';
   }
@@ -690,7 +698,11 @@ app.post('/api/publish', async (req, res) => {
       try {
         if (targetId === 'telegram') {
           const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
-          const telegramChannel = (telegram.channel || '').trim() || (telegramConfig.defaultChannel || '').trim();
+          const configuredHomeChannels = Array.isArray(telegramConfig.homeChannels) ? telegramConfig.homeChannels : [];
+          const configuredChannels = Array.isArray(telegramConfig.channels) ? telegramConfig.channels : [];
+          const telegramChannel = (telegram.channel || '').trim()
+            || String(configuredHomeChannels.find(Boolean) || '').trim()
+            || String(configuredChannels.find(channel => channel?.id)?.id || '').trim();
           const telegramContent = optimizeContent(telegram.content || normalizedContent);
 
           if (!telegramChannel) {
@@ -824,7 +836,7 @@ app.get('/api/config/full', async (req, res) => {
       config: {
         ai: {
           baseUrl: config?.ai?.baseUrl || '',
-          apiKey: config?.ai?.apiKey || '',
+          apiKey: config?.ai?.apiKey ? SENSITIVE_VALUE_MASK : '',
           model: config?.ai?.model || '',
           apiType: normalizeAiApiType(config?.ai?.apiType)
         },
@@ -871,6 +883,14 @@ app.post('/api/config/set', async (req, res) => {
 
     const config = await ConfigManager.loadConfig();
 
+    if (configPath === 'ai.apiKey' && isSensitiveNoopValue(value)) {
+      return res.json({
+        ok: true,
+        message: 'API 密钥未变更',
+        value: config?.ai?.apiKey ? SENSITIVE_VALUE_MASK : ''
+      });
+    }
+
     // 解析路径并设置值，防御原型污染
     const keys = configPath.split('.');
     if (keys.some(k => k === '__proto__' || k === 'constructor' || k === 'prototype')) {
@@ -899,10 +919,15 @@ app.post('/api/config/set', async (req, res) => {
     const normalizedAiApiType = configPath === 'ai.apiType'
       ? normalizeAiApiType(value)
       : null;
+    const normalizedAiApiKey = configPath === 'ai.apiKey'
+      ? String(value || '').trim()
+      : null;
 
     current[keys[keys.length - 1]] = configPath === 'network.proxy'
       ? normalizedNetworkProxy
-      : (configPath === 'ai.apiType' ? normalizedAiApiType : value);
+      : (configPath === 'ai.apiType'
+        ? normalizedAiApiType
+        : (configPath === 'ai.apiKey' ? normalizedAiApiKey : value));
 
     await ConfigManager.saveConfig(config);
 
@@ -946,6 +971,9 @@ app.post('/api/config/test-ai', async (req, res) => {
       ...(config?.ai || {}),
       ...(aiPayload || {})
     };
+    if (aiPayload && isSensitiveNoopValue(aiPayload.apiKey)) {
+      aiConfig.apiKey = config?.ai?.apiKey || '';
+    }
     aiConfig.apiType = normalizeAiApiType(aiConfig.apiType);
 
     if (!aiConfig?.baseUrl || !aiConfig?.apiKey || !aiConfig?.model) {
@@ -1244,7 +1272,15 @@ app.post('/api/telegram/publish', async (req, res) => {
     }
 
     const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
-    const { content, channel, type = 'diary', imageFilenames = [], sourceUrl = '', tgFormattingApplied = false } = payload;
+    const {
+      content,
+      channel,
+      type = 'diary',
+      imageFilenames = [],
+      sourceUrl = '',
+      tgFormattingApplied = false,
+      tgBoldFirstLineApplied = false
+    } = payload;
 
     if (!content && imageFilenames.length === 0) {
       return res.status(400).json({
@@ -1262,17 +1298,7 @@ app.post('/api/telegram/publish', async (req, res) => {
 
     const config = await ConfigManager.loadConfig();
     const telegramConfig = await PluginManager.getPluginConfig('telegram').catch(() => ({}));
-    const tgSendScript = telegramConfig?.scriptPath
-      || config?.diary?.tgSendScript
-      || path.join(__dirname, '../../Plugin/Telegram-Send/telegram_send.py');
     const tgBotToken = telegramConfig?.botToken || config?.diary?.tgBotToken;
-
-    if (!tgSendScript) {
-      return res.json({
-        ok: false,
-        error: 'Telegram 脚本路径未配置'
-      });
-    }
 
     if (!tgBotToken) {
       return res.json({
@@ -1308,7 +1334,8 @@ app.post('/api/telegram/publish', async (req, res) => {
     const isNotePublish = type === 'note';
     // TG 发布优化设置只在“TG 按钮 + 本地生成格式”后生效，避免普通发布误触发。
     const shouldApplyTgOptimizeSettings = isNotePublish && tgFormattingApplied === true;
-    const enableBoldFirstLineForNote = shouldApplyTgOptimizeSettings && Boolean(telegramConfig?.boldFirstLine);
+    const enableBoldFirstLineForNote = shouldApplyTgOptimizeSettings
+      && (Boolean(telegramConfig?.boldFirstLine) || tgBoldFirstLineApplied === true);
     const enableLineBreakPerLineForNote = shouldApplyTgOptimizeSettings && Boolean(telegramConfig?.addLineBreakPerLine);
     const enableAppendSourceForNote = shouldApplyTgOptimizeSettings && Boolean(telegramConfig?.appendSourceTag);
     const sourceUrlFromPayload = typeof sourceUrl === 'string' ? sourceUrl.trim() : '';

@@ -86,7 +86,6 @@ export const manifest = {
             acceptsInputImages: true,
             mode: 'upload',
             maxImages: 4,
-            settingsDescription: '图片处理：发布时会按当前图片顺序依次上传到实例的 /api/v1/media，再把返回的 media_ids 绑定到状态里。单条状态最多发送 4 张图，超出部分会自动截断。',
             summary: '会先上传图片，再通过 media_ids 发表到时间线',
             withImagesSummary: '当前会上传图片到 CMX 实例并附在帖子里',
             withImagesNote: 'Mastodon 单条状态最多附带 4 张图片，超过部分会自动忽略。'
@@ -248,7 +247,8 @@ export async function execute({ content, options, images = [] }) {
         // 去掉正文中的图片 Markdown 引用，避免与实际上传的图片重复
         const textContent = content.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
 
-        // 上传图片（最多 4 张，Mastodon 限制）
+        // 按当前图片顺序依次上传到 /api/v1/media，收集 media_ids 后绑定到状态。
+        // Mastodon 单条状态最多附带 4 张图片，超出部分自动截断。
         let mediaIds = [];
         if (images.length > 0) {
             const toUpload = images.slice(0, 4);

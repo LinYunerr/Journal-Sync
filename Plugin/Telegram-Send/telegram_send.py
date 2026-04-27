@@ -140,6 +140,19 @@ def strip_trailing_source_artifacts(text, source_url):
     return stripped_text, stripped
 
 
+def unwrap_first_markdown_bold_line(text):
+    lines = (text or "").split("\n")
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        match = re.match(r"^(\s*)\*\*(\S.*?\S|\S)\*\*(\s*)$", line)
+        if not match:
+            return text, False
+        lines[index] = f"{match.group(1)}{match.group(2)}{match.group(3)}"
+        return "\n".join(lines), True
+    return text, False
+
+
 def format_message_html(text, bold_first_line=False, source_url=None, line_break_per_line=False):
     normalized = (text or "").replace("\r\n", "\n")
     if line_break_per_line:
@@ -149,9 +162,10 @@ def format_message_html(text, bold_first_line=False, source_url=None, line_break
     if normalized_source:
         normalized, _ = strip_trailing_source_artifacts(normalized, normalized_source)
 
+    normalized, first_line_markdown_bold = unwrap_first_markdown_bold_line(normalized)
     escaped = escape_html(normalized)
     formatted = escaped
-    if bold_first_line:
+    if bold_first_line or first_line_markdown_bold:
         lines = escaped.split("\n")
         first_non_empty = None
         for idx, line in enumerate(lines):

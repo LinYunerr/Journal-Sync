@@ -8,7 +8,9 @@
       "username": "@channel_username"
     }
   ],
-  "defaultChannel": "CHANNEL_ID",
+  "homeChannels": [
+    "CHANNEL_ID"
+  ],
   "showLinkPreview": true,
   "boldFirstLine": false,
   "appendSourceTag": false,

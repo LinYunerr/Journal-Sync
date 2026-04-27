@@ -234,6 +234,8 @@ async function saveDiaryEntry(content, images = [], imageFilenames = []) {
     const { date, time } = formatDateParts();
     const diaryFileName = buildDiaryFilename(date, config.filenameRule);
     const diaryFilePath = path.join(config.diaryPath, diaryFileName);
+    // 图片会复制到配置的本地图片目录，并在正文下方追加 Obsidian 的 ![[文件名]] 引用。
+    // 未显式配置时，图片目录默认使用日记路径下的 assets 子目录。
     const imageNames = await copyImagesToTarget(
         await resolveImageInputPaths(images, imageFilenames, config.imageSavePath),
         config.imageSavePath
@@ -331,7 +333,6 @@ export const manifest = {
             acceptsInputImages: true,
             mode: 'assets',
             maxImages: 9,
-            settingsDescription: '',
             summary: '保存到今日日记，并把图片写入本地目录',
             withImagesSummary: '会把图片写入图片保存路径，并在正文下方追加 ![[文件名]]',
             withImagesNote: '图片默认进入日记路径下的 assets 子目录。'

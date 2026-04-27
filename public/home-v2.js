@@ -1,4 +1,5 @@
 const SENSITIVE_VALUE_MASK = '__SECRET_PRESENT__';
+const SENSITIVE_INPUT_PLACEHOLDER = 'sk-xxxx-xxxx-xxxx';
 const AI_API_TYPE_CHAT = 'chat_completions';
 const AI_API_TYPE_RESPONSES = 'responses';
 
@@ -24,7 +25,8 @@ const state = {
         markdownContent: '',
         telegramContent: '',
         sourceUrl: '',
-        generatedFrom: ''
+        generatedFrom: '',
+        boldFirstLineApplied: false
     },
     tgChannels: [],
     tgChannelSelection: {},
@@ -463,17 +465,35 @@ function applyLineBreakPerLine(content) {
     return output.join('\n').trim();
 }
 
+function unwrapMarkdownBoldLine(line) {
+    const rawLine = String(line || '');
+    const match = rawLine.match(/^(\s*)\*\*(\S[\s\S]*?\S|\S)\*\*(\s*)$/);
+    if (!match) {
+        return { line: rawLine, unwrapped: false };
+    }
+
+    return {
+        line: `${match[1]}${match[2]}${match[3]}`,
+        unwrapped: true
+    };
+}
+
 function buildTgFormattedPayload(rawContent) {
     const normalizedInput = String(rawContent || '').replace(/\r\n/g, '\n').trim();
-    const telegramContent = applyLineBreakPerLine(normalizedInput);
-    const lines = telegramContent.split('\n');
+    const lineBrokenContent = applyLineBreakPerLine(normalizedInput);
+    const lines = lineBrokenContent.split('\n');
     const firstNonEmptyIndex = getFirstNonEmptyLineIndex(lines);
     const sourceUrl = normalizeSourceUrl(extractLastHttpsUrl(normalizedInput));
+    let firstLineMarkdownBold = false;
+
+    if (firstNonEmptyIndex >= 0) {
+        const unwrapped = unwrapMarkdownBoldLine(lines[firstNonEmptyIndex]);
+        lines[firstNonEmptyIndex] = unwrapped.line;
+        firstLineMarkdownBold = unwrapped.unwrapped;
+    }
 
     const markdownLines = [...lines];
-    if (state.tgOptions.boldFirstLine && firstNonEmptyIndex >= 0) {
-        markdownLines[firstNonEmptyIndex] = `**${markdownLines[firstNonEmptyIndex].trim()}**`;
-    }
+    const boldFirstLineApplied = Boolean(state.tgOptions.boldFirstLine || firstLineMarkdownBold);
 
     let markdownContent = markdownLines.join('\n').trim();
     if (state.tgOptions.appendSourceTag && sourceUrl) {
@@ -482,9 +502,10 @@ function buildTgFormattedPayload(rawContent) {
 
     return {
         markdownContent,
-        telegramContent,
+        telegramContent: lines.join('\n').trim(),
         sourceUrl,
-        generatedFrom: normalizedInput
+        generatedFrom: normalizedInput,
+        boldFirstLineApplied
     };
 }
 
@@ -510,7 +531,7 @@ function renderTgFormattedPreview() {
             const sourceLink = `<a href="${safeUrl}" target="_blank" rel="noreferrer">source</a>`;
             escaped = escaped.replaceAll(previewPlaceholder, sourceLink);
         }
-        if (state.tgOptions.boldFirstLine && index === firstNonEmptyIndex) {
+        if (state.tgFormatting.boldFirstLineApplied && index === firstNonEmptyIndex) {
             return `<strong>${escaped}</strong>`;
         }
         return escaped;
@@ -546,7 +567,8 @@ function regenerateLocalTgFormat({ silent = false } = {}) {
             markdownContent: '',
             telegramContent: '',
             sourceUrl: '',
-            generatedFrom: ''
+            generatedFrom: '',
+            boldFirstLineApplied: false
         };
         if (tgFormattedOutput) {
             tgFormattedOutput.value = '';
@@ -787,12 +809,25 @@ function getPluginMediaMeta(plugin) {
     return media;
 }
 
-function getPluginMediaTechnicalDescription(plugin) {
+function getPluginImageInputDescription(plugin) {
     const media = getPluginMediaMeta(plugin);
     if (!media) return '';
-    return typeof media.settingsDescription === 'string'
-        ? media.settingsDescription.trim()
-        : '';
+    const maxImages = Number.isFinite(Number(media.maxImages)) && Number(media.maxImages) > 0
+        ? Number(media.maxImages)
+        : null;
+
+    if (media.acceptsInputImages === false) {
+        if (String(media.mode || '').trim() === 'public_urls' && maxImages) {
+            return `该插件不接收主页本地图片输入；正文中的公网图片 URL 一次最多 ${maxImages} 张。`;
+        }
+        return '该插件不接收主页图片输入。';
+    }
+
+    if (maxImages) {
+        return `该插件一次最多输入 ${maxImages} 张图片。`;
+    }
+
+    return '该插件可以接收主页图片输入。';
 }
 
 function canPluginTransferInputImages(plugin) {
@@ -1063,9 +1098,9 @@ function loadTelegramChannelOptions() {
     const rawChannels = Array.isArray(telegramPlugin?.config?.channels)
         ? telegramPlugin.config.channels
         : [];
-    const defaultChannel = typeof telegramPlugin?.config?.defaultChannel === 'string'
-        ? telegramPlugin.config.defaultChannel
-        : '';
+    const configuredHomeChannels = Array.isArray(telegramPlugin?.config?.homeChannels)
+        ? telegramPlugin.config.homeChannels.map(item => String(item))
+        : null;
     state.tgOptions = {
         showLinkPreview: telegramPlugin?.config?.showLinkPreview !== false,
         boldFirstLine: Boolean(telegramPlugin?.config?.boldFirstLine),
@@ -1088,11 +1123,8 @@ function loadTelegramChannelOptions() {
                 username
             };
         })
-        .filter(Boolean);
-
-    if (channels.length === 0 && defaultChannel) {
-        channels.push({ id: defaultChannel, title: defaultChannel, username: '' });
-    }
+        .filter(Boolean)
+        .filter(channel => !configuredHomeChannels || configuredHomeChannels.includes(String(channel.id)));
 
     state.tgChannels = channels;
 
@@ -1100,13 +1132,6 @@ function loadTelegramChannelOptions() {
     state.tgChannelSelection = {};
     for (const channel of channels) {
         state.tgChannelSelection[channel.id] = Boolean(previousSelection[channel.id]);
-    }
-
-    if (defaultChannel && Object.prototype.hasOwnProperty.call(state.tgChannelSelection, defaultChannel)) {
-        const hasAnySelected = Object.values(state.tgChannelSelection).some(Boolean);
-        if (!hasAnySelected) {
-            state.tgChannelSelection[defaultChannel] = true;
-        }
     }
 
     renderTgChannels();
@@ -1221,7 +1246,8 @@ async function runPublishPanelAction() {
                             type: 'note',
                             imageFilenames,
                             sourceUrl: tgSourceUrl,
-                            tgFormattingApplied
+                            tgFormattingApplied,
+                            tgBoldFirstLineApplied: Boolean(state.tgFormatting.boldFirstLineApplied)
                         })
                     });
                     const data = await response.json().catch(() => ({}));
@@ -1393,6 +1419,25 @@ function isEmptyValue(value) {
     return false;
 }
 
+function hasSavedSensitiveValue(value) {
+    return !isEmptyValue(value);
+}
+
+function getSensitiveInputValue(element) {
+    const rawValue = String(element?.value || '').trim();
+    if (rawValue) {
+        return rawValue;
+    }
+    return element?.dataset?.sensitiveHasValue === 'true' ? SENSITIVE_VALUE_MASK : '';
+}
+
+function resetSensitiveInputElement(element, hasSavedValue) {
+    if (!element) return;
+    element.value = '';
+    element.dataset.sensitiveHasValue = hasSavedValue ? 'true' : 'false';
+    element.placeholder = hasSavedValue ? SENSITIVE_INPUT_PLACEHOLDER : (element.dataset.emptyPlaceholder || '');
+}
+
 function getPluginFields(plugin) {
     return (plugin?.manifest?.settings?.sections || []).flatMap(section => section.fields || []);
 }
@@ -1430,7 +1475,11 @@ function getPluginFieldOptions(pluginId, field, currentValue) {
         .filter(option => option && option.value !== undefined && option.value !== null)
         .map(option => ({ ...option, value: String(option.value) }));
 
-    if (currentValue && !options.some(option => option.value === String(currentValue))) {
+    const hasScalarCurrentValue = currentValue !== undefined
+        && currentValue !== null
+        && currentValue !== ''
+        && !Array.isArray(currentValue);
+    if (hasScalarCurrentValue && !options.some(option => option.value === String(currentValue))) {
         options.unshift({
             value: String(currentValue),
             label: `${String(currentValue)}（当前值）`
@@ -1463,6 +1512,19 @@ function validatePluginField(pluginId, field) {
         const optionValues = getPluginFieldOptions(pluginId, field, value).map(option => option.value);
         if (optionValues.length > 0 && !optionValues.includes(String(value))) {
             return `${field.label}必须从可选项中选择`;
+        }
+    }
+
+    if (field.type === 'checkboxGroup') {
+        if (!Array.isArray(value)) {
+            return `${field.label}必须是数组`;
+        }
+        const optionValues = getPluginFieldOptions(pluginId, field, value).map(option => option.value);
+        const invalidValues = optionValues.length > 0
+            ? value.map(item => String(item)).filter(item => !optionValues.includes(item))
+            : [];
+        if (invalidValues.length > 0) {
+            return `${field.label}包含不可用选项`;
         }
     }
 
@@ -1616,12 +1678,51 @@ function renderPluginField(plugin, field) {
         `;
     }
 
-    const inputType = field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text');
-    const hasSensitiveValue = field.sensitive && !isEmptyValue(value);
-    const inputValue = hasSensitiveValue ? '****' : (field.sensitive ? '' : (value ?? field.default ?? ''));
-    const sensitiveHint = hasSensitiveValue
-        ? '<div class="settings-sub">已配置，当前以掩码显示。若要修改，直接输入新值即可。</div>'
-        : '';
+    if (field.type === 'checkboxGroup') {
+        const options = getPluginFieldOptions(plugin.id, field, value);
+        const selectedValues = new Set(Array.isArray(value) ? value.map(item => String(item)) : []);
+        const optionHtml = options.length > 0
+            ? options.map((option, index) => {
+                const optionValue = String(option.value);
+                const optionId = `${inputId}-${index}`;
+                return `
+                    <label class="settings-checkbox" for="${optionId}">
+                        <input
+                            type="checkbox"
+                            id="${optionId}"
+                            data-plugin-id="${plugin.id}"
+                            data-field-key="${field.key}"
+                            data-field-type="checkboxGroup"
+                            data-option-value="${escapeHtml(optionValue)}"
+                            ${selectedValues.has(optionValue) ? 'checked' : ''}>
+                        <span>${escapeHtml(option.label)}</span>
+                    </label>
+                `;
+            }).join('')
+            : '<div class="settings-sub">请先点击“获取频道列表”。</div>';
+
+        return `
+            <div class="settings-field">
+                <label>${escapeHtml(field.label)}</label>
+                <div class="settings-checkbox-group">
+                    ${optionHtml}
+                </div>
+                ${description}
+                <div id="${errorId}" class="settings-field-error${fieldError ? ' show' : ''}">${escapeHtml(fieldError)}</div>
+            </div>
+        `;
+    }
+
+    const inputType = field.sensitive ? 'text' : (field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text'));
+    const hasSensitiveValue = field.sensitive && hasSavedSensitiveValue(value);
+    const inputValue = field.sensitive ? '' : (value ?? field.default ?? '');
+    const placeholder = field.sensitive && hasSensitiveValue
+        ? SENSITIVE_INPUT_PLACEHOLDER
+        : (field.placeholder || '');
+    const inputClass = [
+        fieldError ? 'settings-field-invalid' : '',
+        field.sensitive ? 'settings-sensitive-input' : ''
+    ].filter(Boolean).join(' ');
 
     return `
         <div class="settings-field">
@@ -1632,11 +1733,13 @@ function renderPluginField(plugin, field) {
                 data-plugin-id="${plugin.id}"
                 data-field-key="${field.key}"
                 data-field-type="${field.type}"
-                class="${fieldError ? 'settings-field-invalid' : ''}"
+                class="${inputClass}"
                 ${field.sensitive ? 'data-sensitive="true"' : ''}
-                placeholder="${escapeHtml(field.placeholder || '')}"
+                ${field.sensitive ? `data-sensitive-has-value="${hasSensitiveValue ? 'true' : 'false'}"` : ''}
+                ${field.sensitive ? `data-empty-placeholder="${escapeHtml(field.placeholder || '')}"` : ''}
+                ${field.sensitive ? 'autocomplete="off" spellcheck="false"' : ''}
+                placeholder="${escapeHtml(placeholder)}"
                 value="${escapeHtml(inputValue)}">
-            ${sensitiveHint}
             ${description}
             <div id="${errorId}" class="settings-field-error${fieldError ? ' show' : ''}">${escapeHtml(fieldError)}</div>
         </div>
@@ -1647,16 +1750,27 @@ function bindPluginFieldInputs() {
     settingsDetail.querySelectorAll('[data-plugin-id][data-field-key]').forEach(element => {
         const pluginId = element.dataset.pluginId;
         const fieldKey = element.dataset.fieldKey;
-        const eventName = element.dataset.fieldType === 'boolean' || element.dataset.fieldType === 'select'
+        const eventName = element.dataset.fieldType === 'boolean'
+            || element.dataset.fieldType === 'select'
+            || element.dataset.fieldType === 'checkboxGroup'
             ? 'change'
             : 'input';
 
         element.addEventListener(eventName, () => {
-            const value = element.dataset.fieldType === 'boolean'
-                ? element.checked
-                : (element.dataset.fieldType === 'number' && element.value !== ''
+            let value;
+            if (element.dataset.fieldType === 'boolean') {
+                value = element.checked;
+            } else if (element.dataset.fieldType === 'checkboxGroup') {
+                value = Array.from(settingsDetail.querySelectorAll(
+                    `[data-plugin-id="${pluginId}"][data-field-key="${fieldKey}"][data-field-type="checkboxGroup"]:checked`
+                )).map(input => input.dataset.optionValue || '');
+            } else if (element.dataset.sensitive === 'true') {
+                value = getSensitiveInputValue(element);
+            } else {
+                value = element.dataset.fieldType === 'number' && element.value !== ''
                     ? Number(element.value)
-                    : element.value);
+                    : element.value;
+            }
             setValueAtPath(state.modal.pluginDrafts[pluginId], fieldKey, value);
             const plugin = state.modal.pluginRegistry.find(item => item.id === pluginId);
             const field = getPluginFields(plugin).find(item => item.key === fieldKey);
@@ -1703,31 +1817,36 @@ function renderActionResultText(result) {
 
 function renderPluginSettingsDetail(plugin) {
     const sections = plugin.manifest?.settings?.sections || [];
-    const actions = plugin.manifest?.settings?.actions || [];
+    const globalActions = plugin.manifest?.settings?.actions || [];
     const sectionsWithFields = sections.filter(section => Array.isArray(section.fields) && section.fields.length > 0);
-    const mediaTechnicalDescription = getPluginMediaTechnicalDescription(plugin);
+    const imageInputDescription = getPluginImageInputDescription(plugin);
     const pluginDescription = String(plugin.manifest?.description || '').trim();
 
-    const fieldsHtml = sectionsWithFields.map(section => `
+    const renderActionButtons = actions => (actions || []).map(action => `
+        <button type="button" class="primary-btn" data-plugin-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>
+    `).join('');
+
+    const fieldsHtml = sectionsWithFields.map(section => {
+        const sectionActionButtons = renderActionButtons(section.actions || []);
+        return `
         <div class="settings-card">
             <h3>${escapeHtml(section.title || '配置')}</h3>
             ${section.description ? `<div class="settings-sub" style="margin-bottom: 10px;">${escapeHtml(section.description)}</div>` : ''}
+            ${sectionActionButtons ? `<div class="settings-actions" style="margin-bottom: 12px;">${sectionActionButtons}</div>` : ''}
             <div class="settings-grid">
                 ${(section.fields || []).map(field => renderPluginField(plugin, field)).join('')}
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 
-    const actionButtons = actions.map(action => `
-        <button type="button" class="primary-btn" data-plugin-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>
-    `).join('');
+    const actionButtons = renderActionButtons(globalActions);
 
     settingsDetail.innerHTML = `
         <div class="settings-card">
             <div class="settings-plugin-header">
                 <div>
                     <h3>${escapeHtml(plugin.manifest?.name || plugin.name || plugin.id)}</h3>
-                    ${mediaTechnicalDescription ? `<p class="settings-plugin-desc settings-plugin-media-desc">${escapeHtml(mediaTechnicalDescription)}</p>` : ''}
                     ${pluginDescription ? `<p class="settings-plugin-desc">${escapeHtml(pluginDescription)}</p>` : ''}
                 </div>
                 <div class="settings-inline">
@@ -1737,6 +1856,12 @@ function renderPluginSettingsDetail(plugin) {
                 </div>
             </div>
         </div>
+        ${imageInputDescription ? `
+            <div class="settings-card settings-image-input-card">
+                <h3>图片输入</h3>
+                <p class="settings-plugin-desc settings-plugin-media-desc">${escapeHtml(imageInputDescription)}</p>
+            </div>
+        ` : ''}
         ${fieldsHtml || '<div class="settings-card"><div class="settings-sub">该插件没有可配置字段。</div></div>'}
         <div class="settings-card">
             <div class="settings-actions">
@@ -1762,6 +1887,7 @@ function renderPluginSettingsDetail(plugin) {
 
 function renderGeneralSettingsDetail() {
     const general = state.modal.general;
+    const hasGeneralAiKey = hasSavedSensitiveValue(general.ai.apiKey);
     settingsDetail.innerHTML = `
         <div class="settings-card">
             <h3>AI 与网络</h3>
@@ -1781,7 +1907,17 @@ function renderGeneralSettingsDetail() {
                 </div>
                 <div class="settings-field">
                     <label for="generalAiApiKey">API 密钥</label>
-                    <input id="generalAiApiKey" type="password" value="${escapeHtml(general.ai.apiKey)}" placeholder="sk-...">
+                    <input
+                        id="generalAiApiKey"
+                        class="settings-sensitive-input"
+                        type="text"
+                        value=""
+                        placeholder="${escapeHtml(hasGeneralAiKey ? SENSITIVE_INPUT_PLACEHOLDER : 'sk-...')}"
+                        data-sensitive="true"
+                        data-sensitive-has-value="${hasGeneralAiKey ? 'true' : 'false'}"
+                        data-empty-placeholder="sk-..."
+                        autocomplete="off"
+                        spellcheck="false">
                 </div>
                 <div class="settings-field">
                     <label for="generalAiModel">模型名称</label>
@@ -1914,6 +2050,10 @@ async function savePluginConfig(pluginId, { silent = false } = {}) {
 
     applyPluginValidationErrors(pluginId, []);
     syncMainPluginsFromModalRegistry();
+    settingsDetail.querySelectorAll(`[data-plugin-id="${pluginId}"][data-sensitive="true"]`).forEach(input => {
+        const currentValue = getValueAtPath(state.modal.pluginDrafts[pluginId] || {}, input.dataset.fieldKey);
+        resetSensitiveInputElement(input, hasSavedSensitiveValue(currentValue));
+    });
 
     if (!silent) {
         showPluginResult('插件配置已保存', 'ok');
@@ -1945,6 +2085,9 @@ async function runPluginAction(pluginId, actionId) {
         const normalized = normalizeActionResult(data.result || {});
         if (Array.isArray(normalized.data.channels)) {
             setValueAtPath(state.modal.pluginDrafts[pluginId], 'channels', normalized.data.channels);
+            if (Array.isArray(normalized.data.homeChannels)) {
+                setValueAtPath(state.modal.pluginDrafts[pluginId], 'homeChannels', normalized.data.homeChannels);
+            }
             const plugin = state.modal.pluginRegistry.find(item => item.id === pluginId);
             if (plugin) {
                 plugin.config = cloneValue(state.modal.pluginDrafts[pluginId]);
@@ -2033,12 +2176,15 @@ async function clearGeneralProxy() {
 async function saveGeneralAiConfig() {
     const apiType = normalizeAiApiType(document.getElementById('generalAiApiType')?.value);
     const baseUrl = stripAiEndpointSuffix((document.getElementById('generalAiBaseUrl')?.value || '').trim());
-    const apiKey = (document.getElementById('generalAiApiKey')?.value || '').trim();
+    const apiKeyInput = document.getElementById('generalAiApiKey');
+    const apiKey = (apiKeyInput?.value || '').trim();
+    const hasSavedApiKey = apiKeyInput?.dataset.sensitiveHasValue === 'true'
+        || hasSavedSensitiveValue(state.modal.general.ai.apiKey);
     const model = (document.getElementById('generalAiModel')?.value || '').trim();
     const networkProxyInput = document.getElementById('generalNetworkProxy');
     const networkProxy = (networkProxyInput?.value || '').trim();
 
-    if (!baseUrl || !apiKey || !model) {
+    if (!baseUrl || (!apiKey && !hasSavedApiKey) || !model) {
         setSettingsAlert('请填写 AI 设置的所有字段', 'error');
         return;
     }
@@ -2060,11 +2206,6 @@ async function saveGeneralAiConfig() {
             fetch('/api/config/set', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: 'ai.apiKey', value: apiKey })
-            }),
-            fetch('/api/config/set', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ path: 'ai.model', value: model })
             }),
             fetch('/api/config/set', {
@@ -2073,6 +2214,13 @@ async function saveGeneralAiConfig() {
                 body: JSON.stringify({ path: 'ai.apiType', value: apiType })
             })
         ];
+        if (apiKey) {
+            writes.push(fetch('/api/config/set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: 'ai.apiKey', value: apiKey })
+            }));
+        }
 
         const responses = await Promise.all(writes);
         for (const response of responses) {
@@ -2084,7 +2232,12 @@ async function saveGeneralAiConfig() {
 
         const appliedProxy = await saveNetworkProxy(networkProxy, { strict: true });
 
-        state.modal.general.ai = { apiType, baseUrl, apiKey, model };
+        state.modal.general.ai = {
+            apiType,
+            baseUrl,
+            apiKey: apiKey ? SENSITIVE_VALUE_MASK : (state.modal.general.ai.apiKey || SENSITIVE_VALUE_MASK),
+            model
+        };
         state.modal.general.networkProxy = appliedProxy;
         if (networkProxyInput) {
             networkProxyInput.value = appliedProxy;
@@ -2093,6 +2246,7 @@ async function saveGeneralAiConfig() {
         if (baseUrlInput) {
             baseUrlInput.value = baseUrl;
         }
+        resetSensitiveInputElement(apiKeyInput, true);
 
         setSettingsAlert('AI 设置保存成功', 'ok');
     } catch (error) {
@@ -2103,9 +2257,12 @@ async function saveGeneralAiConfig() {
 async function testGeneralAiConnection() {
     const apiType = normalizeAiApiType(document.getElementById('generalAiApiType')?.value);
     const baseUrl = stripAiEndpointSuffix((document.getElementById('generalAiBaseUrl')?.value || '').trim());
-    const apiKey = (document.getElementById('generalAiApiKey')?.value || '').trim();
+    const apiKeyInput = document.getElementById('generalAiApiKey');
+    const apiKey = (apiKeyInput?.value || '').trim();
+    const hasSavedApiKey = apiKeyInput?.dataset.sensitiveHasValue === 'true'
+        || hasSavedSensitiveValue(state.modal.general.ai.apiKey);
     const model = (document.getElementById('generalAiModel')?.value || '').trim();
-    if (!baseUrl || !apiKey || !model) {
+    if (!baseUrl || (!apiKey && !hasSavedApiKey) || !model) {
         setSettingsAlert('请先填写完整的 AI 设置再测试', 'error');
         return;
     }
@@ -2120,7 +2277,7 @@ async function testGeneralAiConnection() {
                 ai: {
                     apiType,
                     baseUrl,
-                    apiKey,
+                    apiKey: apiKey || SENSITIVE_VALUE_MASK,
                     model
                 }
             })

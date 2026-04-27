@@ -54,6 +54,17 @@ function getManifestFields(manifest) {
     return manifest?.settings?.sections?.flatMap(section => section.fields || []) || [];
 }
 
+function getManifestActions(manifest) {
+    const globalActions = manifest?.settings?.actions || [];
+    const sectionActions = manifest?.settings?.sections?.flatMap(section => section.actions || []) || [];
+    const seen = new Set();
+    return [...globalActions, ...sectionActions].filter(action => {
+        if (!action?.id || seen.has(action.id)) return false;
+        seen.add(action.id);
+        return true;
+    });
+}
+
 function getDefaultHomeV2Section(pluginId) {
     if (pluginId === 'flomo') return 'publish_simple';
     if (pluginId === 'mastodon') return 'publish_simple';
@@ -147,6 +158,23 @@ function validateFieldValue(field, value, config) {
         ));
         if (optionValues.length > 0 && !optionValues.includes(value)) {
             errors.push(`${label}必须从可选项中选择`);
+        }
+    }
+
+    if (field.type === 'checkboxGroup') {
+        if (!Array.isArray(value)) {
+            errors.push(`${label}必须是数组`);
+            return errors;
+        }
+
+        const optionValues = getFieldOptions(field, config).map(option => String(
+            typeof option === 'string' ? option : option.value
+        ));
+        const invalidValues = optionValues.length > 0
+            ? value.map(item => String(item)).filter(item => !optionValues.includes(item))
+            : [];
+        if (invalidValues.length > 0) {
+            errors.push(`${label}包含不可用选项`);
         }
     }
 
@@ -480,7 +508,7 @@ export async function runPluginAction(pluginId, actionId, payload = {}) {
         throw new Error(`Plugin not found: ${pluginId}`);
     }
 
-    const declaredActions = plugin.manifest.settings?.actions || [];
+    const declaredActions = getManifestActions(plugin.manifest);
     const action = declaredActions.find(item => item.id === actionId);
     if (!action) {
         throw new Error(`Unknown action "${actionId}" for plugin "${pluginId}"`);

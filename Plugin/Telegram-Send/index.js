@@ -7,18 +7,31 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const CORE_CONFIG_FILE = path.join(__dirname, '../../data/config.json');
+const SCRIPT_PATH = path.join(__dirname, 'telegram_send.py');
 
 let configCache = null;
 const defaultConfig = {
     botToken: '',
-    scriptPath: path.join(__dirname, 'telegram_send.py'),
     channels: [],
-    defaultChannel: '@LinYunChannel',
+    homeChannels: [],
     showLinkPreview: true,
     boldFirstLine: false,
     appendSourceTag: false,
     addLineBreakPerLine: false
 };
+
+function normalizeConfig(config = {}) {
+    const normalized = { ...config };
+    delete normalized.scriptPath;
+    delete normalized.defaultChannel;
+    if (!Array.isArray(normalized.channels)) {
+        normalized.channels = [];
+    }
+    if (!Array.isArray(normalized.homeChannels)) {
+        normalized.homeChannels = [];
+    }
+    return normalized;
+}
 
 export const manifest = {
     id: 'telegram',
@@ -53,64 +66,62 @@ export const manifest = {
                             message: 'Bot Token 格式不正确'
                         },
                         placeholder: '输入你的 Telegram Bot Token'
-                    },
+                    }
+                ]
+            },
+            {
+                id: 'channels',
+                title: '频道设置',
+                actions: [
                     {
-                        key: 'scriptPath',
-                        type: 'text',
-                        label: '发送脚本路径',
-                        required: true,
-                        validate: {
-                            minLength: 1,
-                            message: '发送脚本路径不能为空'
-                        },
-                        placeholder: '/Users/username/path/to/telegram_send.py'
-                    },
+                        id: 'discoverChannels',
+                        label: '获取频道列表',
+                        kind: 'fetch'
+                    }
+                ],
+                fields: [
                     {
-                        key: 'defaultChannel',
-                        type: 'select',
-                        label: '默认频道',
-                        placeholder: '请先点击“获取频道列表”',
+                        key: 'homeChannels',
+                        type: 'checkboxGroup',
+                        label: '选择需要出现在主页的频道',
                         optionsSource: {
                             path: 'channels',
                             valueKey: 'id',
                             labelKey: 'title',
                             captionKey: 'username'
-                        },
-                        allowCustomValue: true
+                        }
                     }
                 ]
             },
             {
                 id: 'tgOptimize',
                 title: 'TG发布优化设置',
-                description: '仅在重构主页点击“TG”并执行“生成TG发布格式”后，发布到 Telegram 时生效。',
+                description: '点击“Telegram”按钮后生成TG发布格式时的相关设置',
                 fields: [
                     {
                         key: 'showLinkPreview',
                         type: 'boolean',
                         label: '网址显示预览',
-                        description: '只影响 TG 本地格式工作区的预览显示。',
+                        description: '当有网址时，发布内容是否出现网址发布预览',
                         default: true
                     },
                     {
                         key: 'boldFirstLine',
                         type: 'boolean',
                         label: '笔记发布TG时首行加粗',
-                        description: '仅在点击“TG”并生成 TG 发布格式后生效。',
                         default: false
                     },
                     {
                         key: 'appendSourceTag',
                         type: 'boolean',
                         label: '笔记发布TG时结尾增加source标识',
-                        description: '仅在点击“TG”并生成 TG 发布格式后生效。',
+                        description: '将原文中的最后一个网址改为source标识并放在尾段末尾',
                         default: false
                     },
                     {
                         key: 'addLineBreakPerLine',
                         type: 'boolean',
                         label: '为每一行添加换行',
-                        description: '仅在点击“TG”并生成 TG 发布格式后生效。',
                         default: false
                     }
                 ]
@@ -121,11 +132,6 @@ export const manifest = {
                 id: 'testConnection',
                 label: '测试连通性',
                 kind: 'test'
-            },
-            {
-                id: 'discoverChannels',
-                label: '获取频道列表',
-                kind: 'fetch'
             }
         ]
     },
@@ -138,7 +144,6 @@ export const manifest = {
             acceptsInputImages: true,
             mode: 'media_group',
             maxImages: 9,
-            settingsDescription: '图片处理：发布时会按当前图片顺序发送到 Telegram。单张图片走 sendPhoto，多张图片走 sendMediaGroup；如果文字超过 caption 限制，脚本会先发图，再把剩余文字拆分补发。',
             summary: '单张图片走 sendPhoto，多张图片走媒体组',
             withImagesSummary: '当前会携带图片发送到 Telegram 频道',
             withImagesNote: '若文案超过 caption 长度限制，会在图片成功后拆分补发文字。'
@@ -153,9 +158,8 @@ async function loadLegacyConfig() {
         const diary = coreConfig?.diary || {};
         return {
             botToken: diary.tgBotToken || '',
-            scriptPath: diary.tgSendScript || '',
             channels: diary.tgChannels ? JSON.parse(diary.tgChannels) : [],
-            defaultChannel: diary.tgDiaryChannel || '',
+            homeChannels: diary.tgDiaryChannel ? [diary.tgDiaryChannel] : [],
             showLinkPreview: diary.tgShowLinkPreview !== undefined ? Boolean(diary.tgShowLinkPreview) : true,
             boldFirstLine: Boolean(diary.tgBoldFirstLine),
             appendSourceTag: Boolean(diary.tgAppendSource),
@@ -167,16 +171,13 @@ async function loadLegacyConfig() {
 }
 
 async function listChannels(botToken) {
-    const config = await loadConfig();
-    const scriptPath = config.scriptPath || defaultConfig.scriptPath;
-
     if (!botToken) {
         throw new Error('Bot Token 未配置');
     }
 
     return new Promise((resolve, reject) => {
         const env = { ...process.env, TELEGRAM_BOT_TOKEN: botToken };
-        const tgProcess = spawn('python3', [scriptPath, '--list-channels'], { env });
+        const tgProcess = spawn('python3', [SCRIPT_PATH, '--list-channels'], { env });
         const stdoutChunks = [];
         const stderrChunks = [];
         let settled = false;
@@ -234,26 +235,24 @@ export async function loadConfig() {
     try {
         const data = await fs.readFile(CONFIG_FILE, 'utf-8');
         const fileConfig = JSON.parse(data);
-        configCache = {
+        configCache = normalizeConfig({
             ...defaultConfig,
             ...legacyConfig,
-            ...fileConfig,
-            scriptPath: fileConfig.scriptPath || legacyConfig.scriptPath || defaultConfig.scriptPath
-        };
+            ...fileConfig
+        });
         return configCache;
     } catch (error) {
-        configCache = {
+        configCache = normalizeConfig({
             ...defaultConfig,
-            ...legacyConfig,
-            scriptPath: legacyConfig.scriptPath || defaultConfig.scriptPath
-        };
+            ...legacyConfig
+        });
         return configCache;
     }
 }
 
 export async function saveConfig(config) {
-    configCache = config;
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    configCache = normalizeConfig(config);
+    await fs.writeFile(CONFIG_FILE, JSON.stringify(configCache, null, 2), 'utf-8');
 }
 
 export async function runAction(actionId, payload = {}) {
@@ -262,14 +261,27 @@ export async function runAction(actionId, payload = {}) {
 
     if (actionId === 'discoverChannels') {
         const channels = await listChannels(mergedConfig.botToken);
-        const nextConfig = { ...currentConfig, ...mergedConfig, channels };
+        const channelIds = new Set(channels.map(channel => String(channel.id)));
+        const previousHomeChannels = Array.isArray(mergedConfig.homeChannels) ? mergedConfig.homeChannels : [];
+        const homeChannels = previousHomeChannels
+            .map(channel => String(channel))
+            .filter(channel => channelIds.has(channel));
+        const nextConfig = {
+            ...currentConfig,
+            ...mergedConfig,
+            channels,
+            homeChannels: homeChannels.length > 0 ? homeChannels : channels.map(channel => String(channel.id))
+        };
         await saveConfig(nextConfig);
         return {
             success: true,
             message: channels.length > 0
                 ? `找到 ${channels.length} 个可用频道`
                 : '连接成功，但暂未发现可用频道',
-            data: { channels }
+            data: {
+                channels,
+                homeChannels: nextConfig.homeChannels
+            }
         };
     }
 
@@ -288,19 +300,27 @@ export async function runAction(actionId, payload = {}) {
 export async function execute({ content, type, options, images = [] }) {
     const config = await loadConfig();
 
-    if (!config.scriptPath || !config.botToken) {
+    if (!config.botToken) {
         return { success: false, error: 'Telegram 插件未配置' };
     }
 
     const tgContent = content;
-    const channel = options?.telegramChannel || config.defaultChannel || '@LinYunChannel';
+    const homeChannelIds = Array.isArray(config.homeChannels) ? config.homeChannels.map(String) : [];
+    const configuredChannels = Array.isArray(config.channels) ? config.channels : [];
+    const firstHomeChannel = homeChannelIds.find(Boolean);
+    const firstKnownChannel = configuredChannels.find(channel => channel?.id)?.id;
+    const channel = options?.telegramChannel || firstHomeChannel || firstKnownChannel;
+
+    if (!channel) {
+        return { success: false, error: 'Telegram 频道未配置' };
+    }
 
     // 过滤掉正文中的 Markdown 图片引用，避免与实际图片发送重复
     const textContent = tgContent.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
 
     // 构建 Python 脚本的命令行参数
     // 基础参数：脚本路径 + 频道
-    const args = [config.scriptPath, channel];
+    const args = [SCRIPT_PATH, channel];
     const shouldBoldFirstLineForNote = type === 'note' && Boolean(config.boldFirstLine);
     const shouldAddLineBreakPerLineForNote = type === 'note' && Boolean(config.addLineBreakPerLine);
 
@@ -311,7 +331,8 @@ export async function execute({ content, type, options, images = [] }) {
         args.push('--line-break-per-line');
     }
 
-    // 如果有图片，追加 --images 参数
+    // 按当前图片顺序交给脚本：单张图片走 sendPhoto，多张图片走 sendMediaGroup。
+    // 如果文字超过 caption 限制，脚本会先发图，再把剩余文字拆分补发。
     if (images.length > 0) {
         args.push('--images', ...images);
         console.log(`[Telegram Plugin] 发送含 ${images.length} 张图片的消息到 ${channel}`);

@@ -96,7 +96,6 @@ export const manifest = {
             acceptsInputImages: true,
             mode: 'upload',
             maxImages: 9,
-            settingsDescription: '图片处理：发布时会按当前图片顺序先上传到 Misskey Drive，拿到 fileIds 后再创建 note。最多发送 9 张图，整体链路与 CMX 一致，都是先传图再发帖。',
             summary: '会先上传到 Drive，再用 fileIds 绑定到 note',
             withImagesSummary: '当前会上传图片到 Misskey Drive 并附在动态里',
             withImagesNote: '逻辑与 CMX 一致，先传图再发帖。'
@@ -246,6 +245,8 @@ export async function execute({ content, images = [] }) {
         const fileIds = [];
 
         if (imageList.length > 0) {
+            // 按当前图片顺序先上传到 Misskey Drive，拿到 fileIds 后再创建 note。
+            // 主页输入层最多传入 9 张图，整体链路与 CMX 一样都是先传图再发帖。
             const uploaded = await Promise.all(imageList.map(imagePath => uploadImageToMissky(imagePath, config)));
             for (const id of uploaded) {
                 if (id) fileIds.push(id);

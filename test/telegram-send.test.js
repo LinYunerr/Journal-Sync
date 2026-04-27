@@ -5,13 +5,14 @@ import path from 'node:path';
 
 const scriptPath = path.resolve('Plugin/Telegram-Send/telegram_send.py');
 
-function formatMessageHtml({ text, sourceUrl, boldFirstLine = false, lineBreakPerLine = false }) {
+function formatMessageHtml({ text, sourceUrl = null, boldFirstLine = false, lineBreakPerLine = false }) {
+  const sourceUrlLiteral = sourceUrl === null ? 'None' : JSON.stringify(sourceUrl);
   const python = [
     'import importlib.util, json',
     `spec = importlib.util.spec_from_file_location("telegram_send", ${JSON.stringify(scriptPath)})`,
     'mod = importlib.util.module_from_spec(spec)',
     'spec.loader.exec_module(mod)',
-    `result = mod.format_message_html(${JSON.stringify(text)}, bold_first_line=${boldFirstLine ? 'True' : 'False'}, source_url=${JSON.stringify(sourceUrl)}, line_break_per_line=${lineBreakPerLine ? 'True' : 'False'})`,
+    `result = mod.format_message_html(${JSON.stringify(text)}, bold_first_line=${boldFirstLine ? 'True' : 'False'}, source_url=${sourceUrlLiteral}, line_break_per_line=${lineBreakPerLine ? 'True' : 'False'})`,
     'print(json.dumps(result, ensure_ascii=False))'
   ].join('\n');
 
@@ -76,4 +77,21 @@ test('telegram sender rewrites normalized bilibili source with trailing slash', 
     html,
     '<a href="https://www.bilibili.com/video/BV1zNoVB1EWb">source</a>'
   );
+});
+
+test('telegram sender converts first-line markdown bold to html bold without literal asterisks', () => {
+  const html = formatMessageHtml({
+    text: '**首行标题**\n正文'
+  });
+
+  assert.equal(html, '<b>首行标题</b>\n正文');
+});
+
+test('telegram sender avoids nested asterisks when bold option meets markdown-bold first line', () => {
+  const html = formatMessageHtml({
+    text: '**首行标题**\n正文',
+    boldFirstLine: true
+  });
+
+  assert.equal(html, '<b>首行标题</b>\n正文');
 });

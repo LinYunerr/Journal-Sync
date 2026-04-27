@@ -17,7 +17,9 @@
       "username": "@example"
     }
   ],
-  "defaultChannel": "-1000000000000",
+  "homeChannels": [
+    "-1000000000000"
+  ],
   "showLinkPreview": true,
   "boldFirstLine": false,
   "appendSourceTag": false,

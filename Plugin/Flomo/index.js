@@ -58,7 +58,6 @@ export const manifest = {
             acceptsInputImages: false,
             mode: 'public_urls',
             maxImages: MAX_FLOMO_IMAGES,
-            settingsDescription: '图片处理：flomo Webhook 只能接收公网可访问的 image_urls。主页里拖拽或粘贴的本地图片不会直接上传到 flomo；如果正文里本身包含公网图片 URL，插件会提取前 9 张一起提交。',
             summary: '官方支持 image_urls，但必须是公网可访问图片 URL',
             withImagesSummary: '会接收当前输入图片，但本地拖拽/粘贴图片无法直接传给 flomo',
             withImagesNote: '若没有公网 URL，发布时只会发送文字内容，并返回提示。'
@@ -67,6 +66,8 @@ export const manifest = {
 };
 
 function extractRemoteImageUrls(content) {
+    // flomo Webhook 只接收公网可访问的 image_urls；本地拖拽或粘贴的图片不会直传。
+    // 因此这里只从正文提取公网图片 URL，并截取前 MAX_FLOMO_IMAGES 张提交。
     const urls = [];
     const markdownMatches = String(content || '').match(/!\[[^\]]*]\((https?:\/\/[^)]+)\)/g) || [];
     const plainMatches = String(content || '').match(/https?:\/\/[^\s<>"']+/g) || [];

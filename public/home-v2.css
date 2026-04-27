@@ -758,6 +758,15 @@ select {
     width: 100%;
 }
 
+.settings-sensitive-input {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.settings-sensitive-input::placeholder {
+    color: #8b97ab;
+    opacity: 1;
+}
+
 .settings-field textarea {
     min-height: 110px;
 }
@@ -786,6 +795,11 @@ select {
     height: 18px;
 }
 
+.settings-checkbox-group {
+    display: grid;
+    gap: 8px;
+}
+
 .settings-sub {
     color: #617187;
     font-size: 12px;
@@ -806,6 +820,14 @@ select {
 
 .settings-plugin-media-desc {
     color: #24486e;
+}
+
+.settings-image-input-card h3 {
+    margin-bottom: 6px;
+}
+
+.settings-image-input-card .settings-plugin-media-desc {
+    margin-top: 0;
 }
 
 .settings-plugin-toggle {
