@@ -14,8 +14,26 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const PACKAGE_JSON_FILE = path.join(__dirname, '../../package.json');
 const DEFAULT_OBSIDIAN_DIR = process.env.JOURNAL_SYNC_OBSIDIAN_PATH || '';
 const SENSITIVE_VALUE_MASK = '__SECRET_PRESENT__';
+
+async function loadAppInfo() {
+  try {
+    const rawPackageJson = await fsPromises.readFile(PACKAGE_JSON_FILE, 'utf-8');
+    const packageJson = JSON.parse(rawPackageJson);
+    return {
+      name: packageJson.name || 'journal-sync',
+      version: packageJson.version || '0.0.0'
+    };
+  } catch (error) {
+    console.warn('[AppInfo] 读取 package.json 失败:', error.message);
+    return {
+      name: 'journal-sync',
+      version: '0.0.0'
+    };
+  }
+}
 
 function isSensitiveNoopValue(value) {
   if (value === undefined || value === null) return false;
@@ -317,6 +335,8 @@ async function initNetworkProxy() {
 }
 
 // 启动时初始化文件然后加载插件
+const APP_INFO = await loadAppInfo();
+
 await initDataFiles();
 await initNetworkProxy();
 await PluginManager.loadPlugins();
@@ -511,7 +531,11 @@ function sendPluginError(res, error) {
  * 健康检查
  */
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: APP_INFO.version });
+});
+
+app.get('/api/version', (req, res) => {
+  res.json({ ok: true, ...APP_INFO });
 });
 
 app.get('/api/home-v2-draft', async (req, res) => {
@@ -1450,7 +1474,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  📝 Journal Sync Server');
+  console.log(`  📝 Journal Sync Server v${APP_INFO.version}`);
   console.log('═══════════════════════════════════════════════════════');
   console.log(`  🌐 Server running at: http://localhost:${PORT}`);
   console.log(`  📁 Public directory: ${path.join(__dirname, '../../public')}`);

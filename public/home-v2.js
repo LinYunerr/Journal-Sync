@@ -54,6 +54,7 @@ const imageUploadStatus = document.getElementById('v2ImageUploadStatus');
 const imagePreviewModal = document.getElementById('imagePreviewModalV2');
 const imagePreviewModalImg = document.getElementById('imagePreviewModalImgV2');
 const closeImagePreviewBtn = document.getElementById('closeImagePreviewBtnV2');
+const appVersionBadge = document.getElementById('appVersionBadge');
 const editPluginHint = document.getElementById('editPluginHint');
 const simpleTargetRows = document.getElementById('simpleTargetRows');
 const saveLocalRows = document.getElementById('saveLocalRows');
@@ -185,6 +186,21 @@ async function restoreHomeDraft() {
         });
     } finally {
         isApplyingServerDraft = false;
+    }
+}
+
+async function loadAppVersion() {
+    if (!appVersionBadge) return;
+
+    try {
+        const response = await fetch('/api/version');
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false || !data.version) {
+            throw new Error(data.error || ('HTTP ' + response.status));
+        }
+        appVersionBadge.textContent = `v${data.version}`;
+    } catch (error) {
+        console.error('[AppVersion] 加载失败:', error);
     }
 }
 
@@ -2416,6 +2432,7 @@ document.addEventListener('keydown', (event) => {
 
 async function init() {
     ensureMainInputTraits();
+    loadAppVersion();
     initializeInputMediaBridge();
     initializeWorkflowPanelLinks();
     setTgInputMode(false);

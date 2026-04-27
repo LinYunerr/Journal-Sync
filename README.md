@@ -341,7 +341,7 @@ window.GlobalInputTraits.mountAutoGrowTextarea('unique-key', textareaElement, {
 ├── test/                     # Node 内置测试
 ├── README.md
 ├── QUICKSTART.md
-└── PLUGIN_SPECIFICATION.md
+└── PluginGuide.md
 ```
 
 ## 数据与安全说明
@@ -361,4 +361,4 @@ window.GlobalInputTraits.mountAutoGrowTextarea('unique-key', textareaElement, {
 
 ## 许可证
 
-仓库当前未包含 License 文件；若准备公开发布，建议补充正式许可证。
+本项目采用 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) 授权，仅允许非商业用途。完整协议见 [`LICENSE`](./LICENSE)。

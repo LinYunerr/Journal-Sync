@@ -21,8 +21,6 @@ __pycache__/
 data/config.json
 data/history.json
 data/tasks.json
-data/mem0_insights.json
-data/mem0_vectors/
 data/image-cache/
 data/draft-cache/
 

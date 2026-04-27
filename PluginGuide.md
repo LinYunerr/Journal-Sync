@@ -219,6 +219,7 @@ storage: 'plugin'
 - `textarea`
 - `boolean`
 - `select`
+- `checkboxGroup`
 - `number`
 
 字段通用属性：
@@ -233,8 +234,8 @@ storage: 'plugin'
 | `sensitive` | 是否敏感字段 |
 | `default` | 默认值，仅作为声明信息 |
 | `placeholder` | 输入框占位文案 |
-| `options` | `select` 的静态选项 |
-| `optionsSource` | `select` 的动态选项来源 |
+| `options` | `select` / `checkboxGroup` 的静态选项 |
+| `optionsSource` | `select` / `checkboxGroup` 的动态选项来源 |
 | `allowCustomValue` | `select` 是否允许自定义值 |
 | `validate` | 校验规则 |
 
@@ -254,11 +255,12 @@ storage: 'plugin'
 - `required: true` 且值为空时，后端会拒绝保存。
 - `type: 'number'` 时，后端会校验是否可转成数字。
 - `type: 'select'` 且 `allowCustomValue !== true` 时，值必须落在选项范围内。
+- `type: 'checkboxGroup'` 时，值必须是数组；若声明了选项，数组值必须落在选项范围内。
 - `validate.pattern` 使用正则表达式字符串。
 
 #### `optionsSource`
 
-适用于配置里某个字段要引用同一份配置中的动态列表，例如 Telegram 的频道列表：
+适用于配置里某个 `select` 或 `checkboxGroup` 字段要引用同一份配置中的动态列表，例如 Telegram 的频道列表：
 
 ```js
 {

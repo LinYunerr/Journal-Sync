@@ -45,6 +45,17 @@ body {
     font-size: 28px;
 }
 
+.app-version-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    margin-left: 8px;
+    color: var(--text-sub);
+    font-size: 14px;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
 .hero p {
     margin: 8px 0 0;
     color: var(--text-sub);

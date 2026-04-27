@@ -4,6 +4,7 @@
   "description": "日记笔记同步工具 - 支持 Obsidian、flomo、nmem、Telegram",
   "type": "module",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "start": "node src/web/server.js",
     "stop": "./stop.sh",
