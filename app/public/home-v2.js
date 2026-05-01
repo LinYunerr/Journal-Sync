@@ -7,6 +7,8 @@ const state = {
     plugins: [],
     simpleTargets: [],
     simpleToggleMap: {},
+    publishPresets: [],
+    activePublishPresetId: '',
     saveLocalToggleMap: {},
     workflowPanelLinks: {},
     inputMedia: {
@@ -57,12 +59,14 @@ const closeImagePreviewBtn = document.getElementById('closeImagePreviewBtnV2');
 const appVersionBadge = document.getElementById('appVersionBadge');
 const editPluginHint = document.getElementById('editPluginHint');
 const simpleTargetRows = document.getElementById('simpleTargetRows');
+const publishPresetControls = document.getElementById('publishPresetControls');
 const saveLocalRows = document.getElementById('saveLocalRows');
 const sendSimpleBtn = document.getElementById('sendSimpleBtn');
 const saveLocalBtn = document.getElementById('saveLocalBtnV2');
 const simplePublishStatus = document.getElementById('simplePublishStatus');
 const saveLocalStatus = document.getElementById('saveLocalStatus');
 const tgInputModeBtn = document.getElementById('tgInputModeBtn');
+const clearInputBtn = document.getElementById('clearInputBtn');
 const tgInputWorkspace = document.getElementById('tgInputWorkspace');
 const generateTgLocalBtn = document.getElementById('generateTgLocalBtn');
 const tgFormattedOutput = document.getElementById('tgFormattedOutputV2');
@@ -85,6 +89,8 @@ const GlobalInputTraits = window.GlobalInputTraits || {
 const createInputMediaBridge = window.createInputMediaBridge || null;
 const HOME_V2_DRAFT_ENDPOINT = '/api/home-v2-draft';
 const HOME_V2_DRAFT_DEBOUNCE_MS = 400;
+const HOME_V2_PUBLISH_PRESETS_ENDPOINT = '/api/home-v2-publish-presets';
+const HOME_V2_PUBLISH_PRESET_LIMIT = 5;
 const WORKFLOW_PANEL_LINK_STORAGE_KEY = 'journal-sync-home-v2-workflow-panel-links';
 const WORKFLOW_PANEL_LINKS = [
     {
@@ -97,6 +103,10 @@ let inputMediaBridge = null;
 let draftSyncTimer = null;
 let isApplyingServerDraft = false;
 let lastSavedDraftSignature = '';
+let pendingDeletedImageFilenames = new Set();
+let publishPresetSyncTimer = null;
+let isApplyingPublishPreset = false;
+let editingPublishPresetId = '';
 const workflowPanelActions = new Map();
 
 function buildDraftImageState(imageFilenames = []) {
@@ -108,11 +118,17 @@ function buildDraftImageState(imageFilenames = []) {
         }));
 }
 
-function buildCurrentHomeDraft() {
-    return {
+function buildCurrentHomeDraft({ includeRemovedImages = false } = {}) {
+    const draft = {
         content: String(contentInput?.value || '').replace(/\r\n/g, '\n'),
         imageFilenames: getPendingImageFilenames()
     };
+
+    if (includeRemovedImages && pendingDeletedImageFilenames.size > 0) {
+        draft.removedImageFilenames = Array.from(pendingDeletedImageFilenames);
+    }
+
+    return draft;
 }
 
 function getHomeDraftSignature(draft = {}) {
@@ -131,14 +147,21 @@ function syncInputDependentPanels() {
 async function persistHomeDraft() {
     if (isApplyingServerDraft) return;
 
-    const draft = buildCurrentHomeDraft();
+    const removedImageFilenames = Array.from(pendingDeletedImageFilenames);
+    const draft = buildCurrentHomeDraft({ includeRemovedImages: true });
     const signature = getHomeDraftSignature(draft);
-    if (signature === lastSavedDraftSignature) {
+    if (signature === lastSavedDraftSignature && removedImageFilenames.length === 0) {
         return;
     }
 
     const requestOptions = (!draft.content.trim() && draft.imageFilenames.length === 0)
-        ? { method: 'DELETE' }
+        ? {
+            method: 'DELETE',
+            ...(removedImageFilenames.length > 0 ? {
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ removedImageFilenames })
+            } : {})
+        }
         : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -152,6 +175,9 @@ async function persistHomeDraft() {
     }
 
     lastSavedDraftSignature = signature;
+    for (const filename of removedImageFilenames) {
+        pendingDeletedImageFilenames.delete(filename);
+    }
 }
 
 function scheduleHomeDraftSync() {
@@ -162,6 +188,21 @@ function scheduleHomeDraftSync() {
             console.error('[HomeV2Draft] 同步失败:', error);
         });
     }, HOME_V2_DRAFT_DEBOUNCE_MS);
+}
+
+function rememberRemovedInputImages(previousState = {}, nextState = {}) {
+    const nextNames = new Set(
+        (Array.isArray(nextState.images) ? nextState.images : [])
+            .map(item => item?.filename)
+            .filter(Boolean)
+    );
+
+    for (const image of Array.isArray(previousState.images) ? previousState.images : []) {
+        const filename = image?.filename;
+        if (filename && !nextNames.has(filename)) {
+            pendingDeletedImageFilenames.add(filename);
+        }
+    }
 }
 
 async function restoreHomeDraft() {
@@ -573,23 +614,27 @@ function setTgInputMode(enabled) {
     renderTgFormattedPreview();
 }
 
+function resetLocalTgFormatting() {
+    state.tgFormatting = {
+        markdownContent: '',
+        telegramContent: '',
+        sourceUrl: '',
+        generatedFrom: '',
+        boldFirstLineApplied: false
+    };
+    if (tgFormattedOutput) {
+        tgFormattedOutput.value = '';
+    }
+    renderTgFormattedPreview();
+}
+
 function regenerateLocalTgFormat({ silent = false } = {}) {
     const content = (contentInput.value || '').trim();
     if (!content) {
         if (!silent) {
             setStatus(simplePublishStatus, '请先输入内容', 'error');
         }
-        state.tgFormatting = {
-            markdownContent: '',
-            telegramContent: '',
-            sourceUrl: '',
-            generatedFrom: '',
-            boldFirstLineApplied: false
-        };
-        if (tgFormattedOutput) {
-            tgFormattedOutput.value = '';
-        }
-        renderTgFormattedPreview();
+        resetLocalTgFormatting();
         return false;
     }
 
@@ -727,6 +772,427 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function normalizePublishPresetName(name, fallbackIndex = 0) {
+    const normalized = String(name || '').trim().slice(0, 24);
+    return normalized || String(fallbackIndex + 1);
+}
+
+function createPublishPresetId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+    return `publish-preset-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getDefaultPublishPresetName() {
+    const used = new Set(state.publishPresets.map(preset => String(preset.name || '').trim()));
+    for (let index = 1; index <= HOME_V2_PUBLISH_PRESET_LIMIT; index += 1) {
+        const candidate = String(index);
+        if (!used.has(candidate)) return candidate;
+    }
+    return String(state.publishPresets.length + 1);
+}
+
+function normalizePublishPresetItem(item = {}) {
+    const id = String(item?.id || '').trim();
+    const fingerprint = String(item?.fingerprint || '').trim();
+    if (!id || !fingerprint) return null;
+    return { id, fingerprint };
+}
+
+function normalizePublishPreset(rawPreset = {}, index = 0) {
+    const id = String(rawPreset?.id || '').trim();
+    if (!id) return null;
+
+    const seen = new Set();
+    const items = [];
+    for (const rawItem of Array.isArray(rawPreset.items) ? rawPreset.items : []) {
+        const item = normalizePublishPresetItem(rawItem);
+        if (!item || seen.has(item.id)) continue;
+        seen.add(item.id);
+        items.push(item);
+    }
+
+    const now = new Date().toISOString();
+    return {
+        id,
+        name: normalizePublishPresetName(rawPreset.name, index),
+        items,
+        createdAt: typeof rawPreset.createdAt === 'string' ? rawPreset.createdAt : now,
+        updatedAt: typeof rawPreset.updatedAt === 'string' ? rawPreset.updatedAt : now
+    };
+}
+
+function normalizePublishPresetsPayload(payload = {}) {
+    const presets = [];
+    const seen = new Set();
+    for (const rawPreset of Array.isArray(payload.presets) ? payload.presets : []) {
+        if (presets.length >= HOME_V2_PUBLISH_PRESET_LIMIT) break;
+        const preset = normalizePublishPreset(rawPreset, presets.length);
+        if (!preset || seen.has(preset.id)) continue;
+        seen.add(preset.id);
+        presets.push(preset);
+    }
+
+    const activePublishPresetId = presets.some(preset => preset.id === payload.activePresetId)
+        ? String(payload.activePresetId)
+        : (presets[presets.length - 1]?.id || '');
+
+    return { presets, activePublishPresetId };
+}
+
+function getActivePublishPreset() {
+    return state.publishPresets.find(preset => preset.id === state.activePublishPresetId) || null;
+}
+
+function ensureActivePublishPreset() {
+    if (state.publishPresets.length === 0) {
+        state.activePublishPresetId = '';
+        return false;
+    }
+
+    if (state.publishPresets.some(preset => preset.id === state.activePublishPresetId)) {
+        return false;
+    }
+
+    state.activePublishPresetId = state.publishPresets[state.publishPresets.length - 1].id;
+    return true;
+}
+
+function getPluginPresetKey(pluginId) {
+    return `plugin:${pluginId}`;
+}
+
+function getTelegramChannelPresetKey(channelId) {
+    return `telegram-channel:${channelId}`;
+}
+
+function buildPublishOptionFingerprint(data = {}) {
+    return JSON.stringify(data);
+}
+
+function getPublishOptionCatalog() {
+    const catalog = new Map();
+
+    for (const plugin of getUnifiedPublishTargets()) {
+        const meta = getHomeV2Meta(plugin);
+        const label = meta?.label || plugin.name || plugin.id;
+        const id = getPluginPresetKey(plugin.id);
+        catalog.set(id, {
+            id,
+            fingerprint: buildPublishOptionFingerprint({
+                type: 'plugin',
+                pluginId: plugin.id,
+                section: meta?.section || '',
+                label,
+                name: plugin.name || '',
+                description: plugin.description || plugin.manifest?.description || ''
+            })
+        });
+    }
+
+    if (hasEnabledTelegramPlugin()) {
+        for (const channel of state.tgChannels) {
+            const id = getTelegramChannelPresetKey(channel.id);
+            catalog.set(id, {
+                id,
+                fingerprint: buildPublishOptionFingerprint({
+                    type: 'telegram-channel',
+                    channelId: channel.id,
+                    title: channel.title || '',
+                    username: channel.username || ''
+                })
+            });
+        }
+    }
+
+    return catalog;
+}
+
+function getCurrentPublishPresetItems() {
+    const catalog = getPublishOptionCatalog();
+    const selectedIds = [
+        ...state.simpleTargets
+            .filter(plugin => plugin.enabled && state.simpleToggleMap[plugin.id])
+            .map(plugin => getPluginPresetKey(plugin.id)),
+        ...state.tgChannels
+            .filter(channel => Boolean(state.tgChannelSelection[channel.id]))
+            .map(channel => getTelegramChannelPresetKey(channel.id))
+    ];
+
+    return selectedIds
+        .map(id => catalog.get(id))
+        .filter(Boolean);
+}
+
+function updateActivePublishPresetFromSelection() {
+    if (isApplyingPublishPreset) return;
+    const preset = getActivePublishPreset();
+    if (!preset) return;
+
+    preset.items = getCurrentPublishPresetItems();
+    preset.updatedAt = new Date().toISOString();
+    schedulePublishPresetsSync();
+    renderPublishPresetControls();
+}
+
+function normalizePublishPresetItemsAgainstCurrentOptions(items = []) {
+    const catalog = getPublishOptionCatalog();
+    const normalized = [];
+    const selectedIds = new Set();
+
+    for (const rawItem of Array.isArray(items) ? items : []) {
+        const item = normalizePublishPresetItem(rawItem);
+        const current = item ? catalog.get(item.id) : null;
+        if (!item || !current || current.fingerprint !== item.fingerprint || selectedIds.has(item.id)) {
+            continue;
+        }
+        selectedIds.add(item.id);
+        normalized.push(current);
+    }
+
+    return { normalized, selectedIds };
+}
+
+function applyPublishPreset(preset, { saveIfChanged = true } = {}) {
+    if (!preset) return;
+
+    const { normalized, selectedIds } = normalizePublishPresetItemsAgainstCurrentOptions(preset.items);
+    const previousItemsSignature = JSON.stringify(preset.items || []);
+    const nextItemsSignature = JSON.stringify(normalized);
+
+    isApplyingPublishPreset = true;
+    try {
+        for (const plugin of state.simpleTargets) {
+            state.simpleToggleMap[plugin.id] = selectedIds.has(getPluginPresetKey(plugin.id));
+        }
+        for (const channel of state.tgChannels) {
+            state.tgChannelSelection[channel.id] = selectedIds.has(getTelegramChannelPresetKey(channel.id));
+        }
+    } finally {
+        isApplyingPublishPreset = false;
+    }
+
+    preset.items = normalized;
+    if (saveIfChanged && previousItemsSignature !== nextItemsSignature) {
+        preset.updatedAt = new Date().toISOString();
+        schedulePublishPresetsSync();
+    }
+
+    renderSimpleTargets();
+    renderTgChannels();
+    refreshPublishButtonState();
+}
+
+function reconcileActivePublishPreset() {
+    const preset = getActivePublishPreset();
+    if (!preset) return;
+    applyPublishPreset(preset);
+}
+
+function reconcilePublishPresetsWithCurrentOptions() {
+    let changed = false;
+
+    for (const preset of state.publishPresets) {
+        const { normalized } = normalizePublishPresetItemsAgainstCurrentOptions(preset.items);
+        if (JSON.stringify(preset.items || []) !== JSON.stringify(normalized)) {
+            preset.items = normalized;
+            preset.updatedAt = new Date().toISOString();
+            changed = true;
+        }
+    }
+
+    if (ensureActivePublishPreset()) {
+        changed = true;
+    }
+
+    if (changed) {
+        schedulePublishPresetsSync();
+    }
+
+    reconcileActivePublishPreset();
+    renderPublishPresetControls();
+}
+
+function updatePublishPresetNameInputWidth(input) {
+    if (!input) return;
+    const text = input.value || '';
+    const styles = window.getComputedStyle(input);
+    const measurer = updatePublishPresetNameInputWidth.measurer
+        || document.body.appendChild(document.createElement('span'));
+    updatePublishPresetNameInputWidth.measurer = measurer;
+
+    measurer.textContent = `${text}字`;
+    measurer.style.position = 'fixed';
+    measurer.style.left = '-9999px';
+    measurer.style.top = '0';
+    measurer.style.visibility = 'hidden';
+    measurer.style.whiteSpace = 'pre';
+    measurer.style.fontFamily = styles.fontFamily;
+    measurer.style.fontSize = styles.fontSize;
+    measurer.style.fontWeight = styles.fontWeight;
+    measurer.style.letterSpacing = styles.letterSpacing;
+
+    const horizontalPadding = parseFloat(styles.paddingLeft || '0') + parseFloat(styles.paddingRight || '0');
+    const borderWidth = parseFloat(styles.borderLeftWidth || '0') + parseFloat(styles.borderRightWidth || '0');
+    const measuredWidth = Math.ceil(measurer.getBoundingClientRect().width + horizontalPadding + borderWidth);
+    input.style.width = `${Math.min(Math.max(measuredWidth, 42), 170)}px`;
+}
+
+function renderPublishPresetControls() {
+    if (!publishPresetControls) return;
+    publishPresetControls.innerHTML = '';
+    ensureActivePublishPreset();
+
+    for (let index = 0; index < state.publishPresets.length; index += 1) {
+        const preset = state.publishPresets[index];
+        if (editingPublishPresetId === preset.id) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'publish-preset-name-input';
+            input.value = preset.name;
+            input.maxLength = 24;
+            input.setAttribute('aria-label', '预设名称');
+            updatePublishPresetNameInputWidth(input);
+            input.addEventListener('input', () => updatePublishPresetNameInputWidth(input));
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    input.blur();
+                } else if (event.key === 'Escape') {
+                    editingPublishPresetId = '';
+                    renderPublishPresetControls();
+                }
+            });
+            input.addEventListener('blur', () => {
+                preset.name = normalizePublishPresetName(input.value, index);
+                preset.updatedAt = new Date().toISOString();
+                editingPublishPresetId = '';
+                schedulePublishPresetsSync();
+                renderPublishPresetControls();
+            });
+            publishPresetControls.appendChild(input);
+            window.requestAnimationFrame(() => {
+                input.focus();
+                input.select();
+            });
+            continue;
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `publish-preset-btn${preset.id === state.activePublishPresetId ? ' active' : ''}`;
+        button.textContent = preset.name;
+        button.title = '点击应用，双击重命名';
+        button.addEventListener('click', () => {
+            state.activePublishPresetId = preset.id;
+            applyPublishPreset(preset);
+            schedulePublishPresetsSync();
+            renderPublishPresetControls();
+        });
+        button.addEventListener('dblclick', () => {
+            editingPublishPresetId = preset.id;
+            renderPublishPresetControls();
+        });
+        publishPresetControls.appendChild(button);
+    }
+
+    if (state.publishPresets.length < HOME_V2_PUBLISH_PRESET_LIMIT) {
+        const addButton = document.createElement('button');
+        addButton.type = 'button';
+        addButton.className = 'publish-preset-action add';
+        addButton.textContent = '';
+        addButton.title = '新增发布预设';
+        addButton.setAttribute('aria-label', '新增发布预设');
+        addButton.addEventListener('click', addPublishPreset);
+        publishPresetControls.appendChild(addButton);
+    }
+
+    if (state.publishPresets.length > 0) {
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'publish-preset-action remove';
+        removeButton.textContent = '';
+        removeButton.title = state.activePublishPresetId ? '删除当前发布预设' : '先选择一个发布预设';
+        removeButton.setAttribute('aria-label', '删除当前发布预设');
+        removeButton.disabled = !state.activePublishPresetId;
+        removeButton.addEventListener('click', deleteActivePublishPreset);
+        publishPresetControls.appendChild(removeButton);
+    }
+}
+
+function addPublishPreset() {
+    if (state.publishPresets.length >= HOME_V2_PUBLISH_PRESET_LIMIT) return;
+
+    const now = new Date().toISOString();
+    const preset = {
+        id: createPublishPresetId(),
+        name: getDefaultPublishPresetName(),
+        items: getCurrentPublishPresetItems(),
+        createdAt: now,
+        updatedAt: now
+    };
+    state.publishPresets.push(preset);
+    state.activePublishPresetId = preset.id;
+    schedulePublishPresetsSync();
+    renderPublishPresetControls();
+}
+
+function deleteActivePublishPreset() {
+    const activeId = state.activePublishPresetId;
+    if (!activeId) return;
+    state.publishPresets = state.publishPresets.filter(preset => preset.id !== activeId);
+    state.activePublishPresetId = state.publishPresets[state.publishPresets.length - 1]?.id || '';
+    editingPublishPresetId = '';
+    reconcileActivePublishPreset();
+    schedulePublishPresetsSync();
+    renderPublishPresetControls();
+}
+
+async function loadPublishPresets() {
+    const response = await fetch(HOME_V2_PUBLISH_PRESETS_ENDPOINT);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+        throw new Error(data.error || ('HTTP ' + response.status));
+    }
+    const normalized = normalizePublishPresetsPayload(data);
+    state.publishPresets = normalized.presets;
+    state.activePublishPresetId = normalized.activePublishPresetId;
+    ensureActivePublishPreset();
+    renderPublishPresetControls();
+}
+
+async function persistPublishPresets() {
+    ensureActivePublishPreset();
+    const response = await fetch(HOME_V2_PUBLISH_PRESETS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            presets: state.publishPresets,
+            activePresetId: state.activePublishPresetId
+        })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+        throw new Error(data.error || ('HTTP ' + response.status));
+    }
+    const normalized = normalizePublishPresetsPayload(data);
+    if (!editingPublishPresetId) {
+        state.publishPresets = normalized.presets;
+        state.activePublishPresetId = normalized.activePublishPresetId;
+        ensureActivePublishPreset();
+        renderPublishPresetControls();
+    }
+}
+
+function schedulePublishPresetsSync() {
+    window.clearTimeout(publishPresetSyncTimer);
+    publishPresetSyncTimer = window.setTimeout(() => {
+        persistPublishPresets().catch((error) => {
+            console.error('[HomeV2PublishPresets] 保存失败:', error);
+        });
+    }, 300);
 }
 
 function getPluginById(pluginId) {
@@ -994,6 +1460,7 @@ function renderSimpleTargets() {
                 mediaChip: mediaUi.mediaChip,
                 onToggle(next) {
                     state.simpleToggleMap[plugin.id] = next;
+                    updateActivePublishPresetFromSelection();
                 }
             });
             simpleTargetRows.appendChild(block);
@@ -1085,6 +1552,7 @@ function renderTgChannels() {
             blockClass: 'tg-channel-toggle',
             onToggle(next) {
                 state.tgChannelSelection[channel.id] = next;
+                updateActivePublishPresetFromSelection();
             }
         });
         tgChannelRows.appendChild(block);
@@ -1165,6 +1633,7 @@ function syncMainHomePanels() {
     renderSimpleTargets();
     renderSaveLocalTargets();
     loadTelegramChannelOptions();
+    reconcilePublishPresetsWithCurrentOptions();
 }
 
 async function loadRegistry() {
@@ -1178,6 +1647,8 @@ async function loadRegistry() {
 }
 
 async function runPublishPanelAction() {
+    updateActivePublishPresetFromSelection();
+
     const pipelineContent = getCurrentContent({ channel: 'pipeline' });
     const imageFilenames = getPendingImageFilenames();
     if (!pipelineContent && imageFilenames.length === 0) {
@@ -1303,6 +1774,16 @@ tgInputModeBtn.addEventListener('click', () => {
 
 generateTgLocalBtn.addEventListener('click', () => {
     regenerateLocalTgFormat();
+});
+
+clearInputBtn?.addEventListener('click', () => {
+    if (contentInput) {
+        contentInput.value = '';
+        GlobalInputTraits.refreshAutoGrowTextarea?.('homeV2ContentInput');
+    }
+    resetLocalTgFormatting();
+    inputMediaBridge?.clear();
+    scheduleHomeDraftSync();
 });
 
 contentInput.addEventListener('input', () => {
@@ -2385,6 +2866,7 @@ function initializeInputMediaBridge() {
         enableStorage: false,
         maxImages: 9,
         onChange(nextState) {
+            rememberRemovedInputImages(state.inputMedia, nextState);
             state.inputMedia = nextState;
             syncInputDependentPanels();
             scheduleHomeDraftSync();
@@ -2437,11 +2919,18 @@ async function init() {
     initializeWorkflowPanelLinks();
     setTgInputMode(false);
     renderTgFormattedPreview();
+    renderPublishPresetControls();
 
     try {
         await restoreHomeDraft();
     } catch (error) {
         console.error('[HomeV2Draft] 初始化恢复失败:', error);
+    }
+
+    try {
+        await loadPublishPresets();
+    } catch (error) {
+        console.error('[HomeV2PublishPresets] 初始化恢复失败:', error);
     }
 
     try {

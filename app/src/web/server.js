@@ -10,7 +10,6 @@ import {
   getDataPath,
   getUserDataDir,
   getPluginConfigPath,
-  getPluginDataPath,
   ensureUserDataLayout,
   migrateLegacyUserData
 } from '../utils/app-paths.js';
@@ -385,6 +384,8 @@ app.use(express.static(path.join(__dirname, '../../public')));
 const IMAGE_CACHE_DIR = getDataDirPath('image-cache');
 const DRAFT_CACHE_DIR = getDataDirPath('draft-cache');
 const HOME_V2_DRAFT_FILE = path.join(DRAFT_CACHE_DIR, 'home-v2.json');
+const HOME_V2_PUBLISH_PRESETS_FILE = getDataPath('home-v2-publish-presets.json');
+const HOME_V2_PUBLISH_PRESET_LIMIT = 5;
 
 function createDefaultPluginStates(registry) {
   return registry.reduce((states, plugin) => {
@@ -464,7 +465,13 @@ async function saveHomeV2DraftInternal(rawDraft = {}) {
     updatedAt: new Date().toISOString()
   };
 
-  const removedImages = previousDraft.imageFilenames.filter(filename => !nextDraft.imageFilenames.includes(filename));
+  const explicitlyRemovedImages = normalizeDraftImageFilenames(rawDraft.removedImageFilenames);
+  const removedImages = [
+    ...new Set([
+      ...previousDraft.imageFilenames.filter(filename => !nextDraft.imageFilenames.includes(filename)),
+      ...explicitlyRemovedImages
+    ])
+  ];
   if (removedImages.length > 0) {
     await deleteCachedImages(removedImages);
   }
@@ -487,10 +494,106 @@ async function saveHomeV2Draft(rawDraft = {}) {
 
 function validateHomeV2DraftPayload(body = {}) {
   const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
-  const { content, imageFilenames } = payload;
+  const { content, imageFilenames, removedImageFilenames } = payload;
   if (content !== undefined && typeof content !== 'string') return 'content 必须是字符串';
   if (imageFilenames !== undefined && (!Array.isArray(imageFilenames) || !imageFilenames.every(item => typeof item === 'string'))) {
     return 'imageFilenames 必须是字符串数组';
+  }
+  if (removedImageFilenames !== undefined && (!Array.isArray(removedImageFilenames) || !removedImageFilenames.every(item => typeof item === 'string'))) {
+    return 'removedImageFilenames 必须是字符串数组';
+  }
+  return null;
+}
+
+function normalizePublishPresetName(rawName, fallbackIndex = 0) {
+  const name = String(rawName || '').trim().slice(0, 24);
+  return name || String(fallbackIndex + 1);
+}
+
+function normalizePublishPresetItem(rawItem = {}) {
+  if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) return null;
+  const id = String(rawItem.id || '').trim().slice(0, 160);
+  const fingerprint = String(rawItem.fingerprint || '').trim().slice(0, 1200);
+  if (!id || !fingerprint) return null;
+  return { id, fingerprint };
+}
+
+function normalizePublishPreset(rawPreset = {}, index = 0) {
+  if (!rawPreset || typeof rawPreset !== 'object' || Array.isArray(rawPreset)) return null;
+  const id = String(rawPreset.id || '').trim().slice(0, 80);
+  if (!id) return null;
+
+  const seenItems = new Set();
+  const items = [];
+  for (const item of Array.isArray(rawPreset.items) ? rawPreset.items : []) {
+    const normalized = normalizePublishPresetItem(item);
+    if (!normalized || seenItems.has(normalized.id)) continue;
+    seenItems.add(normalized.id);
+    items.push(normalized);
+  }
+
+  const now = new Date().toISOString();
+  return {
+    id,
+    name: normalizePublishPresetName(rawPreset.name, index),
+    items,
+    createdAt: typeof rawPreset.createdAt === 'string' ? rawPreset.createdAt : now,
+    updatedAt: typeof rawPreset.updatedAt === 'string' ? rawPreset.updatedAt : now
+  };
+}
+
+function buildPublishPresetsPayload(rawPayload = {}) {
+  const seen = new Set();
+  const presets = [];
+  for (const rawPreset of Array.isArray(rawPayload.presets) ? rawPayload.presets : []) {
+    if (presets.length >= HOME_V2_PUBLISH_PRESET_LIMIT) break;
+    const preset = normalizePublishPreset(rawPreset, presets.length);
+    if (!preset || seen.has(preset.id)) continue;
+    seen.add(preset.id);
+    presets.push(preset);
+  }
+
+  const rawActivePresetId = String(rawPayload.activePresetId || '').trim();
+  const activePresetId = presets.some(preset => preset.id === rawActivePresetId)
+    ? rawActivePresetId
+    : (presets[presets.length - 1]?.id || '');
+
+  return {
+    presets,
+    activePresetId,
+    updatedAt: typeof rawPayload.updatedAt === 'string' ? rawPayload.updatedAt : ''
+  };
+}
+
+async function loadHomeV2PublishPresets() {
+  try {
+    const data = await fsPromises.readFile(HOME_V2_PUBLISH_PRESETS_FILE, 'utf-8');
+    return buildPublishPresetsPayload(JSON.parse(data));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.warn('[HomeV2PublishPresets] 读取失败:', error.message);
+    }
+    return buildPublishPresetsPayload();
+  }
+}
+
+async function saveHomeV2PublishPresets(rawPayload = {}) {
+  const payload = buildPublishPresetsPayload({
+    ...rawPayload,
+    updatedAt: new Date().toISOString()
+  });
+  await fsPromises.mkdir(path.dirname(HOME_V2_PUBLISH_PRESETS_FILE), { recursive: true });
+  await fsPromises.writeFile(HOME_V2_PUBLISH_PRESETS_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  return payload;
+}
+
+function validateHomeV2PublishPresetsPayload(body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+  if (payload.presets !== undefined && !Array.isArray(payload.presets)) {
+    return 'presets 必须是数组';
+  }
+  if (payload.presets && payload.presets.length > HOME_V2_PUBLISH_PRESET_LIMIT) {
+    return `发布预设最多 ${HOME_V2_PUBLISH_PRESET_LIMIT} 个`;
   }
   return null;
 }
@@ -590,11 +693,57 @@ app.post('/api/home-v2-draft', async (req, res) => {
 
 app.delete('/api/home-v2-draft', async (req, res) => {
   try {
-    const draft = await saveHomeV2Draft({ content: '', imageFilenames: [] });
+    const payloadError = validateHomeV2DraftPayload(req.body);
+    if (payloadError) {
+      return res.status(400).json({ ok: false, error: payloadError });
+    }
+
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const draft = await saveHomeV2Draft({
+      content: '',
+      imageFilenames: [],
+      removedImageFilenames: payload.removedImageFilenames
+    });
     res.json({
       ok: true,
       hasDraft: false,
       draft
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/home-v2-publish-presets', async (req, res) => {
+  try {
+    const payload = await loadHomeV2PublishPresets();
+    res.json({
+      ok: true,
+      ...payload
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/home-v2-publish-presets', async (req, res) => {
+  try {
+    const payloadError = validateHomeV2PublishPresetsPayload(req.body);
+    if (payloadError) {
+      return res.status(400).json({ ok: false, error: payloadError });
+    }
+
+    const payload = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const saved = await saveHomeV2PublishPresets(payload);
+    res.json({
+      ok: true,
+      ...saved
     });
   } catch (error) {
     res.status(500).json({
@@ -1361,8 +1510,7 @@ app.post('/api/telegram/publish', async (req, res) => {
     const env = {
       ...process.env,
       TELEGRAM_BOT_TOKEN: tgBotToken,
-      JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: getPluginConfigPath('telegram'),
-      TELEGRAM_CHANNELS_FILE: getPluginDataPath('telegram', 'channels.json')
+      JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: getPluginConfigPath('telegram')
     };
     // 去掉内容中的图片 markdown 引用
     const textContent = (content || '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();

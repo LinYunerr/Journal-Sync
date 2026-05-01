@@ -9,7 +9,6 @@ const scriptPath = path.resolve('Plugin/Telegram-Send/telegram_send.py');
 
 function buildCleanTelegramEnv(overrides = {}) {
   const env = { ...process.env, ...overrides };
-  delete env.TELEGRAM_CHANNELS_FILE;
   delete env.TELEGRAM_BOT_TOKEN_FILE;
   delete env.JOURNAL_SYNC_TELEGRAM_CONFIG_FILE;
   delete env.TELEGRAM_BOT_TOKEN;
@@ -44,13 +43,12 @@ function formatMessageHtml({ text, sourceUrl = null, boldFirstLine = false, line
 
 test('telegram sender default runtime paths are under portable user-data', () => {
   const paths = importTelegramSenderExpression(
-    '{"config": mod.PLUGIN_CONFIG_PATH, "channels": mod.KNOWN_CHANNELS_PATH, "token": mod.TOKEN_FALLBACK_PATH}',
+    '{"config": mod.PLUGIN_CONFIG_PATH, "token": mod.TOKEN_FALLBACK_PATH}',
     { env: buildCleanTelegramEnv() }
   );
   const telegramDataDir = path.join(path.dirname(process.cwd()), 'user-data', 'plugins', 'telegram');
 
   assert.equal(paths.config, path.join(telegramDataDir, 'config.json'));
-  assert.equal(paths.channels, path.join(telegramDataDir, 'channels.json'));
   assert.equal(paths.token, path.join(telegramDataDir, 'telegram_bot_token.txt'));
 });
 
@@ -59,7 +57,7 @@ test('telegram sender honors JOURNAL_SYNC_DATA_DIR for standalone defaults', () 
 
   try {
     const paths = importTelegramSenderExpression(
-      '{"config": mod.PLUGIN_CONFIG_PATH, "channels": mod.KNOWN_CHANNELS_PATH, "token": mod.TOKEN_FALLBACK_PATH}',
+      '{"config": mod.PLUGIN_CONFIG_PATH, "token": mod.TOKEN_FALLBACK_PATH}',
       {
         env: buildCleanTelegramEnv({
           JOURNAL_SYNC_DATA_DIR: tempDir
@@ -69,7 +67,6 @@ test('telegram sender honors JOURNAL_SYNC_DATA_DIR for standalone defaults', () 
     const telegramDataDir = path.join(tempDir, 'plugins', 'telegram');
 
     assert.equal(paths.config, path.join(telegramDataDir, 'config.json'));
-    assert.equal(paths.channels, path.join(telegramDataDir, 'channels.json'));
     assert.equal(paths.token, path.join(telegramDataDir, 'telegram_bot_token.txt'));
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });

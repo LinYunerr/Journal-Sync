@@ -4,14 +4,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
     getDataPath,
-    getPluginConfigPath,
-    getPluginDataPath
+    getPluginConfigPath
 } from '../../src/utils/app-paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_FILE = getPluginConfigPath('telegram');
-const CHANNELS_FILE = getPluginDataPath('telegram', 'channels.json');
 const CORE_CONFIG_FILE = getDataPath('config.json');
 const SCRIPT_PATH = path.join(__dirname, 'telegram_send.py');
 
@@ -185,8 +183,7 @@ async function listChannels(botToken) {
         const env = {
             ...process.env,
             TELEGRAM_BOT_TOKEN: botToken,
-            JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: CONFIG_FILE,
-            TELEGRAM_CHANNELS_FILE: CHANNELS_FILE
+            JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: CONFIG_FILE
         };
         const tgProcess = spawn('python3', [SCRIPT_PATH, '--list-channels'], { env });
         const stdoutChunks = [];
@@ -354,8 +351,7 @@ export async function execute({ content, type, options, images = [] }) {
         const env = {
             ...process.env,
             TELEGRAM_BOT_TOKEN: config.botToken,
-            JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: CONFIG_FILE,
-            TELEGRAM_CHANNELS_FILE: CHANNELS_FILE
+            JOURNAL_SYNC_TELEGRAM_CONFIG_FILE: CONFIG_FILE
         };
         const tgProcess = spawn('python3', args, { env });
 

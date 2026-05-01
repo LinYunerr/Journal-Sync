@@ -184,12 +184,26 @@ body {
     justify-content: space-between;
     align-items: center;
     gap: 12px;
+    margin-bottom: 12px;
+}
+
+.panel-title-row h2 {
+    margin-bottom: 0;
 }
 
 .panel-title-actions {
     display: flex;
     align-items: center;
     gap: 10px;
+    margin-left: auto;
+}
+
+.input-plugin-action-slot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .hint-text {
@@ -198,9 +212,9 @@ body {
 }
 
 .tg-input-mode-btn {
-    border: 1px solid #efb6b6;
-    background: #fdecec;
-    color: #7a2525;
+    border: 1px solid rgba(97, 113, 135, 0.36);
+    background: rgba(237, 242, 247, 0.68);
+    color: rgba(79, 95, 115, 0.78);
     border-radius: 999px;
     font-weight: 700;
     font-size: 12px;
@@ -212,6 +226,117 @@ body {
     border-color: #8ed3a8;
     background: #eaf8ef;
     color: #125b32;
+}
+
+.clear-input-btn {
+    flex: 0 0 auto;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #475569;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 4px 12px;
+    cursor: pointer;
+}
+
+.clear-input-btn:hover {
+    background: #eef2f7;
+    color: #1f2937;
+}
+
+.publish-preset-controls {
+    min-width: 0;
+    max-width: min(100%, 420px);
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    overflow: hidden;
+}
+
+.publish-preset-btn,
+.publish-preset-action {
+    flex: 0 1 auto;
+    min-width: 26px;
+    max-width: 92px;
+    height: 26px;
+    border: 1px solid rgba(203, 213, 225, 0.74);
+    background: rgba(248, 250, 252, 0.62);
+    color: rgba(71, 85, 105, 0.58);
+    border-radius: 999px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.publish-preset-btn {
+    padding: 0 9px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.publish-preset-action {
+    position: relative;
+    width: 26px;
+    padding: 0;
+    overflow: hidden;
+}
+
+.publish-preset-action::before,
+.publish-preset-action::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    transform: translate(-50%, -50%);
+}
+
+.publish-preset-action.add::after {
+    transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.publish-preset-action.remove::after {
+    display: none;
+}
+
+.publish-preset-btn:hover,
+.publish-preset-action:hover {
+    background: #eef2f7;
+    border-color: rgba(148, 163, 184, 0.9);
+    color: #1f2937;
+}
+
+.publish-preset-btn.active {
+    border-color: #8ed3a8;
+    background: #eaf8ef;
+    color: #125b32;
+}
+
+.publish-preset-action:disabled {
+    opacity: 0.28;
+    cursor: not-allowed;
+}
+
+.publish-preset-name-input {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 42px;
+    max-width: 170px;
+    height: 26px;
+    border-radius: 999px;
+    padding: 0 9px;
+    font-size: 12px;
+    font-weight: 700;
 }
 
 textarea,
@@ -995,6 +1120,15 @@ select {
     .panel-title-actions {
         width: 100%;
         justify-content: space-between;
+    }
+
+    .publish-preset-controls {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .input-plugin-action-slot {
+        justify-content: flex-start;
     }
 
     .settings-ai-url-row {

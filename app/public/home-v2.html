@@ -24,8 +24,11 @@
             <div class="panel-title-row">
                 <h2>1. 输入部分</h2>
                 <div class="panel-title-actions">
-                    <button id="tgInputModeBtn" type="button" class="tg-input-mode-btn" aria-pressed="false" style="display:none;">Telegram</button>
-                    <span id="editPluginHint" class="hint-text"></span>
+                    <div id="inputPluginActionSlot" class="input-plugin-action-slot">
+                        <button id="tgInputModeBtn" type="button" class="tg-input-mode-btn" aria-pressed="false" style="display:none;">Telegram</button>
+                        <span id="editPluginHint" class="hint-text"></span>
+                    </div>
+                    <button id="clearInputBtn" type="button" class="clear-input-btn">清除</button>
                 </div>
             </div>
             <textarea id="v2ContentInput" placeholder="在这里输入原始信息..."></textarea>
@@ -44,7 +47,10 @@
         </section>
 
         <section class="panel workflow-panel" data-workflow-panel="publish">
-            <h2>2. 发布部分</h2>
+            <div class="panel-title-row">
+                <h2>2. 发布部分</h2>
+                <div id="publishPresetControls" class="publish-preset-controls" aria-label="发布预设"></div>
+            </div>
 
             <div class="sub-panel">
                 <div id="simpleTargetRows" class="target-list"></div>

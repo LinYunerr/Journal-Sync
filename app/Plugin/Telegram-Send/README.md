@@ -39,7 +39,7 @@
 python3 telegram_send.py <channel> <message>
 ```
 
-脚本会优先读取主程序传入的 `JOURNAL_SYNC_TELEGRAM_CONFIG_FILE` 和 `TELEGRAM_CHANNELS_FILE`；独立运行时默认读取外层 `Journal-Sync/user-data/plugins/telegram/config.json`，频道缓存默认写入 `Journal-Sync/user-data/plugins/telegram/channels.json`。
+脚本会优先读取主程序传入的 `JOURNAL_SYNC_TELEGRAM_CONFIG_FILE`；独立运行时默认读取外层 `Journal-Sync/user-data/plugins/telegram/config.json`。频道列表保存在插件配置的 `channels` 字段中，不再单独维护 `channels.json`。
 
 ## Notes
 

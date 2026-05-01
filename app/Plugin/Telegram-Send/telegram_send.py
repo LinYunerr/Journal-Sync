@@ -24,13 +24,13 @@ DEFAULT_USER_DATA_DIR = (
 )
 DEFAULT_PLUGIN_DATA_DIR = os.path.join(DEFAULT_USER_DATA_DIR, "plugins", "telegram")
 DEFAULT_TOKEN_FALLBACK_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "telegram_bot_token.txt")
-DEFAULT_KNOWN_CHANNELS_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "channels.json")
 DEFAULT_PLUGIN_CONFIG_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "config.json")
+DEFAULT_BOT_ID_CACHE_PATH = os.path.join(DEFAULT_PLUGIN_DATA_DIR, "bot_id.json")
 TOKEN_FALLBACK_PATH = os.path.expanduser(
     os.environ.get("TELEGRAM_BOT_TOKEN_FILE", DEFAULT_TOKEN_FALLBACK_PATH)
 )
-KNOWN_CHANNELS_PATH = os.path.expanduser(
-    os.environ.get("TELEGRAM_CHANNELS_FILE", DEFAULT_KNOWN_CHANNELS_PATH)
+BOT_ID_CACHE_PATH = os.path.expanduser(
+    os.environ.get("TELEGRAM_BOT_ID_CACHE", DEFAULT_BOT_ID_CACHE_PATH)
 )
 PLUGIN_CONFIG_PATH = os.path.expanduser(
     os.environ.get("JOURNAL_SYNC_TELEGRAM_CONFIG_FILE", DEFAULT_PLUGIN_CONFIG_PATH)
@@ -371,11 +371,32 @@ def send_media_group(token, chat_id, image_paths, caption=None):
             time.sleep(2)
 
 
-def get_bot_id(token):
+def _token_fingerprint(token):
+    import hashlib
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def get_bot_id(token, use_cache=True):
+    fp = _token_fingerprint(token)
+    if use_cache:
+        try:
+            with open(BOT_ID_CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            if cache.get("token_fp") == fp and cache.get("bot_id"):
+                return cache["bot_id"]
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            pass
     resp = api_call(token, "getMe")
     if not resp.get("ok"):
         raise RuntimeError(resp)
-    return resp.get("result", {}).get("id")
+    bot_id = resp.get("result", {}).get("id")
+    try:
+        os.makedirs(os.path.dirname(BOT_ID_CACHE_PATH), exist_ok=True)
+        with open(BOT_ID_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"token_fp": fp, "bot_id": bot_id}, f)
+    except OSError:
+        pass
+    return bot_id
 
 
 def collect_channels_from_updates(token):
@@ -409,22 +430,10 @@ def collect_channels_from_updates(token):
     return list(channels.values())
 
 
-def load_known_channels():
-    """从本地文件加载已知的频道列表"""
-    if not os.path.exists(KNOWN_CHANNELS_PATH):
-        return []
-    with open(KNOWN_CHANNELS_PATH, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except Exception:
-            return []
-
-
-def save_known_channels(channels):
-    """保存频道列表到本地文件"""
-    os.makedirs(os.path.dirname(KNOWN_CHANNELS_PATH), exist_ok=True)
-    with open(KNOWN_CHANNELS_PATH, "w", encoding="utf-8") as f:
-        json.dump(channels, f, ensure_ascii=False, indent=2)
+def load_configured_channels():
+    """从插件配置加载频道列表。频道列表由设置页发现频道后保存。"""
+    channels = load_plugin_config().get("channels", [])
+    return channels if isinstance(channels, list) else []
 
 
 def normalize_chat_ref(ref):
@@ -552,15 +561,15 @@ def find_channel_fuzzy(channels, query):
 
 def refresh_and_merge_channels(token):
     """
-    刷新频道列表：从 API 获取最新，合并本地缓存
+    刷新频道列表：从 API 获取最新，合并插件配置中的频道列表
     返回: (合并后的频道列表, 是否有更新)
     """
-    known = load_known_channels()
-    known_map = {ch["id"]: ch for ch in known if ch.get("id")}
+    known = load_configured_channels()
+    known_map = {str(ch["id"]): ch for ch in known if ch.get("id")}
 
     try:
         fresh = collect_channels_from_updates(token)
-        fresh_map = {ch["id"]: ch for ch in fresh}
+        fresh_map = {str(ch["id"]): ch for ch in fresh}
 
         # 合并：新的覆盖旧的，但保留旧的中不在新列表里的
         merged = dict(known_map)
@@ -578,12 +587,11 @@ def refresh_and_merge_channels(token):
                     updated = True
 
         channels = list(merged.values())
-        save_known_channels(channels)
         return channels, True
 
     except Exception as e:
         print(f"Warning: Failed to refresh from API: {e}", file=sys.stderr)
-        # 返回已知的频道
+        # 返回配置中已有的频道
         return list(known_map.values()), False
 
 
@@ -639,11 +647,13 @@ def main():
         print(f"Missing bot token. Set {TOKEN_ENV} or create {TOKEN_FALLBACK_PATH}", file=sys.stderr)
         return 1
 
-    try:
-        bot_id = get_bot_id(token)
-    except Exception as e:
-        print(f"Failed to get bot id: {e}", file=sys.stderr)
-        return 1
+    bot_id = None
+
+    def ensure_bot_id():
+        nonlocal bot_id
+        if bot_id is None:
+            bot_id = get_bot_id(token)
+        return bot_id
 
     plugin_config = load_plugin_config()
     show_link_preview = plugin_config.get("showLinkPreview", True)
@@ -695,7 +705,11 @@ def main():
         # 只列出频道，不发送
         print("Refreshing channel list...", file=sys.stderr)
         channels, _ = refresh_and_merge_channels(token)
-        allowed = get_allowed_channels(token, bot_id, channels)
+        try:
+            allowed = get_allowed_channels(token, ensure_bot_id(), channels)
+        except Exception as e:
+            print(f"Failed to get bot id: {e}", file=sys.stderr)
+            return 1
         print(json.dumps({
             "action": "list",
             "channels": allowed
@@ -717,18 +731,9 @@ def main():
             # 优先当作消息处理，触发频道选择
             message_arg = args[0]
 
-    # 步骤 1: 自动刷新频道列表
-    print("Refreshing channel list...", file=sys.stderr)
-    channels, refreshed = refresh_and_merge_channels(token)
-    print(f"  Loaded {len(channels)} channels", file=sys.stderr)
-
-    # 获取有权限的频道列表
-    allowed = get_allowed_channels(token, bot_id, channels)
-    if not allowed:
-        print("No channels where the bot can post.", file=sys.stderr)
-        return 1
-
-    print(f"  {len(allowed)} channels with post permission", file=sys.stderr)
+    # 步骤 1: 加载设置页保存的频道列表。发布时不刷新 Telegram API。
+    channels = load_configured_channels()
+    print(f"  Loaded {len(channels)} configured channels", file=sys.stderr)
 
     # 步骤 2: 确定目标频道
     chosen = None
@@ -740,40 +745,32 @@ def main():
 
         # 情况 1: 用户提供了 chat_id
         if id_type == "chat_id":
-            for ch in allowed:
-                if ch["id"] == id_value:
+            for ch in channels:
+                if str(ch.get("id")) == str(id_value):
                     chosen = ch
                     break
             if not chosen:
-                # 尝试 API 解析
-                ch = resolve_chat(token, id_value)
-                if ch:
-                    ok, _ = can_post_to_channel(token, ch["id"], bot_id)
-                    if ok:
-                        chosen = ch
-                        channels.append(ch)
-                        save_known_channels(channels)
+                # 频道 ID 本身就是 Telegram 发送所需的目标，失败交给 sendMessage/sendPhoto 返回。
+                chosen = {"id": id_value, "title": str(id_value), "username": None}
 
         # 情况 2: 用户提供了 @username
         elif id_type == "username":
             username = id_value.lstrip("@").lower()
-            for ch in allowed:
+            for ch in channels:
                 ch_username = (ch.get("username") or "").lower()
                 if ch_username == username:
                     chosen = ch
                     break
             if not chosen:
-                ch = resolve_chat(token, id_value)
-                if ch:
-                    ok, _ = can_post_to_channel(token, ch["id"], bot_id)
-                    if ok:
-                        chosen = ch
-                        channels.append(ch)
-                        save_known_channels(channels)
+                # Telegram Bot API 接受 @channelusername 作为 chat_id。
+                chosen = {"id": id_value, "title": id_value, "username": username}
 
         # 情况 3: 用户提供了名称（模糊匹配）
         else:
-            best_match, candidates = find_channel_fuzzy(allowed, channel_arg)
+            if not channels:
+                print("No Telegram channels configured. Use the plugin settings to fetch channels first.", file=sys.stderr)
+                return 1
+            best_match, candidates = find_channel_fuzzy(channels, channel_arg)
             if best_match:
                 # 检查是否有多个相近匹配
                 if len(candidates) >= 2 and abs(candidates[0][1] - candidates[1][1]) < 0.15:
@@ -788,14 +785,17 @@ def main():
                 # 没有匹配到，需要用户从所有频道中选择
                 need_choice = True
                 # 给所有频道一个默认分数
-                choice_options = [(ch, 0, "all") for ch in allowed]
+                choice_options = [(ch, 0, "all") for ch in channels]
 
     else:
         # 没有提供频道参数，需要用户选择
+        if not channels:
+            print("No Telegram channels configured. Use the plugin settings to fetch channels first.", file=sys.stderr)
+            return 1
         need_choice = True
         # 按标题排序，方便选择
-        sorted_allowed = sorted(allowed, key=lambda x: x.get("title", ""))
-        choice_options = [(ch, 0, "all") for ch in sorted_allowed]
+        sorted_channels = sorted(channels, key=lambda x: x.get("title", ""))
+        choice_options = [(ch, 0, "all") for ch in sorted_channels]
 
     # 如果需要选择，输出选择请求
     if need_choice:

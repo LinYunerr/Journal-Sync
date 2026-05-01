@@ -22,6 +22,7 @@ user-data/
 data/
 app/user-data/
 app/data/
+/0429问题发现.md
 
 # Plugin configs (sensitive information)
 Plugin/*/config.json
