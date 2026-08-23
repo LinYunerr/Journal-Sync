@@ -18,7 +18,7 @@ The plugin runs entirely in Obsidian. It must not require a separate backend ser
 
 Do not scan the whole repository at the start of a task. Start with this file, then read only the source files directly related to the requested behavior.
 
-Use `README.md` for installation and user-facing behavior. Treat the following as the normal source of truth:
+Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior. Use `docs/development.md` for public architecture, build, and release guidance; keep this file focused on agent constraints. Treat the following as the normal source of truth:
 
 | Area | Files |
 | --- | --- |
