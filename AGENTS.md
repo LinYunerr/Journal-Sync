@@ -8,8 +8,8 @@ The plugin runs entirely in Obsidian. It must not require a separate backend ser
 
 ## Release Status
 
-- This plugin is published in the public GitHub repository `Jourbal-Sync`.
-- The current published version is `1.0.0`.
+- This plugin is published in the public GitHub repository `Journal-Sync`.
+- The current published version is `1.0.1`.
 - The repository includes both source code and the generated `main.js`; GitHub Releases attach `main.js`, `manifest.json`, and `styles.css`.
 - Publication status is context, not standing permission to write Git history. Do not commit, tag, push, or create a GitHub Release unless the user explicitly requests Git publication in the current task.
 - Continue to use the existing build and verification flow for ordinary changes. A completed build does not imply that Git operations should follow.

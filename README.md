@@ -1,9 +1,30 @@
 # Journal Sync Bridge
 
+## English
+
+Journal Sync creates timestamped daily journal entries in your vault and publishes selected text, a `##` heading section, or a complete note to flomo, Telegram, Mastodon, Misskey, and Notion. It runs entirely inside Obsidian and does not require Node.js, Python, or an external backend service.
+
+### Features
+
+- Create or open today's journal and insert a timestamped heading.
+- Publish selected text, the current second-level heading section, or a complete note.
+- Send to one or more configured platforms from a single dialog.
+- Resolve images stored in the vault; Telegram supports direct image uploads and Notion supports page image uploads.
+
+### Installation
+
+Download `main.js`, `manifest.json`, and `styles.css` from the latest GitHub Release. Place the three files in `<Vault>/.obsidian/plugins/journal-sync-bridge/`, then enable **Journal Sync** under **Settings → Community plugins**.
+
+Credentials and platform settings are stored locally in the plugin's `data.json`. This file is excluded from the repository and releases. Never include it or real tokens in an issue or commit.
+
+---
+
+## 中文说明
+
 > 在 Obsidian 中直接记录日记，并发布到 flomo、Telegram、Mastodon、Misskey、Notion 等平台。
 > **无需安装 Node.js、Python 或任何后端服务。**
 
-当前稳定版本：`1.0.0`。源码与 Obsidian 可直接加载的构建产物一并发布，采用 [MIT License](LICENSE)。
+当前稳定版本：`1.0.1`。源码与 Obsidian 可直接加载的构建产物一并发布，采用 [MIT License](LICENSE)。
 
 > GitHub Release 已提供安装文件；Obsidian Community Plugins 收录需按官方目录流程另行审核。
 
@@ -24,7 +45,7 @@
 
 ### 从 GitHub Release 安装
 
-1. 打开仓库的 **Releases** 页面，选择版本 `1.0.0`。
+1. 打开仓库的 **Releases** 页面，选择最新版本。
 2. 下载 `main.js`、`manifest.json` 和 `styles.css`。
 3. 按下方手动安装步骤放入插件目录并启用。
 
