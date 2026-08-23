@@ -1,0 +1,18 @@
+{
+  "name": "journal-sync-bridge",
+  "version": "1.0.0",
+  "description": "在 Obsidian 中记录日记并发布到多个平台，无需额外后端服务。",
+  "main": "main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "node esbuild.config.mjs --prod",
+    "dev": "node esbuild.config.mjs --watch",
+    "build:dev": "node esbuild.config.mjs",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "obsidian": "latest"
+  }
+}

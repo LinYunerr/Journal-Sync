@@ -1,0 +1,56 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          manifest_version="$(node -p "require('./manifest.json').version")"
+          package_version="$(node -p "require('./package.json').version")"
+          minimum_version="$(node -p "require('./manifest.json').minAppVersion")"
+          mapped_minimum="$(node -p "require('./versions.json')[process.env.RELEASE_TAG] || ''")"
+
+          if [ "$RELEASE_TAG" != "$manifest_version" ] || [ "$RELEASE_TAG" != "$package_version" ]; then
+            echo "Tag, manifest.json, and package.json versions must match." >&2
+            exit 1
+          fi
+
+          if [ "$mapped_minimum" != "$minimum_version" ]; then
+            echo "versions.json must map the release to manifest.json minAppVersion." >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            main.js manifest.json styles.css

@@ -1,0 +1,763 @@
+/* Journal Sync Bridge - Plugin Styles (Obsidian Native + Original Web UI Heritage) */
+
+/* ── Settings ───────────────────────────────── */
+.js-bridge-settings {
+  padding: 18px 32px 40px;
+}
+
+.js-bridge-settings-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 30px;
+}
+
+.js-bridge-settings-nav {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 12px;
+}
+
+.js-bridge-settings-nav-button,
+.js-bridge-plugin-tab {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.js-bridge-settings-nav-button {
+  padding: 10px 18px;
+  font-weight: 600;
+}
+
+.js-bridge-settings-nav-button:hover,
+.js-bridge-plugin-tab:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* 选中态：长期保持悬停时的颜色，并附加一条淡强调色标记以便识别 */
+.js-bridge-settings-nav-button.is-active,
+.js-bridge-plugin-tab.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font-weight: 700;
+}
+
+/* 选中态：横向导航与平台标签统一使用底部下划线标记 */
+.js-bridge-settings-nav-button.is-active,
+.js-bridge-plugin-tab.is-active {
+  box-shadow: inset 0 -2px 0 var(--interactive-accent);
+}
+
+.js-bridge-settings-content {
+  min-width: 0;
+  padding: 8px 16px 12px;
+  border-radius: 10px;
+  background: var(--background-primary);
+}
+
+.js-bridge-settings-section-desc {
+  margin: 0 0 24px;
+  color: var(--text-muted);
+}
+
+.js-bridge-plugin-tabs {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 28px;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.js-bridge-plugin-tab {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+}
+
+.js-bridge-plugin-panel {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: 16px 8px 4px;
+}
+
+.js-bridge-plugin-panel .setting-item {
+  padding: 24px 8px;
+}
+
+.js-bridge-settings-content .setting-item {
+  padding: 24px 8px;
+}
+
+.js-bridge-channel-group {
+  margin: 12px 8px 22px;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.js-bridge-channel-group-label {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.js-bridge-channel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.js-bridge-channel-row label {
+  cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  .js-bridge-settings {
+    padding: 14px 18px 30px;
+  }
+
+  .js-bridge-settings-layout {
+    gap: 18px;
+  }
+
+  .js-bridge-settings-content {
+    padding: 8px 10px;
+  }
+}
+
+/* ── Modal Shell ────────────────────────────── */
+.js-bridge-send-modal {
+  padding: 16px 20px 20px;
+}
+
+.js-bridge-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.js-bridge-send-title {
+  margin: 0;
+  font-size: 1.25em;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.js-bridge-panel {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.js-bridge-panel-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.js-bridge-section-title {
+  margin: 0;
+  font-size: 0.95em;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.js-bridge-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── 富文本 / 纯文本 切换按钮 ────────────────── */
+.tg-input-mode-btn {
+  border: 1px solid rgba(97, 113, 135, 0.36);
+  background: rgba(237, 242, 247, 0.68);
+  color: rgba(79, 95, 115, 0.78);
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tg-input-mode-btn.active {
+  border-color: #8ed3a8;
+  background: #eaf8ef;
+  color: #125b32;
+}
+
+.theme-dark .tg-input-mode-btn {
+  border-color: #4d6384;
+  background: rgba(34, 49, 74, 0.84);
+  color: #c2d2ea;
+}
+
+.theme-dark .tg-input-mode-btn.active {
+  background: rgba(84, 201, 138, 0.16);
+  border-color: rgba(84, 201, 138, 0.52);
+  color: #89e1b0;
+}
+
+/* ── 自动自适应高度文本框 ────────────────────── */
+.js-bridge-auto-textarea {
+  width: 100%;
+  min-height: 110px;
+  max-height: 320px;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  resize: none;
+  overflow-y: auto;
+  font-family: inherit;
+}
+
+.js-bridge-auto-textarea:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+/* ── 富文本编辑器与 Image Token ─────────────── */
+.rich-content-editor {
+  min-height: 110px;
+  max-height: 320px;
+  width: 100%;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+  overflow-y: auto;
+}
+
+.image-token-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 0 4px;
+  background: #e0ecff;
+  color: #1652b5;
+  border: 1px solid #a4c4f4;
+  font-weight: 700;
+  font-size: 13px;
+  user-select: none;
+  cursor: default;
+  vertical-align: middle;
+}
+
+.theme-dark .image-token-chip {
+  background: rgba(84, 160, 255, 0.2);
+  color: #82b6ff;
+  border-color: rgba(84, 160, 255, 0.4);
+}
+
+/* ── 规则与工具栏：插入图片位置标记 ────────────── */
+.token-insert-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.token-toolbar-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.token-insert-btn {
+  border: 1px solid #a4c4f4;
+  background: #e0ecff;
+  color: #1652b5;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: all 0.15s ease;
+}
+
+.token-insert-btn:hover {
+  background: #cbe0ff;
+  border-color: #7aa5eb;
+}
+
+.theme-dark .token-insert-btn {
+  background: rgba(84, 160, 255, 0.2);
+  color: #82b6ff;
+  border-color: rgba(84, 160, 255, 0.4);
+}
+
+.theme-dark .token-insert-btn:hover {
+  background: rgba(84, 160, 255, 0.35);
+}
+
+/* ── 浮动 @图片 联想下拉选择菜单 ───────────────── */
+.image-mention-dropdown {
+  position: absolute;
+  z-index: 1000;
+  width: 230px;
+  background: var(--background-primary);
+  border: 1px solid var(--interactive-accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.image-mention-dropdown.hidden {
+  display: none !important;
+}
+
+.mention-dropdown-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 4px 6px;
+}
+
+.mention-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--background-secondary);
+  transition: all 0.15s ease;
+}
+
+.mention-dropdown-item:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.mention-item-icon {
+  font-size: 14px;
+}
+
+.mention-item-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--interactive-accent);
+}
+
+.mention-item-sub {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+}
+
+/* ── 预设分组控件（自己设定分组） ───────────── */
+.publish-preset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.publish-preset-btn,
+.publish-preset-action {
+  flex: 0 0 auto;
+  height: 26px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  border-radius: 999px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 10px;
+  transition: all 0.15s ease;
+}
+
+.publish-preset-btn:hover,
+.publish-preset-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* 预设选中：绿框与绿软底 */
+.publish-preset-btn.active {
+  border-color: #8ed3a8;
+  background: #eaf8ef;
+  color: #125b32;
+}
+
+.theme-dark .publish-preset-btn.active {
+  background: rgba(84, 201, 138, 0.16);
+  border-color: rgba(84, 201, 138, 0.52);
+  color: #89e1b0;
+}
+
+.publish-preset-action {
+  position: relative;
+  width: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.publish-preset-action.add::before {
+  content: "+";
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.publish-preset-action.remove::before {
+  content: "-";
+  font-size: 17px;
+  font-weight: bold;
+}
+
+.publish-preset-name-input {
+  width: 80px;
+  height: 26px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--interactive-accent);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+/* ── Notion 图片发送预警 ─────────────────────── */
+.notion-image-warning-list {
+  margin-top: 10px;
+}
+
+.notion-image-warning {
+  padding: 8px 10px;
+  border-left: 3px solid var(--text-error);
+  background: color-mix(in srgb, var(--text-error) 10%, var(--background-secondary));
+  color: var(--text-error);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── 发布目标 Blocks（选中的绿框，未选中的灰框） ── */
+.target-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.plugin-toggle-block {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  min-height: 42px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.plugin-toggle-block:hover {
+  border-color: var(--interactive-accent);
+}
+
+/* 选中状态：绿框与软绿背景 */
+.plugin-toggle-block.active {
+  background: #eaf8ef;
+  border-color: #8ed3a8;
+  color: #125b32;
+}
+
+.theme-dark .plugin-toggle-block.active {
+  background: rgba(84, 201, 138, 0.16);
+  border-color: rgba(84, 201, 138, 0.52);
+  color: #89e1b0;
+}
+
+.plugin-toggle-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.plugin-toggle-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.plugin-toggle-block.active .plugin-toggle-title {
+  color: #125b32;
+}
+
+.theme-dark .plugin-toggle-block.active .plugin-toggle-title {
+  color: #89e1b0;
+}
+
+.plugin-toggle-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.plugin-toggle-block.active .plugin-toggle-sub {
+  color: #125b32;
+}
+
+.theme-dark .plugin-toggle-block.active .plugin-toggle-sub {
+  color: #b8efce;
+}
+
+/* ── Telegram 频道选择列表（单行靠右排版，自动截断） ───────────────────── */
+.tg-channel-block {
+  margin-top: 12px;
+  width: 100%;
+}
+
+.target-sub-label {
+  margin: 8px 0 6px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.tg-channel-list {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.plugin-toggle-block.tg-channel-toggle {
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
+.plugin-toggle-block.tg-channel-toggle .plugin-toggle-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugin-toggle-block.tg-channel-toggle .plugin-toggle-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-toggle-block.tg-channel-toggle .plugin-toggle-sub {
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 45%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* ── 图片缩略图网格 ────────────────────────── */
+.media-thumb-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 76px));
+  gap: 8px;
+}
+
+.media-thumb {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--background-secondary);
+  cursor: pointer;
+}
+
+.media-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.media-thumb-order {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.media-thumb-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.74);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-thumb-remove:hover {
+  background: rgba(239, 68, 68, 0.9);
+}
+
+/* ── 大图预览 Modal (Lightbox) ──────────────── */
+.media-preview-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 18, 28, 0.82);
+  z-index: 999;
+  padding: 20px;
+}
+
+.media-preview-modal.active {
+  display: flex;
+}
+
+.media-preview-shell {
+  position: relative;
+  max-width: min(85vw, 920px);
+  max-height: min(85vh, 920px);
+}
+
+.media-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 82vh;
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  background: var(--background-primary);
+}
+
+.media-preview-close {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #ffffff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* ── 发送按钮与结果 ────────────────────────── */
+.primary-btn {
+  border: none;
+  border-radius: 8px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+  padding: 9px 18px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.primary-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.simple-send-btn {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.js-bridge-result-area {
+  margin-top: 10px;
+}
+
+.js-bridge-result-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: var(--background-secondary);
+  font-size: 0.88em;
+}
+
+.js-bridge-btn-area {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.js-bridge-btn {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 0.9em;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
