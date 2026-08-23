@@ -1,7 +1,7 @@
 {
   "id": "journal-sync-bridge",
   "name": "Journal Sync",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minAppVersion": "1.5.0",
   "description": "Create timestamped journal entries and publish selected text, heading sections, or complete notes to flomo, Telegram, Mastodon, Misskey, and Notion.",
   "author": "Journal Sync",

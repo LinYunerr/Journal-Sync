@@ -24,7 +24,7 @@ Credentials and platform settings are stored locally in the plugin's `data.json`
 > 在 Obsidian 中直接记录日记，并发布到 flomo、Telegram、Mastodon、Misskey、Notion 等平台。
 > **无需安装 Node.js、Python 或任何后端服务。**
 
-当前稳定版本：`1.0.1`。源码与 Obsidian 可直接加载的构建产物一并发布，采用 [MIT License](LICENSE)。
+当前稳定版本：`1.0.2`。源码与 Obsidian 可直接加载的构建产物一并发布，采用 [MIT License](LICENSE)。
 
 > GitHub Release 已提供安装文件；Obsidian Community Plugins 收录需按官方目录流程另行审核。
 

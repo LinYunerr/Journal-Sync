@@ -417,8 +417,7 @@ class JournalSyncPlugin extends Plugin {
     const linked = this.app.metadataCache.getFirstLinkpathDest(cleaned, contextFile?.path || '');
     if (linked && !linked.children) return linked;
 
-    const basename = cleaned.split('/').pop();
-    return this.app.vault.getFiles().find(f => f.name === basename) || null;
+    return null;
   }
 
   /**

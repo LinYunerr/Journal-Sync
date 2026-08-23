@@ -332,7 +332,7 @@
 }
 
 .image-mention-dropdown.hidden {
-  display: none !important;
+  display: none;
 }
 
 .mention-dropdown-title {

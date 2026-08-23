@@ -3040,8 +3040,7 @@ var JournalSyncPlugin = class extends Plugin {
     }
     const linked = this.app.metadataCache.getFirstLinkpathDest(cleaned, (contextFile == null ? void 0 : contextFile.path) || "");
     if (linked && !linked.children) return linked;
-    const basename = cleaned.split("/").pop();
-    return this.app.vault.getFiles().find((f) => f.name === basename) || null;
+    return null;
   }
   /**
    * 收集正文中的本地图片引用，返回文件名列表与富文本草稿。
