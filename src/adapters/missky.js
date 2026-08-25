@@ -9,6 +9,15 @@ export const manifest = {
     name: 'Misskey',
     description: '发布内容到 Misskey / Calckey / Firefish 实例',
     enabledByDefault: false,
+    capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ['image/*'],
+        maxAttachments: 16,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: true,
+        warnOnAttachmentSize: false
+    },
     settings: {
         fields: [
             {
@@ -40,21 +49,20 @@ export const manifest = {
         ]
     }
 };
+const MAX_MISSKEY_IMAGES = manifest.capabilities.maxAttachments;
 
 function getMimeType(filename) {
     const ext = String(filename || '').split('.').pop().toLowerCase();
     const mimeTypes = {
-        jpg: 'image/jpeg', jpeg: 'image/jpeg',
-        png: 'image/png', gif: 'image/gif',
-        webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
-        svg: 'image/svg+xml'
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+        mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm'
     };
     return mimeTypes[ext] || 'application/octet-stream';
 }
 
 /**
  * 上传单张图片到 Misskey Drive（/api/drive/files/create），返回 fileId
- * （从原 Journal-Sync 项目的 uploadImageToMissky 迁移，改用 Obsidian requestUrl + Vault ArrayBuffer）
  */
 async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, requestUrl) {
     const safeFilename = String(filename || 'image').replace(/["\r\n]/g, '_');
@@ -84,7 +92,7 @@ async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, req
         url: `${baseUrl}/api/drive/files/create`,
         method: 'POST',
         headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-        body: body.buffer.slice(0, totalLength),
+        body: body.buffer,
         throw: false
     });
 
@@ -96,49 +104,69 @@ async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, req
 }
 
 /**
- * @param {object} payload
- * @param {string} payload.content
- * @param {string} payload.serverUrl
- * @param {string} payload.apiToken
- * @param {string} [payload.visibility]
- * @param {Function} payload.requestUrl
- * @param {string[]} [payload.images] - 需要附带的本地图片文件名列表
- * @param {Function} [payload.readImageFile] - 按文件名读取 Vault 图片为 ArrayBuffer
+ * 预检验证
  */
-export async function execute({ content, serverUrl, apiToken, visibility = 'public', requestUrl, images = [], readImageFile }) {
+export async function validate({ payload }) {
+    const warnings = [];
+    const errors = [];
+
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+
+    if (!payload.plainText && attachments.length === 0) {
+        errors.push('内容不能为空');
+    }
+
+    return { warnings, errors };
+}
+
+/**
+ * 统一执行接口
+ * @param {object} options
+ * @param {object} options.config - { serverUrl, apiToken, visibility }
+ * @param {object} options.payload - 统一 payload
+ * @param {Function} options.requestUrl
+ */
+export async function execute({ config = {}, payload = {}, requestUrl }) {
+    const serverUrl = String(config.serverUrl || '').trim();
+    const apiToken = String(config.apiToken || '').trim();
+    const visibility = config.visibility || 'public';
+
     if (!serverUrl || !apiToken) {
         return { success: false, error: 'Misskey 实例地址或 API Token 未配置' };
     }
 
-    const normalizedContent = String(content || '').trim();
-    // 清理正文中的 Markdown / Obsidian 图片引用，避免发布残留语法
-    const textContent = normalizedContent
-        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-        .replace(/!\[\[[^\]]+\]\]/g, '')
-        .trim();
-
-    const baseUrl = String(serverUrl).trim().replace(/\/+$/, '');
+    const textContent = String(payload.plainText || '').trim();
+    const baseUrl = serverUrl.replace(/\/+$/, '');
     const warnings = [];
 
     try {
-        // 先上传图片到 Drive，拿到 fileIds 后再发动态
+        // 上传图片到 Drive，拿到 fileIds
         const fileIds = [];
-        const imageList = Array.isArray(images) ? images.filter(Boolean) : [];
-        for (const filename of imageList) {
+        const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+        const allImages = attachments.filter(a => a.kind === 'image');
+        const images = allImages.slice(0, MAX_MISSKEY_IMAGES);
+
+        if (allImages.length > MAX_MISSKEY_IMAGES) {
+            warnings.push(`超过 ${MAX_MISSKEY_IMAGES} 张图片，只发送前 ${MAX_MISSKEY_IMAGES} 张`);
+        }
+
+        for (const img of images) {
             try {
-                const buffer = typeof readImageFile === 'function' ? await readImageFile(filename) : null;
+                const buffer = typeof payload.readAttachment === 'function'
+                    ? await payload.readAttachment(img.vaultPath)
+                    : null;
                 if (!buffer) {
-                    warnings.push(`图片读取失败，已跳过：${filename}`);
+                    warnings.push(`图片读取失败，已跳过：${img.filename}`);
                     continue;
                 }
-                const fileId = await uploadImageToMissky(buffer, filename, baseUrl, apiToken, requestUrl);
+                const fileId = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl);
                 if (fileId) {
                     fileIds.push(fileId);
                 } else {
-                    warnings.push(`图片上传失败，已跳过：${filename}`);
+                    warnings.push(`图片上传失败，已跳过：${img.filename}`);
                 }
             } catch (error) {
-                warnings.push(`图片处理失败，已跳过：${filename}`);
+                warnings.push(`图片处理失败，已跳过：${img.filename}`);
             }
         }
 
@@ -173,4 +201,4 @@ export async function execute({ content, serverUrl, apiToken, visibility = 'publ
     }
 }
 
-export default { manifest, execute };
+export default { manifest, execute, validate };

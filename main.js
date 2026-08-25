@@ -53,8 +53,153 @@ var require_adapter_registry = __commonJS({
       has(id) {
         return this._adapters.has(id);
       }
+      /**
+       * 获取适配器能力声明
+       * @param {string} id
+       * @returns {object} capabilities
+       */
+      getCapabilities(id) {
+        var _a;
+        const adapter = this.get(id);
+        if (!adapter) return null;
+        return ((_a = adapter.manifest) == null ? void 0 : _a.capabilities) || null;
+      }
+      /**
+       * 按适配器能力声明识别图片数量和文件大小预警。
+       * 这里只负责发现并生成提示，不改变 payload，也不决定是否发送。
+       * @param {string[]} targetIds
+       * @param {object} payload
+       * @returns {Promise<{ warnings: string[], perAdapter: object }>}
+       */
+      async getAttachmentWarnings(targetIds, payload = {}) {
+        var _a, _b;
+        const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+        const images = attachments.filter((item) => (item == null ? void 0 : item.kind) === "image");
+        const warnings = [];
+        const perAdapter = {};
+        const sizeCache = /* @__PURE__ */ new Map();
+        const readSize = async (image) => {
+          if (Number.isFinite(image == null ? void 0 : image.size)) return image.size;
+          const key = (image == null ? void 0 : image.vaultPath) || (image == null ? void 0 : image.filename);
+          if (!key || typeof payload.readAttachment !== "function") return null;
+          if (sizeCache.has(key)) return sizeCache.get(key);
+          const pending = Promise.resolve().then(() => payload.readAttachment(key)).then((buffer) => {
+            const size = (buffer == null ? void 0 : buffer.byteLength) || 0;
+            if (size > 0) image.size = size;
+            return size || null;
+          }).catch(() => null);
+          sizeCache.set(key, pending);
+          return pending;
+        };
+        for (const id of targetIds) {
+          const adapter = this.get(id);
+          const capabilities = ((_a = adapter == null ? void 0 : adapter.manifest) == null ? void 0 : _a.capabilities) || {};
+          const adapterWarnings = [];
+          const name = ((_b = adapter == null ? void 0 : adapter.manifest) == null ? void 0 : _b.name) || id;
+          const maxAttachments = Number(capabilities.maxAttachments) || 0;
+          const maxAttachmentSize = Number(capabilities.maxAttachmentSize) || 0;
+          if (capabilities.warnOnAttachmentCount === true && maxAttachments > 0 && images.length > maxAttachments) {
+            adapterWarnings.push(`${name} \u56FE\u7247\u8D85\u8FC7 ${maxAttachments} \u5F20\uFF0C\u53EA\u53D1\u9001\u524D ${maxAttachments} \u5F20\uFF0C\u786E\u8BA4\u53D1\u9001`);
+          }
+          if (capabilities.warnOnAttachmentSize === true && maxAttachmentSize > 0) {
+            const oversized = [];
+            for (const image of images) {
+              const size = await readSize(image);
+              if (size > maxAttachmentSize) oversized.push(image.filename || image.vaultPath || "\u672A\u547D\u540D\u56FE\u7247");
+            }
+            if (oversized.length > 0) {
+              const preview = oversized.slice(0, 3).join("\u3001");
+              const suffix = oversized.length > 3 ? ` \u7B49 ${oversized.length} \u5F20` : "";
+              adapterWarnings.push(`${name} \u56FE\u7247\u6587\u4EF6\u8D85\u8FC7 ${Math.round(maxAttachmentSize / 1024 / 1024)} MB\uFF1A${preview}${suffix}\uFF0C\u786E\u8BA4\u53D1\u9001`);
+            }
+          }
+          perAdapter[id] = adapterWarnings;
+          warnings.push(...adapterWarnings);
+        }
+        return { warnings, perAdapter };
+      }
+      /**
+       * 对多个目标适配器执行预检验证。
+       * 每个适配器自行检查 payload 是否满足其限制条件。
+       *
+       * @param {string[]} targetIds - 目标适配器 ID 列表
+       * @param {object} payload - 统一 payload
+       * @param {object} configs - { [adapterId]: config }
+       * @returns {Promise<{ warnings: string[], errors: string[], perAdapter: object }>}
+       */
+      async validateAll(targetIds, payload, configs = {}) {
+        const perAdapter = {};
+        const warnings = [];
+        const errors = [];
+        for (const id of targetIds) {
+          const adapter = this.get(id);
+          if (!adapter) {
+            perAdapter[id] = { warnings: [], errors: ["\u9002\u914D\u5668\u4E0D\u5B58\u5728"] };
+            errors.push(`${id}: \u9002\u914D\u5668\u4E0D\u5B58\u5728`);
+            continue;
+          }
+          const config = configs[id] || {};
+          const result = typeof adapter.validate === "function" ? await adapter.validate({ payload, config }) : { warnings: [], errors: [] };
+          const aw = Array.isArray(result.warnings) ? result.warnings : [];
+          const ae = Array.isArray(result.errors) ? result.errors : [];
+          perAdapter[id] = { warnings: aw, errors: ae };
+          for (const w of aw) warnings.push(`${id}: ${w}`);
+          for (const e of ae) errors.push(`${id}: ${e}`);
+        }
+        return { warnings, errors, perAdapter };
+      }
     };
     module2.exports = AdapterRegistry2;
+  }
+});
+
+// src/core/payload.js
+var require_payload = __commonJS({
+  "src/core/payload.js"(exports2, module2) {
+    "use strict";
+    function buildPayload({ content = "", richDraft, title = "", readAttachment } = {}) {
+      const plainText = String(content || "").replace(/@图片\d+/g, "").replace(/!\[\[[^\]]+\]\]/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
+      const attachments = extractAttachments(richDraft, content);
+      return {
+        content: String(content || ""),
+        plainText,
+        title: String(title || ""),
+        attachments,
+        readAttachment: typeof readAttachment === "function" ? readAttachment : null
+      };
+    }
+    function extractAttachments(richDraft, content) {
+      const images = Array.isArray(richDraft == null ? void 0 : richDraft.images) ? richDraft.images : [];
+      const referencedTokens = new Set(String(content || "").match(/@图片\d+/g) || []);
+      const result = [];
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        if (!img || !img.filename) continue;
+        const token = String(img.token || `@\u56FE\u7247${i + 1}`).trim();
+        if (!/^@图片\d+$/.test(token) || !referencedTokens.has(token)) continue;
+        result.push({
+          token,
+          filename: img.filename,
+          vaultPath: img.vaultPath || img.filename,
+          mimeType: getMimeType3(img.filename),
+          kind: "image"
+        });
+      }
+      return result;
+    }
+    function getMimeType3(filename) {
+      const ext = String(filename || "").split(".").pop().toLowerCase();
+      const types = {
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        png: "image/png",
+        webp: "image/webp",
+        gif: "image/gif",
+        svg: "image/svg+xml"
+      };
+      return types[ext] || "application/octet-stream";
+    }
+    module2.exports = { buildPayload, getMimeType: getMimeType3 };
   }
 });
 
@@ -62,59 +207,22 @@ var require_adapter_registry = __commonJS({
 var require_send_modal = __commonJS({
   "src/ui/send-modal.js"(exports2, module2) {
     var { Modal, Notice: Notice2 } = require("obsidian");
-    function getPlainTextWithoutImageTokens(text) {
-      return String(text || "").replace(/@图片\d+/g, "").replace(/!\[\[[^\]]+\]\]/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function buildTelegramSegmentsFromEditor(content, images) {
-      const imageByToken = new Map(
-        (Array.isArray(images) ? images : []).filter((image) => (image == null ? void 0 : image.token) && (image == null ? void 0 : image.filename)).map((image) => [image.token, image])
-      );
-      const segments = [];
-      const tokenPattern = /@图片\d+/g;
-      const source = String(content || "");
-      let cursor = 0;
-      let match;
-      const pushText = (text) => {
-        if (!text) return;
-        const previous = segments[segments.length - 1];
-        if ((previous == null ? void 0 : previous.type) === "richText") previous.markdown += text;
-        else segments.push({ type: "richText", markdown: text });
-      };
-      while ((match = tokenPattern.exec(source)) !== null) {
-        pushText(source.slice(cursor, match.index));
-        const image = imageByToken.get(match[0]);
-        if (image) {
-          segments.push({
-            type: "image",
-            filename: image.filename,
-            vaultPath: image.vaultPath || image.filename
-          });
-        } else {
-          pushText(match[0]);
-        }
-        cursor = match.index + match[0].length;
-      }
-      pushText(source.slice(cursor));
-      return segments;
-    }
+    var { buildPayload } = require_payload();
     var JournalSyncSendModal2 = class extends Modal {
       /**
        * @param {App} app
        * @param {object} plugin
        * @param {string} content
        * @param {object} richDraft
-       * @param {Array} telegramSegments
        * @param {Function} readImageFile
        */
-      constructor(app, plugin, { content, richDraft, telegramSegments, readImageFile, notionTitle = "" }) {
+      constructor(app, plugin, { content, richDraft, readImageFile, notionTitle = "" }) {
         super(app);
         this.plugin = plugin;
         this.rawContent = content || "";
         this.richDraft = richDraft || { version: 1, blocks: [], images: [] };
-        this.telegramSegments = telegramSegments || [];
         this.readImageFile = readImageFile;
         this.notionTitle = notionTitle;
-        this.notionImageWarnings = [];
         this.tgSendMode = "plain";
         this.telegraphTitle = "";
         this.tgShowLinkPreview = true;
@@ -124,7 +232,9 @@ var require_send_modal = __commonJS({
         this.images = [];
         this._objectUrls = /* @__PURE__ */ new Set();
         this._imageGridRenderId = 0;
-        this._oversizedConfirmed = false;
+        this._warningConfirmActive = false;
+        this._warningKey = "";
+        this._warningTimer = null;
         this.initContentAndImages();
         this.loadActivePresetSelection();
         const _tgConfig = this.plugin.getAdapterConfig("telegram");
@@ -135,19 +245,7 @@ var require_send_modal = __commonJS({
        */
       initContentAndImages() {
         const imgs = [];
-        if (Array.isArray(this.telegramSegments)) {
-          for (const seg of this.telegramSegments) {
-            if (seg.type === "image" && seg.filename) {
-              imgs.push({
-                filename: seg.filename,
-                vaultPath: seg.vaultPath || seg.filename,
-                id: seg.vaultPath || seg.filename,
-                token: `@\u56FE\u7247${imgs.length + 1}`
-              });
-            }
-          }
-        }
-        if (imgs.length === 0 && Array.isArray(this.richDraft.images)) {
+        if (Array.isArray(this.richDraft.images)) {
           for (const img of this.richDraft.images) {
             if (img.filename) {
               imgs.push({
@@ -242,8 +340,6 @@ ${tokenStr}` : tokenStr;
           const mediaGrid = inputPanel.createDiv({ cls: "media-thumb-grid" });
           this.mediaGridEl = mediaGrid;
           this.renderImageGrid(mediaGrid);
-          this.notionImageWarningEl = inputPanel.createDiv({ cls: "notion-image-warning-list" });
-          this.updateNotionImageWarnings();
         }
         const publishPanel = contentEl.createDiv({ cls: "js-bridge-panel" });
         const publishTitleRow = publishPanel.createDiv({ cls: "js-bridge-panel-title-row" });
@@ -501,17 +597,10 @@ ${tokenStr}` : tokenStr;
         this.insertTokenAtCursor(richDiv, token);
         if (!this.mediaGridEl && this.inputPanelEl) {
           this.mediaGridEl = this.inputPanelEl.createDiv({ cls: "media-thumb-grid" });
-          if (this.notionImageWarningEl) {
-            this.inputPanelEl.insertBefore(this.mediaGridEl, this.notionImageWarningEl);
-          }
         }
         if (this.mediaGridEl) {
           this.renderImageGrid(this.mediaGridEl);
         }
-        if (!this.notionImageWarningEl && this.inputPanelEl) {
-          this.notionImageWarningEl = this.inputPanelEl.createDiv({ cls: "notion-image-warning-list" });
-        }
-        this.updateNotionImageWarnings();
       }
       renderImageGrid(containerEl) {
         const renderId = ++this._imageGridRenderId;
@@ -561,9 +650,6 @@ ${tokenStr}` : tokenStr;
               (_a = this.editorEl) == null ? void 0 : _a.querySelectorAll(".image-token-chip").forEach((chip) => {
                 if (chip.getAttribute("data-token") === removedImage.token) chip.remove();
               });
-              this.telegramSegments = this.telegramSegments.filter((segment) => {
-                return segment.type !== "image" || segment.vaultPath !== removedImage.vaultPath;
-              });
               this.richDraft = {
                 ...this.richDraft,
                 blocks: (this.richDraft.blocks || []).filter((block) => block.imageId !== removedImage.id),
@@ -573,34 +659,11 @@ ${tokenStr}` : tokenStr;
               };
             }
             this.renderImageGrid(containerEl);
-            this.updateNotionImageWarnings();
           });
           thumb.addEventListener("click", () => {
             if (imgEl.src && imgEl.complete && imgEl.naturalWidth > 0) this.showImagePreview(imgEl.src);
           });
         });
-      }
-      async updateNotionImageWarnings() {
-        if (!this.notionImageWarningEl) return;
-        const threshold = 5 * 1024 * 1024;
-        const warningItems = [];
-        for (const image of this.images) {
-          try {
-            if (image.blob) {
-              if (image.blob.size > threshold) warningItems.push({ filename: image.filename, bytes: image.blob.size });
-              continue;
-            }
-            const buffer = await this.readImageFile(image.vaultPath);
-            if ((buffer == null ? void 0 : buffer.byteLength) > threshold) warningItems.push({ filename: image.filename, bytes: buffer.byteLength });
-          } catch (e) {
-          }
-        }
-        this.notionImageWarnings = warningItems;
-        this.notionImageWarningEl.empty();
-        for (const warning of warningItems) {
-          const size = (warning.bytes / 1024 / 1024).toFixed(1);
-          this.notionImageWarningEl.createDiv({ cls: "notion-image-warning", text: `Notion \u63D0\u793A\uFF1A${warning.filename} \u4E3A ${size} MB\uFF0C\u53EF\u80FD\u8D85\u8FC7\u5F53\u524D\u65B9\u6848\u7684 5 MB \u9650\u5236\uFF0C\u56FE\u7247\u53EF\u80FD\u53D1\u9001\u5931\u8D25\u3002` });
-        }
       }
       showImagePreview(src) {
         this.previewImgEl.src = src;
@@ -926,6 +989,34 @@ ${tokenStr}` : tokenStr;
         });
         input.addEventListener("blur", saveEdit);
       }
+      _resetSendButton() {
+        if (!this.sendBtn) return;
+        this.sendBtn.textContent = "\u53D1\u5E03";
+        this.sendBtn.classList.remove("mod-warning");
+        this.sendBtn.removeAttribute("title");
+      }
+      _clearAttachmentWarningState() {
+        if (this._warningTimer) window.clearTimeout(this._warningTimer);
+        this._warningTimer = null;
+        this._warningConfirmActive = false;
+        this._warningKey = "";
+        this._resetSendButton();
+      }
+      _showAttachmentWarnings(warnings) {
+        const messages = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+        if (messages.length === 0) return;
+        if (this._warningTimer) window.clearTimeout(this._warningTimer);
+        this._warningConfirmActive = true;
+        this._warningKey = messages.join("\n");
+        if (this.sendBtn) {
+          this.sendBtn.textContent = messages.length === 1 ? `\u26A0\uFE0F ${messages[0]}` : `\u26A0\uFE0F ${messages.length} \u9879\u9884\u8B66\uFF0C\u786E\u8BA4\u53D1\u9001`;
+          this.sendBtn.title = messages.join("\n");
+          this.sendBtn.classList.add("mod-warning");
+        }
+        this._warningTimer = window.setTimeout(() => {
+          this._clearAttachmentWarningState();
+        }, 5e3);
+      }
       /**
        * 执行发送（即时关窗 + 后台无阻塞异步发送）
        */
@@ -934,58 +1025,76 @@ ${tokenStr}` : tokenStr;
         const targetAdapters = Array.from(this.selectedTargets).filter(
           (adapterId) => adapterId !== "telegram" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
         );
-        const tgChannels = Array.from(this.selectedTgChannels);
+        const tgChannels = plugin.adapterRegistry.has("telegram") && plugin.isAdapterEnabled("telegram") ? Array.from(this.selectedTgChannels) : [];
+        if (tgChannels.length > 0) {
+          targetAdapters.push("telegram");
+        }
         if (targetAdapters.length === 0 && tgChannels.length === 0) {
           new Notice2("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807\u6216 Telegram \u9891\u9053");
           return;
         }
-        const tgSendMode = this.tgSendMode;
-        const isRich = tgSendMode === "rich";
-        const isTelegraph = tgSendMode === "telegraph";
-        const telegraphTitle = this.telegraphTitle;
         const rawContent = this.content;
-        const plainTextContent = getPlainTextWithoutImageTokens(rawContent);
-        const richDraft = this.richDraft;
         const referencedTokens = new Set(rawContent.match(/@图片\d+/g) || []);
         const images = this.images.filter((image) => referencedTokens.has(image.token));
         const vaultReadImageFile = this.readImageFile;
-        const readImageFile = (vaultPath) => {
+        const readAttachment = (vaultPath) => {
           const img = images.find((i) => i.vaultPath === vaultPath && i.blob);
           if (img && img.blob) return Promise.resolve(img.blob.arrayBuffer());
           return vaultReadImageFile(vaultPath);
         };
-        const SIZE_THRESHOLD = 10 * 1024 * 1024;
-        if (!this._oversizedConfirmed) {
-          let hasOversized = false;
-          for (const img of images) {
-            let bytes = 0;
-            if (img.blob) {
-              bytes = img.blob.size;
-            } else if (img.vaultPath && typeof vaultReadImageFile === "function") {
-              try {
-                const buf = await vaultReadImageFile(img.vaultPath);
-                bytes = (buf == null ? void 0 : buf.byteLength) || 0;
-              } catch (e) {
-              }
-            }
-            if (bytes > SIZE_THRESHOLD) {
-              hasOversized = true;
-              break;
-            }
-          }
-          if (hasOversized) {
-            this._oversizedConfirmed = true;
-            if (this.sendBtn) {
-              this.sendBtn.textContent = "\u26A0\uFE0F \u56FE\u7247\u8FC7\u5927\uFF0C\u786E\u8BA4\u53D1\u9001";
-              this.sendBtn.classList.add("mod-warning");
-            }
+        const payload = buildPayload({
+          content: rawContent,
+          richDraft: { ...this.richDraft, images },
+          title: this.notionTitle || "",
+          readAttachment
+        });
+        const targetConfigOverrides = {};
+        if (tgChannels.length > 0) {
+          targetConfigOverrides.telegram = {
+            tgSendMode: this.tgSendMode,
+            channelIds: tgChannels,
+            telegraphTitle: this.telegraphTitle,
+            showLinkPreview: this.tgShowLinkPreview
+          };
+        }
+        let capabilityWarnings;
+        try {
+          capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
+        } catch (error) {
+          new Notice2(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          return;
+        }
+        const warningMessages = capabilityWarnings.warnings || [];
+        const warningKey = warningMessages.join("\n");
+        if (warningMessages.length > 0) {
+          if (!this._warningConfirmActive || this._warningKey !== warningKey) {
+            this._showAttachmentWarnings(warningMessages);
             return;
           }
+          this._clearAttachmentWarningState();
+        } else {
+          this._clearAttachmentWarningState();
         }
-        this._oversizedConfirmed = false;
-        if (this.sendBtn) {
-          this.sendBtn.textContent = "\u53D1\u5E03";
-          this.sendBtn.classList.remove("mod-warning");
+        let validation;
+        try {
+          const configs = {};
+          for (const adapterId of targetAdapters) {
+            configs[adapterId] = {
+              ...plugin.getAdapterConfig(adapterId),
+              ...targetConfigOverrides[adapterId] || {}
+            };
+          }
+          validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
+        } catch (error) {
+          new Notice2(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          return;
+        }
+        if (validation.warnings.length > 0) {
+          new Notice2(`\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A${validation.warnings.join("\uFF1B")}`, 1e4);
+        }
+        if (validation.errors.length > 0) {
+          new Notice2(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
+          return;
         }
         this.close();
         new Notice2("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
@@ -993,78 +1102,20 @@ ${tokenStr}` : tokenStr;
           const results = {};
           for (const adapterId of targetAdapters) {
             try {
-              if (adapterId === "notion") {
-                const notionConfig = plugin.getAdapterConfig("notion") || {};
-                const prepared = await plugin.prepareNotionImages(images, readImageFile, Boolean(notionConfig.autoCompressLargeImages));
-                let notionTitle = this.notionTitle;
-                if (notionConfig.titleSource === "none") notionTitle = "";
-                if (notionConfig.titleSource === "first_heading") {
-                  const headingMatch = rawContent.match(/^#\s+(.+)$/m);
-                  notionTitle = headingMatch ? headingMatch[1].trim() : "";
-                }
-                const result = await plugin.executeAdapter(adapterId, {
-                  content: rawContent,
-                  title: notionTitle,
-                  localImages: prepared.localImages,
-                  externalImages: {}
-                });
-                result.warnings = prepared.warnings.map((item) => `${item.filename} \u8D85\u8FC7 5 MB \u9884\u8B66\u9608\u503C`);
-                results[adapterId] = result;
-              } else {
-                const result = await plugin.executeAdapter(adapterId, {
-                  content: plainTextContent,
-                  richDraft: {
-                    ...richDraft,
-                    images
-                  },
-                  images: images.map((img) => img.vaultPath).filter(Boolean),
-                  readImageFile
-                });
-                results[adapterId] = result;
-              }
+              const result = await plugin.executeAdapter(
+                adapterId,
+                payload,
+                targetConfigOverrides[adapterId] || {}
+              );
+              results[adapterId] = result;
             } catch (error) {
               results[adapterId] = { success: false, error: error.message };
-            }
-          }
-          if (tgChannels.length > 0 && plugin.isAdapterEnabled("telegram")) {
-            if (isTelegraph) {
-              try {
-                const tgConfig = plugin.getAdapterConfig("telegram");
-                const titleLevel = tgConfig.telegraphTitleLevel || 1;
-                const tgResult = await plugin.executeTelegraphSend({
-                  content: rawContent,
-                  images,
-                  readImageFile,
-                  channelIds: tgChannels,
-                  telegraphTitle,
-                  titleLevel,
-                  showLinkPreview: this.tgShowLinkPreview
-                });
-                results["Telegram"] = tgResult;
-              } catch (error) {
-                results["Telegram"] = { success: false, error: error.message };
-              }
-            } else {
-              try {
-                const tgSegs = buildTelegramSegmentsFromEditor(rawContent, images);
-                const tgResult = await plugin.executeAdapter("telegram", {
-                  content: isRich ? rawContent : plainTextContent,
-                  telegramSegments: tgSegs,
-                  readImageFile,
-                  channelIds: tgChannels,
-                  isRichText: isRich,
-                  showLinkPreview: this.tgShowLinkPreview
-                });
-                results["Telegram"] = tgResult;
-              } catch (error) {
-                results["Telegram"] = { success: false, error: error.message };
-              }
             }
           }
           const anyFailure = Object.values(results).some((r) => !r.success && !r.skipped);
           const summary = Object.entries(results).flatMap(([id, result]) => {
             const channelResults = Array.isArray(result.results) ? result.results : null;
-            if (id === "Telegram" && channelResults) {
+            if ((id === "Telegram" || id === "telegram") && channelResults) {
               return channelResults.map((channel) => {
                 return `Telegram ${channel.channelId}: ${channel.success ? "\u6210\u529F" : `\u5931\u8D25(${channel.error || "\u672A\u77E5\u9519\u8BEF"})`}`;
               });
@@ -1086,6 +1137,7 @@ ${tokenStr}` : tokenStr;
         });
       }
       onClose() {
+        this._clearAttachmentWarningState();
         this._imageGridRenderId += 1;
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
@@ -1776,167 +1828,13 @@ var require_settings_tab = __commonJS({
   }
 });
 
-// src/core/content-renderer.js
-var content_renderer_exports = {};
-__export(content_renderer_exports, {
-  createImageEntity: () => createImageEntity,
-  default: () => content_renderer_default,
-  normalizeRichDraft: () => normalizeRichDraft,
-  renderRichContent: () => renderRichContent
-});
-function normalizeText(value) {
-  return String(value || "").replace(/\r\n/g, "\n");
-}
-function sanitizeImageEntity(rawImage = {}, index = 0) {
-  if (!rawImage || typeof rawImage !== "object") return null;
-  const filename = String(rawImage.filename || "").trim();
-  if (!filename) return null;
-  const id = String(rawImage.id || "").trim() || `legacy_${index}_${filename}`;
-  return {
-    id,
-    filename,
-    vaultPath: String(rawImage.vaultPath || filename).trim(),
-    previewUrl: String(rawImage.previewUrl || "").trim(),
-    createdAt: String(rawImage.createdAt || "").trim()
-  };
-}
-function createImageEntity(filename, index = 0) {
-  const normalizedFilename = String(filename || "").trim();
-  return {
-    id: `legacy_${index}_${normalizedFilename}`,
-    filename: normalizedFilename,
-    vaultPath: normalizedFilename,
-    previewUrl: "",
-    createdAt: ""
-  };
-}
-function normalizeRichDraft(rawDraft = {}, fallbackContent = "", fallbackImageFilenames = []) {
-  const draft = rawDraft && typeof rawDraft === "object" && !Array.isArray(rawDraft) ? rawDraft : {};
-  const fallbackImages = (Array.isArray(fallbackImageFilenames) ? fallbackImageFilenames : []).map((filename, index) => createImageEntity(filename, index)).filter((image) => image.filename);
-  const images = (Array.isArray(draft.images) ? draft.images : fallbackImages).map((image, index) => sanitizeImageEntity(image, index)).filter(Boolean);
-  const blocks = Array.isArray(draft.blocks) ? draft.blocks.map((block) => {
-    if (!block || typeof block !== "object") return null;
-    if (block.type === "image") {
-      const imageId = String(block.imageId || "").trim();
-      return imageId ? { type: "image", imageId } : null;
-    }
-    if (block.type === "text") {
-      return { type: "text", text: normalizeText(block.text) };
-    }
-    return null;
-  }).filter(Boolean) : [{ type: "text", text: normalizeText(fallbackContent) }].filter((block) => block.text);
-  return { version: 1, blocks, images };
-}
-function pushTextBlock(blocks, text) {
-  const normalizedText = normalizeText(text);
-  if (!normalizedText) return;
-  const previous = blocks[blocks.length - 1];
-  if ((previous == null ? void 0 : previous.type) === "text") {
-    previous.text += normalizedText;
-    return;
-  }
-  blocks.push({ type: "text", text: normalizedText });
-}
-function buildOrderedBlocks(draft, warnings) {
-  const imageById = new Map(draft.images.map((image) => [image.id, image]));
-  const referencedIds = /* @__PURE__ */ new Set();
-  const ordered = [];
-  for (const block of draft.blocks) {
-    if (block.type === "text") {
-      pushTextBlock(ordered, block.text);
-      continue;
-    }
-    if (block.type !== "image") continue;
-    const image = imageById.get(block.imageId);
-    if (!image) {
-      warnings.push(`\u56FE\u7247 token \u5F15\u7528\u4E0D\u5B58\u5728: ${block.imageId}`);
-      continue;
-    }
-    if (referencedIds.has(image.id)) continue;
-    referencedIds.add(image.id);
-    ordered.push({ type: "image", image });
-  }
-  for (const image of draft.images) {
-    if (!referencedIds.has(image.id)) {
-      ordered.push({ type: "image", image });
-      referencedIds.add(image.id);
-    }
-  }
-  return ordered;
-}
-function renderPlainText(orderedBlocks) {
-  return orderedBlocks.filter((block) => block.type === "text").map((block) => block.text).join("").replace(/@图片\d+/g, "").trim();
-}
-function renderObsidianMarkdown(orderedBlocks) {
-  var _a, _b;
-  const parts = [];
-  for (let index = 0; index < orderedBlocks.length; index += 1) {
-    const block = orderedBlocks[index];
-    if (block.type === "text") {
-      const previousIsImage = ((_a = orderedBlocks[index - 1]) == null ? void 0 : _a.type) === "image";
-      const nextIsImage = ((_b = orderedBlocks[index + 1]) == null ? void 0 : _b.type) === "image";
-      let text = block.text;
-      if (previousIsImage) text = text.replace(/^\s+/, "");
-      if (nextIsImage) text = text.replace(/\s+$/, "");
-      parts.push(text);
-    } else if (block.type === "image") {
-      parts.push(`
-
-![[${block.image.filename}]]
-`);
-    }
-  }
-  return parts.join("").replace(/\n{3,}/g, "\n\n").trim();
-}
-function renderTelegramSegments(orderedBlocks) {
-  const segments = [];
-  for (const block of orderedBlocks) {
-    if (block.type === "text") {
-      const markdown = block.text.trim();
-      if (markdown) segments.push({ type: "richText", markdown });
-    } else if (block.type === "image") {
-      segments.push({
-        type: "image",
-        filename: block.image.filename,
-        vaultPath: block.image.vaultPath || block.image.filename
-      });
-    }
-  }
-  return segments;
-}
-function renderRichContent({ richDraft, fallbackContent = "", fallbackImageFilenames = [] } = {}) {
-  const warnings = [];
-  const draft = normalizeRichDraft(richDraft, fallbackContent, fallbackImageFilenames);
-  const orderedBlocks = buildOrderedBlocks(draft, warnings);
-  const orderedImageFilenames = [];
-  const seenFilenames = /* @__PURE__ */ new Set();
-  for (const block of orderedBlocks) {
-    if (block.type !== "image") continue;
-    if (seenFilenames.has(block.image.filename)) continue;
-    seenFilenames.add(block.image.filename);
-    orderedImageFilenames.push(block.image.filename);
-  }
-  return {
-    plainText: renderPlainText(orderedBlocks),
-    obsidianMarkdown: renderObsidianMarkdown(orderedBlocks),
-    telegramSegments: renderTelegramSegments(orderedBlocks),
-    orderedImageFilenames,
-    warnings
-  };
-}
-var content_renderer_default;
-var init_content_renderer = __esm({
-  "src/core/content-renderer.js"() {
-    content_renderer_default = { renderRichContent, normalizeRichDraft, createImageEntity };
-  }
-});
-
 // src/adapters/flomo.js
 var flomo_exports = {};
 __export(flomo_exports, {
   default: () => flomo_default,
   execute: () => execute,
-  manifest: () => manifest
+  manifest: () => manifest,
+  validate: () => validate
 });
 function extractRemoteImageUrls(content) {
   const urls = [];
@@ -1954,20 +1852,30 @@ function extractRemoteImageUrls(content) {
   }
   return urls;
 }
-async function execute({ content, apiUrl, requestUrl: requestUrl2 }) {
-  const normalizedContent = String(content || "");
+async function validate({ payload }) {
+  const warnings = [];
+  const errors = [];
+  if (!payload.plainText && extractRemoteImageUrls(payload.content).length === 0) {
+    errors.push("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9");
+  }
+  return { warnings, errors };
+}
+async function execute({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
+  var _a;
+  const apiUrl = String(config.apiUrl || "").trim();
+  const content = String(payload.content || "");
   if (!apiUrl) {
     return { success: false, error: "Flomo API URL \u672A\u914D\u7F6E" };
   }
-  const imageUrls = extractRemoteImageUrls(normalizedContent);
-  const textContent = normalizedContent.replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/!\[\[[^\]]+\]\]/g, "").trim();
+  const imageUrls = extractRemoteImageUrls(content);
+  const textContent = String((_a = payload.plainText) != null ? _a : content).replace(/@图片\d+/g, "").trim();
   const warnings = [];
   if (!textContent && imageUrls.length === 0) {
     return { success: true, skipped: true, message: "\u6CA1\u6709\u53EF\u53D1\u9001\u5230 flomo \u7684\u5185\u5BB9", warnings };
   }
   try {
     const response = await requestUrl2({
-      url: apiUrl.trim(),
+      url: apiUrl,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2009,6 +1917,15 @@ var init_flomo = __esm({
       name: "Flomo",
       description: "\u540C\u6B65\u5185\u5BB9\u5230 flomo",
       enabledByDefault: true,
+      capabilities: {
+        text: true,
+        attachments: false,
+        attachmentTypes: [],
+        maxAttachments: 0,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: false,
+        warnOnAttachmentSize: false
+      },
       settings: {
         fields: [
           {
@@ -2021,7 +1938,7 @@ var init_flomo = __esm({
         ]
       }
     };
-    flomo_default = { manifest, execute };
+    flomo_default = { manifest, execute, validate };
   }
 });
 
@@ -2032,7 +1949,8 @@ __export(telegram_exports, {
   execute: () => execute2,
   listChannels: () => listChannels,
   manifest: () => manifest2,
-  runAction: () => runAction
+  runAction: () => runAction,
+  validate: () => validate2
 });
 async function tgApi(botToken, method, body, requestUrlFn) {
   const url = `${TG_API_BASE}/bot${botToken}/${method}`;
@@ -2495,37 +2413,193 @@ ${t}` : t;
     return { success: false, error: error.message };
   }
 }
-async function execute2({ content, config, telegramSegments, requestUrl: requestUrl2, readImageFile, channelId, channelIds, isRichText = true, showLinkPreview }) {
+function buildTelegramSegmentsFromContent(content, attachments) {
+  const imageByToken = new Map(
+    (Array.isArray(attachments) ? attachments : []).filter((a) => (a == null ? void 0 : a.token) && (a == null ? void 0 : a.filename)).map((a) => [a.token, a])
+  );
+  const segments = [];
+  const tokenPattern = /@图片\d+/g;
+  const source = String(content || "");
+  let cursor = 0;
+  let match;
+  const pushText = (text) => {
+    const trimmed = text.trim();
+    if (trimmed) segments.push({ type: "richText", markdown: trimmed });
+  };
+  while ((match = tokenPattern.exec(source)) !== null) {
+    if (match.index > cursor) pushText(source.slice(cursor, match.index));
+    const img = imageByToken.get(match[0]);
+    if (img) {
+      segments.push({
+        type: "image",
+        filename: img.filename,
+        vaultPath: img.vaultPath || img.filename
+      });
+    }
+    cursor = match.index + match[0].length;
+  }
+  pushText(source.slice(cursor));
+  return segments;
+}
+async function ensureTelegraphToken(config, requestUrlFn, saveConfig) {
+  if (config.telegraphAccessToken) return config.telegraphAccessToken;
+  const account = await telegraph.createAccount("JournalSync", config.telegraphAuthorName || "", requestUrlFn);
+  if (typeof saveConfig === "function") {
+    await saveConfig({ telegraphAccessToken: account.access_token });
+  }
+  return account.access_token;
+}
+async function executeTelegraphSend({ botToken, config, payload, requestUrl: requestUrl2, channelIds, telegraphTitle, titleLevel, showLinkPreview, saveConfig }) {
+  let accessToken;
+  try {
+    accessToken = await ensureTelegraphToken(config, requestUrl2, saveConfig);
+  } catch (error) {
+    return { success: false, error: `Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: ${error.message}` };
+  }
+  const authorName = config.telegraphAuthorName || "";
+  const imageUrls = /* @__PURE__ */ new Map();
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  for (const img of attachments) {
+    const token = img.token;
+    const vaultPath = img.vaultPath || img.filename;
+    if (!token || !vaultPath) continue;
+    if (/^https?:\/\//i.test(vaultPath)) {
+      imageUrls.set(token, vaultPath);
+      continue;
+    }
+    try {
+      const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(vaultPath) : null;
+      if (!buffer) {
+        return { success: false, error: `\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247: ${img.filename || vaultPath}` };
+      }
+      const url = await telegraph.uploadImage(buffer, img.filename || "image.jpg", requestUrl2);
+      imageUrls.set(token, url);
+    } catch (error) {
+      return { success: false, error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25 (${img.filename || vaultPath}): ${error.message}` };
+    }
+  }
+  const titleLevelNum = Math.max(1, Math.min(6, Number(titleLevel) || 1));
+  const { title: extractedTitle, content: nodes } = telegraph.markdownToNodes(payload.content, imageUrls, titleLevelNum);
+  const finalTitle = telegraphTitle || extractedTitle || "Journal Sync";
+  let pageUrl;
+  try {
+    const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, "", requestUrl2);
+    pageUrl = page.url;
+  } catch (error) {
+    return { success: false, error: `Telegraph \u521B\u5EFA\u9875\u9762\u5931\u8D25: ${error.message}` };
+  }
+  if (!botToken) {
+    return { success: false, error: "Telegram Bot Token \u672A\u914D\u7F6E", url: pageUrl };
+  }
+  const targets = Array.isArray(channelIds) && channelIds.length > 0 ? channelIds.map(String) : [];
+  if (targets.length === 0) {
+    return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E", url: pageUrl };
+  }
+  const linkPreviewEnabled = showLinkPreview !== void 0 ? showLinkPreview : config.showLinkPreview !== false;
+  const linkText = `${finalTitle}
+${pageUrl}`;
+  const results = await Promise.all(targets.map(async (targetCh) => {
+    try {
+      const response = await requestUrl2({
+        url: `${TG_API_BASE}/bot${botToken}/sendMessage`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: targetCh,
+          text: linkText,
+          disable_web_page_preview: !linkPreviewEnabled
+        }),
+        throw: false
+      });
+      const data = response.json;
+      if (!data || !data.ok) {
+        return { success: false, channelId: targetCh, error: (data == null ? void 0 : data.description) || "\u53D1\u9001\u5931\u8D25" };
+      }
+      return { success: true, channelId: targetCh };
+    } catch (error) {
+      return { success: false, channelId: targetCh, error: error.message || String(error) };
+    }
+  }));
+  const allOk = results.every((r) => r.success);
+  const errors = results.filter((r) => !r.success).map((r) => `${r.channelId}: ${r.error}`).join("; ");
+  return {
+    success: allOk,
+    error: allOk ? void 0 : errors,
+    url: pageUrl,
+    results
+  };
+}
+async function validate2({ payload, config }) {
+  const warnings = [];
+  const errors = [];
+  const channelIds = Array.isArray(config.channelIds) ? config.channelIds : [];
+  if (channelIds.length === 0 && !(Array.isArray(config.homeChannels) && config.homeChannels.length > 0)) {
+    warnings.push("Telegram \u9891\u9053\u672A\u9009\u62E9");
+  }
+  return { warnings, errors };
+}
+async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, saveConfig }) {
   var _a;
-  const botToken = config == null ? void 0 : config.botToken;
+  const botToken = config.botToken;
   if (!botToken) {
     return { success: false, error: "Telegram Bot Token \u672A\u914D\u7F6E" };
   }
-  const targets = Array.isArray(channelIds) && channelIds.length > 0 ? channelIds.map(String) : channelId ? [String(channelId)] : [];
-  if (targets.length === 0) {
+  const warnings = [];
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const imageCount = attachments.filter((item) => (item == null ? void 0 : item.kind) === "image").length;
+  let effectivePayload = payload;
+  if (imageCount > MAX_TELEGRAM_IMAGES) {
+    let keptImages = 0;
+    const limitedAttachments = attachments.filter((item) => {
+      if ((item == null ? void 0 : item.kind) !== "image") return true;
+      keptImages += 1;
+      return keptImages <= MAX_TELEGRAM_IMAGES;
+    });
+    effectivePayload = { ...payload, attachments: limitedAttachments };
+    warnings.push(`\u8D85\u8FC7 ${MAX_TELEGRAM_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_TELEGRAM_IMAGES} \u5F20`);
+  }
+  const tgSendMode = config.tgSendMode || "plain";
+  const isRich = tgSendMode === "rich";
+  const isTelegraph = tgSendMode === "telegraph";
+  const channelIds = (Array.isArray(config.channelIds) ? config.channelIds : []).map(String);
+  if (channelIds.length === 0) {
     const homeChannelIds = Array.isArray(config.homeChannels) ? config.homeChannels.map(String) : [];
     const configuredChannels = Array.isArray(config.channels) ? config.channels : [];
     const firstHomeChannel = homeChannelIds.find(Boolean);
     const firstKnownChannel = (_a = configuredChannels.find((c) => c == null ? void 0 : c.id)) == null ? void 0 : _a.id;
     if (firstHomeChannel || firstKnownChannel) {
-      targets.push(String(firstHomeChannel || firstKnownChannel));
+      channelIds.push(String(firstHomeChannel || firstKnownChannel));
     }
   }
-  if (targets.length === 0) {
+  if (channelIds.length === 0) {
     return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u5217\u8868" };
   }
-  const segments = Array.isArray(telegramSegments) && telegramSegments.length > 0 ? telegramSegments : [{ type: "richText", markdown: String(content || "").trim() }];
+  if (isTelegraph) {
+    const result = await executeTelegraphSend({
+      botToken,
+      config,
+      payload: effectivePayload,
+      requestUrl: requestUrl2,
+      channelIds,
+      telegraphTitle: config.telegraphTitle || "",
+      titleLevel: config.telegraphTitleLevel || 1,
+      showLinkPreview: config.showLinkPreview,
+      saveConfig
+    });
+    return warnings.length > 0 ? { ...result, warnings: [...result.warnings || [], ...warnings] } : result;
+  }
+  const segments = buildTelegramSegmentsFromContent(effectivePayload.content, effectivePayload.attachments);
   const imageBuffers = /* @__PURE__ */ new Map();
   const missingImages = /* @__PURE__ */ new Set();
   for (const seg of segments) {
     const imageKey = seg.vaultPath || seg.filename;
     if (seg.type !== "image" || !seg.filename || !imageKey || imageBuffers.has(imageKey) || missingImages.has(imageKey)) continue;
-    if (typeof readImageFile !== "function") {
+    if (typeof payload.readAttachment !== "function") {
       missingImages.add(imageKey);
       continue;
     }
     try {
-      const buffer = await readImageFile(imageKey);
+      const buffer = await payload.readAttachment(imageKey);
       if (buffer) imageBuffers.set(imageKey, buffer);
       else missingImages.add(imageKey);
     } catch (e) {
@@ -2542,10 +2616,10 @@ async function execute2({ content, config, telegramSegments, requestUrl: request
     if (segment.type !== "image") return segment;
     return { ...segment, imageKey: segment.vaultPath || segment.filename };
   });
-  const effectiveConfig = showLinkPreview !== void 0 ? { ...config, showLinkPreview } : config;
-  const results = await Promise.all(targets.map(async (targetCh) => {
+  const effectiveConfig = { showLinkPreview: config.showLinkPreview };
+  const results = await Promise.all(channelIds.map(async (targetCh) => {
     try {
-      const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl2, isRichText);
+      const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl2, isRich);
       return { channelId: targetCh, ...res };
     } catch (error) {
       return { success: false, channelId: targetCh, error: error.message || String(error) };
@@ -2556,11 +2630,13 @@ async function execute2({ content, config, telegramSegments, requestUrl: request
   return {
     success: allOk,
     error: allOk ? void 0 : errors,
-    results
+    results,
+    warnings
   };
 }
 async function runAction(actionId, config, requestUrlFn) {
   if (actionId === "discoverChannels" || actionId === "testConnection") {
+    if (!(config == null ? void 0 : config.botToken)) throw new Error("Bot Token \u672A\u914D\u7F6E");
     const channels = await listChannels(config.botToken, config.channels || [], requestUrlFn);
     return {
       success: true,
@@ -2570,16 +2646,26 @@ async function runAction(actionId, config, requestUrlFn) {
   }
   throw new Error(`\u672A\u77E5\u64CD\u4F5C: ${actionId}`);
 }
-var TG_API_BASE, manifest2, telegram_default;
+var TG_API_BASE, telegraph, manifest2, MAX_TELEGRAM_IMAGES, telegram_default;
 var init_telegram = __esm({
   "src/adapters/telegram.js"() {
     TG_API_BASE = "https://api.telegram.org";
+    telegraph = require_telegraph();
     manifest2 = {
       id: "telegram",
       version: "2.0.0",
       name: "Telegram",
       description: "\u53D1\u9001\u5185\u5BB9\u5230 Telegram \u9891\u9053",
       enabledByDefault: false,
+      capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ["image/*"],
+        maxAttachments: 9,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: true,
+        warnOnAttachmentSize: false
+      },
       settings: {
         fields: [
           {
@@ -2611,7 +2697,8 @@ var init_telegram = __esm({
         ]
       }
     };
-    telegram_default = { manifest: manifest2, execute: execute2, listChannels, runAction };
+    MAX_TELEGRAM_IMAGES = manifest2.capabilities.maxAttachments;
+    telegram_default = { manifest: manifest2, execute: execute2, validate: validate2, listChannels, runAction };
   }
 });
 
@@ -2620,7 +2707,8 @@ var mastodon_exports = {};
 __export(mastodon_exports, {
   default: () => mastodon_default,
   execute: () => execute3,
-  manifest: () => manifest3
+  manifest: () => manifest3,
+  validate: () => validate3
 });
 function getMimeType(filename) {
   const ext = String(filename || "").split(".").pop().toLowerCase();
@@ -2630,9 +2718,10 @@ function getMimeType(filename) {
     png: "image/png",
     gif: "image/gif",
     webp: "image/webp",
-    heic: "image/heic",
-    heif: "image/heif",
-    svg: "image/svg+xml"
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    mov: "video/quicktime",
+    webm: "video/webm"
   };
   return mimeTypes[ext] || "application/octet-stream";
 }
@@ -2667,8 +2756,7 @@ Content-Type: ${mimeType}\r
       "Authorization": `Bearer ${accessToken}`,
       "Content-Type": `multipart/form-data; boundary=${boundary}`
     },
-    // requestUrl accepts string or ArrayBuffer; pass the exact binary range.
-    body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    body: body.buffer,
     throw: false
   });
   let result = {};
@@ -2677,48 +2765,58 @@ Content-Type: ${mimeType}\r
   } catch (e) {
   }
   if (response.status < 200 || response.status >= 300) {
-    const message = result.error || result.description || response.text || `HTTP ${response.status}`;
-    return { id: null, error: String(message).trim() || `HTTP ${response.status}` };
+    return { id: null, error: `HTTP ${response.status}: ${result.error || response.text || ""}` };
   }
   if (!result.id) {
     return { id: null, error: "Mastodon \u672A\u8FD4\u56DE\u5A92\u4F53 ID" };
   }
   return { id: result.id, error: "" };
 }
-async function execute3({ content, serverUrl, accessToken, visibility = "public", requestUrl: requestUrl2, images = [], readImageFile }) {
+async function validate3({ payload }) {
+  const warnings = [];
+  const errors = [];
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const images = attachments.filter((a) => a.kind === "image");
+  if (!payload.plainText && images.length === 0) {
+    errors.push("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+  }
+  return { warnings, errors };
+}
+async function execute3({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
   var _a;
+  const serverUrl = String(config.serverUrl || "").trim();
+  const accessToken = String(config.accessToken || "").trim();
+  const visibility = config.visibility || "public";
   if (!serverUrl || !accessToken) {
     return { success: false, error: "Mastodon \u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E" };
   }
-  const normalizedContent = String(content || "").trim();
-  const textContent = normalizedContent.replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/!\[\[[^\]]+\]\]/g, "").trim();
-  const baseUrl = String(serverUrl).trim().replace(/\/+$/, "");
+  const textContent = String(payload.plainText || "").trim();
+  const baseUrl = serverUrl.replace(/\/+$/, "");
   const warnings = [];
   try {
     const mediaIds = [];
-    const imageList = Array.isArray(images) ? images.filter(Boolean) : [];
-    if (imageList.length > MAX_MASTODON_IMAGES) {
-      return {
-        success: false,
-        error: `Mastodon \u5355\u6761\u6700\u591A\u652F\u6301 ${MAX_MASTODON_IMAGES} \u5F20\u56FE\u7247\uFF0C\u672C\u6B21\u9009\u62E9\u4E86 ${imageList.length} \u5F20\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`
-      };
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+    const allImages = attachments.filter((a) => a.kind === "image");
+    const images = allImages.slice(0, MAX_MASTODON_IMAGES);
+    if (allImages.length > MAX_MASTODON_IMAGES) {
+      warnings.push(`\u8D85\u8FC7 ${MAX_MASTODON_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_MASTODON_IMAGES} \u5F20`);
     }
-    for (const filename of imageList) {
+    for (const img of images) {
       try {
-        const buffer = typeof readImageFile === "function" ? await readImageFile(filename) : null;
+        const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(img.vaultPath) : null;
         if (!buffer) {
-          return { success: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002` };
+          return { success: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${img.filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002` };
         }
-        const uploadResult = await uploadImageToMastodon(buffer, filename, baseUrl, accessToken, requestUrl2);
+        const uploadResult = await uploadImageToMastodon(buffer, img.filename, baseUrl, accessToken, requestUrl2);
         if (!uploadResult.id) {
           return {
             success: false,
-            error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A${filename}${uploadResult.error ? `\uFF08${uploadResult.error}\uFF09` : ""}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`
+            error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A${img.filename}${uploadResult.error ? `\uFF08${uploadResult.error}\uFF09` : ""}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`
           };
         }
         mediaIds.push(uploadResult.id);
       } catch (error) {
-        return { success: false, error: `\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A${filename}\uFF08${error.message || String(error)}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002` };
+        return { success: false, error: `\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A${img.filename}\uFF08${error.message || String(error)}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002` };
       }
     }
     if (!textContent && mediaIds.length === 0) {
@@ -2767,6 +2865,15 @@ var init_mastodon = __esm({
       name: "Mastodon",
       description: "\u53D1\u5E03\u5185\u5BB9\u5230 Mastodon",
       enabledByDefault: false,
+      capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ["image/*"],
+        maxAttachments: 4,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: true,
+        warnOnAttachmentSize: false
+      },
       settings: {
         fields: [
           {
@@ -2798,8 +2905,8 @@ var init_mastodon = __esm({
         ]
       }
     };
-    MAX_MASTODON_IMAGES = 4;
-    mastodon_default = { manifest: manifest3, execute: execute3 };
+    MAX_MASTODON_IMAGES = manifest3.capabilities.maxAttachments;
+    mastodon_default = { manifest: manifest3, execute: execute3, validate: validate3 };
   }
 });
 
@@ -2808,7 +2915,8 @@ var missky_exports = {};
 __export(missky_exports, {
   default: () => missky_default,
   execute: () => execute4,
-  manifest: () => manifest4
+  manifest: () => manifest4,
+  validate: () => validate4
 });
 function getMimeType2(filename) {
   const ext = String(filename || "").split(".").pop().toLowerCase();
@@ -2818,9 +2926,10 @@ function getMimeType2(filename) {
     png: "image/png",
     gif: "image/gif",
     webp: "image/webp",
-    heic: "image/heic",
-    heif: "image/heif",
-    svg: "image/svg+xml"
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    mov: "video/quicktime",
+    webm: "video/webm"
   };
   return mimeTypes[ext] || "application/octet-stream";
 }
@@ -2859,7 +2968,7 @@ Content-Type: ${mimeType}\r
     url: `${baseUrl}/api/drive/files/create`,
     method: "POST",
     headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-    body: body.buffer.slice(0, totalLength),
+    body: body.buffer,
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
@@ -2868,33 +2977,49 @@ Content-Type: ${mimeType}\r
   const result = response.json || {};
   return result.id || null;
 }
-async function execute4({ content, serverUrl, apiToken, visibility = "public", requestUrl: requestUrl2, images = [], readImageFile }) {
+async function validate4({ payload }) {
+  const warnings = [];
+  const errors = [];
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  if (!payload.plainText && attachments.length === 0) {
+    errors.push("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+  }
+  return { warnings, errors };
+}
+async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
   var _a, _b, _c;
+  const serverUrl = String(config.serverUrl || "").trim();
+  const apiToken = String(config.apiToken || "").trim();
+  const visibility = config.visibility || "public";
   if (!serverUrl || !apiToken) {
     return { success: false, error: "Misskey \u5B9E\u4F8B\u5730\u5740\u6216 API Token \u672A\u914D\u7F6E" };
   }
-  const normalizedContent = String(content || "").trim();
-  const textContent = normalizedContent.replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/!\[\[[^\]]+\]\]/g, "").trim();
-  const baseUrl = String(serverUrl).trim().replace(/\/+$/, "");
+  const textContent = String(payload.plainText || "").trim();
+  const baseUrl = serverUrl.replace(/\/+$/, "");
   const warnings = [];
   try {
     const fileIds = [];
-    const imageList = Array.isArray(images) ? images.filter(Boolean) : [];
-    for (const filename of imageList) {
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+    const allImages = attachments.filter((a) => a.kind === "image");
+    const images = allImages.slice(0, MAX_MISSKEY_IMAGES);
+    if (allImages.length > MAX_MISSKEY_IMAGES) {
+      warnings.push(`\u8D85\u8FC7 ${MAX_MISSKEY_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_MISSKEY_IMAGES} \u5F20`);
+    }
+    for (const img of images) {
       try {
-        const buffer = typeof readImageFile === "function" ? await readImageFile(filename) : null;
+        const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(img.vaultPath) : null;
         if (!buffer) {
-          warnings.push(`\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${filename}`);
+          warnings.push(`\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${img.filename}`);
           continue;
         }
-        const fileId = await uploadImageToMissky(buffer, filename, baseUrl, apiToken, requestUrl2);
+        const fileId = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl2);
         if (fileId) {
           fileIds.push(fileId);
         } else {
-          warnings.push(`\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${filename}`);
+          warnings.push(`\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${img.filename}`);
         }
       } catch (error) {
-        warnings.push(`\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${filename}`);
+        warnings.push(`\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${img.filename}`);
       }
     }
     if (!textContent && fileIds.length === 0) {
@@ -2932,7 +3057,7 @@ async function execute4({ content, serverUrl, apiToken, visibility = "public", r
     return { success: false, error: error.message, warnings };
   }
 }
-var manifest4, missky_default;
+var manifest4, MAX_MISSKEY_IMAGES, missky_default;
 var init_missky = __esm({
   "src/adapters/missky.js"() {
     manifest4 = {
@@ -2941,6 +3066,15 @@ var init_missky = __esm({
       name: "Misskey",
       description: "\u53D1\u5E03\u5185\u5BB9\u5230 Misskey / Calckey / Firefish \u5B9E\u4F8B",
       enabledByDefault: false,
+      capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ["image/*"],
+        maxAttachments: 16,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: true,
+        warnOnAttachmentSize: false
+      },
       settings: {
         fields: [
           {
@@ -2972,7 +3106,8 @@ var init_missky = __esm({
         ]
       }
     };
-    missky_default = { manifest: manifest4, execute: execute4 };
+    MAX_MISSKEY_IMAGES = manifest4.capabilities.maxAttachments;
+    missky_default = { manifest: manifest4, execute: execute4, validate: validate4 };
   }
 });
 
@@ -2982,7 +3117,8 @@ __export(notion_exports, {
   default: () => notion_default,
   execute: () => execute5,
   manifest: () => manifest5,
-  retrieveDataSource: () => retrieveDataSource
+  retrieveDataSource: () => retrieveDataSource,
+  validate: () => validate5
 });
 function getResponseError(response) {
   const json = (response == null ? void 0 : response.json) || {};
@@ -3269,7 +3405,7 @@ async function findDailyPage(requestUrl2, token, parentPageId, dateTitle) {
     }
     cursor = ((_c = response.json) == null ? void 0 : _c.has_more) ? String(((_d = response.json) == null ? void 0 : _d.next_cursor) || "") : "";
   } while (cursor);
-  if (matches.length > 1) throw new Error(`Notion \u4E2D\u627E\u5230\u591A\u4E2A\u201C${dateTitle}\u201D\u6BCF\u65E5\u9875\u9762\uFF0C\u8BF7\u4FDD\u7559\u4E00\u4E2A\u540E\u91CD\u8BD5`);
+  if (matches.length > 1) throw new Error(`Notion \u4E2D\u627E\u5230\u591A\u4E2A"${dateTitle}"\u6BCF\u65E5\u9875\u9762\uFF0C\u8BF7\u4FDD\u7559\u4E00\u4E2A\u540E\u91CD\u8BD5`);
   return matches[0] || null;
 }
 async function createPage(requestUrl2, token, parent, title, children) {
@@ -3294,19 +3430,100 @@ async function createPage(requestUrl2, token, parent, title, children) {
   if (children.length > MAX_BLOCKS_PER_REQUEST) await appendBlocks(requestUrl2, token, pageId, children);
   return pageId;
 }
-async function execute5({ config = {}, requestUrl: requestUrl2, content, title = "", localImages = [], externalImages = [] }) {
+function getImageMimeType2(filename) {
+  const ext = String(filename || "").split(".").pop().toLowerCase();
+  const types = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
+  return types[ext] || "application/octet-stream";
+}
+async function compressImageToWebp(arrayBuffer, mimeType) {
+  const source = new Blob([arrayBuffer], { type: mimeType });
+  const bitmap = await createImageBitmap(source);
+  const maxDimension = 2560;
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
+  return blob ? await blob.arrayBuffer() : null;
+}
+async function prepareLocalImages(payload, autoCompress) {
+  const localImages = [];
+  const warnings = [];
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  for (let index = 0; index < attachments.length; index += 1) {
+    const img = attachments[index];
+    if (img.kind !== "image") continue;
+    const vaultPath = img.vaultPath || img.filename;
+    if (!vaultPath || typeof payload.readAttachment !== "function") continue;
+    const buffer = await payload.readAttachment(vaultPath);
+    if (!buffer) throw new Error(`\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247\uFF1A${img.filename || vaultPath}`);
+    const source = new Uint8Array(buffer);
+    let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
+    let filename = img.filename || `image-${index + 1}`;
+    let mimeType = getImageMimeType2(filename);
+    const originalBytes = source.byteLength;
+    if (originalBytes > MAX_NOTION_ATTACHMENT_SIZE) {
+      warnings.push({ filename, bytes: originalBytes, canCompress: /^(image\/(png|jpe?g|webp))$/i.test(mimeType) });
+      if (autoCompress && /^(image\/(png|jpe?g|webp))$/i.test(mimeType)) {
+        const compressed = await compressImageToWebp(uploadBuffer, mimeType);
+        if (compressed && compressed.byteLength < originalBytes) {
+          uploadBuffer = compressed;
+          filename = filename.replace(/\.[^.]+$/, "") + ".webp";
+          mimeType = "image/webp";
+        }
+      }
+    }
+    const tokenMatch = String(img.token || "").match(/^@图片(\d+)$/);
+    localImages.push({
+      token: tokenMatch ? tokenMatch[1] : String(index + 1),
+      filename,
+      mimeType,
+      buffer: uploadBuffer
+    });
+  }
+  return { localImages, warnings };
+}
+function resolveTitle(config, payload) {
+  const titleSource = config.titleSource || "scope";
+  if (titleSource === "none") return "";
+  if (titleSource === "first_heading") {
+    const headingMatch = String(payload.content || "").match(/^#\s+(.+)$/m);
+    return headingMatch ? headingMatch[1].trim() : "";
+  }
+  return String(payload.title || "");
+}
+async function validate5({ payload }) {
+  const warnings = [];
+  const errors = [];
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const images = attachments.filter((a) => a.kind === "image");
+  for (const img of images) {
+    const ext = String(img.filename || "").split(".").pop().toLowerCase();
+    if (!["jpg", "jpeg", "png", "webp", "gif", "svg"].includes(ext)) {
+      warnings.push(`Notion \u53EF\u80FD\u4E0D\u652F\u6301\u56FE\u7247\u683C\u5F0F\uFF1A${img.filename}`);
+    }
+  }
+  return { warnings, errors };
+}
+async function execute5({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
   const token = String(config.token || "").trim();
   if (!token) return { success: false, error: "Notion Token \u672A\u914D\u7F6E" };
   if (!requestUrl2) return { success: false, error: "Notion \u8BF7\u6C42\u63A5\u53E3\u4E0D\u53EF\u7528" };
   try {
-    const imageMap = await prepareImages({ requestUrl: requestUrl2, token, localImages, externalImages });
-    const children = markdownToBlocks(content, imageMap);
-    const targetType = config.targetType || "page";
+    const autoCompress = Boolean(config.autoCompressLargeImages);
+    const { localImages, warnings: imageWarnings } = await prepareLocalImages(payload, autoCompress);
+    const imageMap = await prepareImages({ requestUrl: requestUrl2, token, localImages, externalImages: {} });
+    const children = markdownToBlocks(payload.content, imageMap);
+    const title = resolveTitle(config, payload);
     const normalizedTitle = cleanText(title);
+    const targetType = config.targetType || "page";
     if (targetType === "database") {
       if (!config.dataSourceId || !config.titleProperty) return { success: false, error: "Notion Data Source ID \u6216\u6807\u9898\u5B57\u6BB5\u672A\u914D\u7F6E" };
       const pageId2 = await createPage(requestUrl2, token, { type: "data_source_id", id: config.dataSourceId, titleProperty: config.titleProperty }, normalizedTitle, children);
-      return { success: true, pageId: pageId2 };
+      return { success: true, pageId: pageId2, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
     }
     if (!config.pageId) return { success: false, error: "Notion \u7236\u9875\u9762 ID \u672A\u914D\u7F6E" };
     if (config.pageWriteMode === "daily_append") {
@@ -3316,13 +3533,13 @@ async function execute5({ config = {}, requestUrl: requestUrl2, content, title =
       let dailyPage = await findDailyPage(requestUrl2, token, config.pageId, dateTitle);
       if (!dailyPage) {
         const pageId2 = await createPage(requestUrl2, token, { type: "page_id", id: config.pageId }, dateTitle, appendChildren);
-        return { success: true, pageId: pageId2, daily: true };
+        return { success: true, pageId: pageId2, daily: true, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
       }
       await appendBlocks(requestUrl2, token, dailyPage.id, appendChildren);
-      return { success: true, pageId: dailyPage.id, daily: true };
+      return { success: true, pageId: dailyPage.id, daily: true, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
     }
     const pageId = await createPage(requestUrl2, token, { type: "page_id", id: config.pageId }, normalizedTitle, children);
-    return { success: true, pageId };
+    return { success: true, pageId, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
   } catch (error) {
     return { success: false, error: error.message || String(error) };
   }
@@ -3343,7 +3560,7 @@ async function retrieveDataSource({ config = {}, requestUrl: requestUrl2 }) {
   const titles = Object.entries(properties).filter(([, property]) => (property == null ? void 0 : property.type) === "title").map(([name]) => name);
   return { titles, properties };
 }
-var NOTION_API_BASE, NOTION_VERSION, MAX_RETRIES, MAX_BLOCKS_PER_REQUEST, manifest5, notion_default;
+var NOTION_API_BASE, NOTION_VERSION, MAX_RETRIES, MAX_BLOCKS_PER_REQUEST, manifest5, MAX_NOTION_ATTACHMENT_SIZE, notion_default;
 var init_notion = __esm({
   "src/adapters/notion.js"() {
     NOTION_API_BASE = "https://api.notion.com/v1";
@@ -3355,9 +3572,19 @@ var init_notion = __esm({
       version: "1.0.0",
       name: "Notion",
       description: "\u53D1\u9001\u5185\u5BB9\u5230 Notion \u9875\u9762\u6216 Data Source",
-      enabledByDefault: false
+      enabledByDefault: false,
+      capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ["image/*"],
+        maxAttachments: 100,
+        maxAttachmentSize: 5 * 1024 * 1024,
+        warnOnAttachmentCount: false,
+        warnOnAttachmentSize: true
+      }
     };
-    notion_default = { manifest: manifest5, execute: execute5, retrieveDataSource };
+    MAX_NOTION_ATTACHMENT_SIZE = manifest5.capabilities.maxAttachmentSize;
+    notion_default = { manifest: manifest5, execute: execute5, validate: validate5, retrieveDataSource };
   }
 });
 
@@ -3371,13 +3598,11 @@ var {
 var AdapterRegistry = require_adapter_registry();
 var JournalSyncSendModal = require_send_modal();
 var JournalSyncSettingTab = require_settings_tab();
-var { renderRichContent: renderRichContent2 } = (init_content_renderer(), __toCommonJS(content_renderer_exports));
 var flomoAdapter = (init_flomo(), __toCommonJS(flomo_exports));
 var telegramAdapter = (init_telegram(), __toCommonJS(telegram_exports));
 var mastodonAdapter = (init_mastodon(), __toCommonJS(mastodon_exports));
 var misskeyAdapter = (init_missky(), __toCommonJS(missky_exports));
 var notionAdapter = (init_notion(), __toCommonJS(notion_exports));
-var telegraph = require_telegraph();
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 function padNumber(v, size = 2) {
   return String(v).padStart(size, "0");
@@ -3750,234 +3975,22 @@ var JournalSyncPlugin = class extends Plugin {
   async requestUrl(options) {
     return requestUrl(options);
   }
-  async prepareNotionImages(images, readImageFile, autoCompressLargeImages) {
-    const localImages = [];
-    const warnings = [];
-    const imageList = Array.isArray(images) ? images : [];
-    for (let index = 0; index < imageList.length; index += 1) {
-      const image = imageList[index];
-      const vaultPath = (image == null ? void 0 : image.vaultPath) || (image == null ? void 0 : image.filename);
-      if (!vaultPath || typeof readImageFile !== "function") continue;
-      const buffer = await readImageFile(vaultPath);
-      if (!buffer) throw new Error(`\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247\uFF1A${image.filename || vaultPath}`);
-      const source = new Uint8Array(buffer);
-      let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
-      let filename = image.filename || `image-${index + 1}`;
-      let mimeType = this.getImageMimeType(filename);
-      const originalBytes = source.byteLength;
-      if (originalBytes > 5 * 1024 * 1024) {
-        warnings.push({ filename, bytes: originalBytes, canCompress: /^(image\/(png|jpe?g|webp))$/i.test(mimeType) });
-        if (autoCompressLargeImages && /^(image\/(png|jpe?g|webp))$/i.test(mimeType)) {
-          const compressed = await this.compressImageToWebp(uploadBuffer, mimeType);
-          if (compressed && compressed.byteLength < originalBytes) {
-            uploadBuffer = compressed;
-            filename = filename.replace(/\.[^.]+$/, "") + ".webp";
-            mimeType = "image/webp";
-          }
-        }
-      }
-      const tokenMatch = String((image == null ? void 0 : image.token) || "").match(/^@图片(\d+)$/);
-      localImages.push({
-        token: tokenMatch ? tokenMatch[1] : String(index + 1),
-        filename,
-        mimeType,
-        buffer: uploadBuffer
-      });
-    }
-    return { localImages, warnings };
-  }
-  getImageMimeType(filename) {
-    const ext = String(filename || "").split(".").pop().toLowerCase();
-    const types = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
-    return types[ext] || "application/octet-stream";
-  }
-  async compressImageToWebp(arrayBuffer, mimeType) {
-    const source = new Blob([arrayBuffer], { type: mimeType });
-    const bitmap = await createImageBitmap(source);
-    const maxDimension = 2560;
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext("2d");
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
-    return blob ? await blob.arrayBuffer() : null;
-  }
   // ── 执行适配器 ──────────────────────────────
   /**
-   * 执行单个适配器的发送
+   * 执行单个适配器的发送（统一接口）
    * @param {string} adapterId
-   * @param {object} payload - { content, richDraft, telegramSegments, readImageFile, channelIds }
+   * @param {object} payload - 统一 payload { content, plainText, title, attachments, readAttachment }
+   * @param {object} [extraConfig] - 单次执行的配置覆盖，不写入持久化设置
    */
-  async executeAdapter(adapterId, payload) {
+  async executeAdapter(adapterId, payload, extraConfig = {}) {
     const adapter = this.adapterRegistry.get(adapterId);
     if (!adapter) return { success: false, error: "\u9002\u914D\u5668\u4E0D\u5B58\u5728" };
-    const config = this.getAdapterConfig(adapterId);
-    if (adapterId === "flomo") {
-      return adapter.execute({
-        content: payload.content,
-        apiUrl: config.apiUrl,
-        requestUrl
-      });
-    }
-    if (adapterId === "telegram") {
-      return adapter.execute({
-        content: payload.content,
-        config,
-        telegramSegments: payload.telegramSegments,
-        requestUrl,
-        readImageFile: payload.readImageFile,
-        channelIds: payload.channelIds,
-        isRichText: payload.isRichText,
-        showLinkPreview: payload.showLinkPreview
-      });
-    }
-    if (adapterId === "mastodon") {
-      return adapter.execute({
-        content: payload.content,
-        serverUrl: config.serverUrl,
-        accessToken: config.accessToken,
-        visibility: config.visibility,
-        requestUrl,
-        images: payload.images,
-        readImageFile: payload.readImageFile
-      });
-    }
-    if (adapterId === "missky") {
-      return adapter.execute({
-        content: payload.content,
-        serverUrl: config.serverUrl,
-        apiToken: config.apiToken,
-        visibility: config.visibility,
-        requestUrl,
-        images: payload.images,
-        readImageFile: payload.readImageFile
-      });
-    }
-    if (adapterId === "notion") {
-      return adapter.execute({
-        config,
-        content: payload.content,
-        title: payload.title,
-        localImages: payload.localImages,
-        externalImages: payload.externalImages,
-        requestUrl
-      });
-    }
-    return { success: false, error: `\u4E0D\u652F\u6301\u7684\u9002\u914D\u5668: ${adapterId}` };
-  }
-  // ── Telegraph 发送编排 ──────────────────────
-  /**
-   * 确保 Telegraph access_token 存在，无则自动创建账号
-   * @returns {Promise<string>} access_token
-   */
-  async ensureTelegraphToken() {
-    const tgConfig = this.getAdapterConfig("telegram");
-    if (tgConfig.telegraphAccessToken) return tgConfig.telegraphAccessToken;
-    const account = await telegraph.createAccount("JournalSync", tgConfig.telegraphAuthorName || "", requestUrl);
-    await this.setAdapterConfig("telegram", {
-      ...tgConfig,
-      telegraphAccessToken: account.access_token
+    const config = { ...this.getAdapterConfig(adapterId), ...extraConfig };
+    const saveConfig = async (patch = {}) => this.setAdapterConfig(adapterId, {
+      ...this.getAdapterConfig(adapterId),
+      ...patch
     });
-    return account.access_token;
-  }
-  /**
-   * Telegraph 发送编排：
-   * 1. 确保 access_token
-   * 2. 上传本地图片到 telegra.ph/upload
-   * 3. Markdown → Telegraph Node
-   * 4. createPage → 获得 telegra.ph 链接
-   * 5. 链接发送到所有选中的 Telegram 频道
-   *
-   * @param {object} params - { content, images, readImageFile, channelIds, telegraphTitle, titleLevel }
-   * @returns {Promise<object>} { success, url, results }
-   */
-  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel, showLinkPreview }) {
-    var _a;
-    let accessToken;
-    try {
-      accessToken = await this.ensureTelegraphToken();
-    } catch (error) {
-      return { success: false, error: `Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: ${error.message}` };
-    }
-    const tgConfig = this.getAdapterConfig("telegram");
-    const authorName = tgConfig.telegraphAuthorName || "";
-    const imageUrls = /* @__PURE__ */ new Map();
-    const referencedImages = Array.isArray(images) ? images : [];
-    for (const img of referencedImages) {
-      const token = img.token;
-      const vaultPath = img.vaultPath || img.filename;
-      if (!token || !vaultPath) continue;
-      if (isRemoteUrl(vaultPath)) {
-        imageUrls.set(token, vaultPath);
-        continue;
-      }
-      try {
-        const buffer = await readImageFile(vaultPath);
-        if (!buffer) {
-          return { success: false, error: `\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247: ${img.filename || vaultPath}` };
-        }
-        const url = await telegraph.uploadImage(buffer, img.filename || "image.jpg", requestUrl);
-        imageUrls.set(token, url);
-      } catch (error) {
-        return { success: false, error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25 (${img.filename || vaultPath}): ${error.message}` };
-      }
-    }
-    const sendScope = (_a = this.settings.sendScope) != null ? _a : 2;
-    const maxLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
-    const titleLevelNum = Math.max(1, Math.min(maxLevel, Number(titleLevel) || 1));
-    const { title: extractedTitle, content: nodes } = telegraph.markdownToNodes(content, imageUrls, titleLevelNum);
-    const finalTitle = telegraphTitle || extractedTitle || "Journal Sync";
-    let pageUrl;
-    try {
-      const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, "", requestUrl);
-      pageUrl = page.url;
-    } catch (error) {
-      return { success: false, error: `Telegraph \u521B\u5EFA\u9875\u9762\u5931\u8D25: ${error.message}` };
-    }
-    const botToken = tgConfig.botToken;
-    if (!botToken) {
-      return { success: false, error: "Telegram Bot Token \u672A\u914D\u7F6E", url: pageUrl };
-    }
-    const targets = Array.isArray(channelIds) && channelIds.length > 0 ? channelIds.map(String) : [];
-    if (targets.length === 0) {
-      return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E", url: pageUrl };
-    }
-    const linkPreviewEnabled = showLinkPreview !== void 0 ? showLinkPreview : tgConfig.showLinkPreview !== false;
-    const linkText = `${finalTitle}
-${pageUrl}`;
-    const results = await Promise.all(targets.map(async (targetCh) => {
-      try {
-        const response = await requestUrl({
-          url: `https://api.telegram.org/bot${botToken}/sendMessage`,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: targetCh,
-            text: linkText,
-            disable_web_page_preview: !linkPreviewEnabled
-          }),
-          throw: false
-        });
-        const data = response.json;
-        if (!data || !data.ok) {
-          return { success: false, channelId: targetCh, error: (data == null ? void 0 : data.description) || "\u53D1\u9001\u5931\u8D25" };
-        }
-        return { success: true, channelId: targetCh };
-      } catch (error) {
-        return { success: false, channelId: targetCh, error: error.message || String(error) };
-      }
-    }));
-    const allOk = results.every((r) => r.success);
-    const errors = results.filter((r) => !r.success).map((r) => `${r.channelId}: ${r.error}`).join("; ");
-    return {
-      success: allOk,
-      error: allOk ? void 0 : errors,
-      url: pageUrl,
-      results
-    };
+    return adapter.execute({ config, payload, requestUrl, saveConfig });
   }
   /**
    * 新建今日日记（无需后端服务）
@@ -4057,11 +4070,6 @@ ${pageUrl}`;
           failed: []
         };
       }
-      const renderResult = renderRichContent2({
-        richDraft: processResult.richDraft,
-        fallbackContent: processResult.content,
-        fallbackImageFilenames: processResult.imageFilenames
-      });
       if (processResult.failed.length > 0) {
         new Notice(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5F20\uFF09\uFF0C\u53D1\u9001\u65F6\u5C06\u8DF3\u8FC7\u3002`);
       }
@@ -4070,7 +4078,6 @@ ${pageUrl}`;
       new JournalSyncSendModal(this.app, this, {
         content: processResult.content || current.content,
         richDraft: processResult.richDraft,
-        telegramSegments: renderResult.telegramSegments,
         readImageFile,
         notionTitle: noteTitle
       }).open();

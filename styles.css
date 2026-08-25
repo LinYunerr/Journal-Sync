@@ -513,19 +513,6 @@
   color: var(--text-normal);
 }
 
-/* ── Notion 图片发送预警 ─────────────────────── */
-.notion-image-warning-list {
-  margin-top: 10px;
-}
-
-.notion-image-warning {
-  padding: 8px 10px;
-  border-left: 3px solid var(--text-error);
-  background: color-mix(in srgb, var(--text-error) 10%, var(--background-secondary));
-  color: var(--text-error);
-  font-size: 12px;
-  line-height: 1.5;
-}
 
 /* ── 发布目标 Blocks（选中的绿框，未选中的灰框） ── */
 .target-list {

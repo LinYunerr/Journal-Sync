@@ -1,6 +1,7 @@
 /**
  * Notion adapter
  * Uses the official Notion API directly through Obsidian requestUrl.
+ * 图片压缩、标题来源选择等逻辑已内化到适配器内部。
  */
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
@@ -13,8 +14,18 @@ export const manifest = {
     version: '1.0.0',
     name: 'Notion',
     description: '发送内容到 Notion 页面或 Data Source',
-    enabledByDefault: false
+    enabledByDefault: false,
+    capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ['image/*'],
+        maxAttachments: 100,
+        maxAttachmentSize: 5 * 1024 * 1024,
+        warnOnAttachmentCount: false,
+        warnOnAttachmentSize: true
+    }
 };
+const MAX_NOTION_ATTACHMENT_SIZE = manifest.capabilities.maxAttachmentSize;
 
 function getResponseError(response) {
     const json = response?.json || {};
@@ -57,8 +68,6 @@ function cleanText(value) {
 }
 
 function pageTitleProperty(title) {
-    // A page parent requires a title property. A zero-width space preserves the
-    // requested visual no-title behavior while keeping the request valid.
     return { title: { title: richText(title || '\u200B') } };
 }
 
@@ -159,8 +168,6 @@ function markdownToBlocks(markdown, imagesByToken = {}) {
             paragraphLines = [];
             return;
         }
-        // Send-modal image tokens may be embedded within a paragraph. Split them
-        // here so Notion blocks retain the user's original text/image order.
         const parts = text.split(/(@图片\d+|!\[[^\]]*]\(https?:\/\/[^)]+\))/i);
         for (const part of parts) {
             const imageToken = part.match(/^@图片(\d+)$/);
@@ -319,8 +326,6 @@ async function appendBlocks(requestUrl, token, pageId, children) {
 }
 
 async function findDailyPage(requestUrl, token, parentPageId, dateTitle) {
-    // Search is eventually consistent and can miss a page created manually or
-    // moments ago. Enumerating the configured parent's child blocks is exact.
     const matches = [];
     let cursor = '';
     do {
@@ -341,7 +346,7 @@ async function findDailyPage(requestUrl, token, parentPageId, dateTitle) {
         cursor = response.json?.has_more ? String(response.json?.next_cursor || '') : '';
     } while (cursor);
 
-    if (matches.length > 1) throw new Error(`Notion 中找到多个“${dateTitle}”每日页面，请保留一个后重试`);
+    if (matches.length > 1) throw new Error(`Notion 中找到多个"${dateTitle}"每日页面，请保留一个后重试`);
     return matches[0] || null;
 }
 
@@ -369,21 +374,145 @@ async function createPage(requestUrl, token, parent, title, children) {
     return pageId;
 }
 
-export async function execute({ config = {}, requestUrl, content, title = '', localImages = [], externalImages = [] }) {
+// ── 图片压缩（从 main.js 移入） ──────────────
+
+function getImageMimeType(filename) {
+    const ext = String(filename || '').split('.').pop().toLowerCase();
+    const types = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
+    return types[ext] || 'application/octet-stream';
+}
+
+async function compressImageToWebp(arrayBuffer, mimeType) {
+    const source = new Blob([arrayBuffer], { type: mimeType });
+    const bitmap = await createImageBitmap(source);
+    const maxDimension = 2560;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
+    return blob ? await blob.arrayBuffer() : null;
+}
+
+/**
+ * 从 payload.attachments 准备 Notion 本地图片列表。
+ * 包含自动压缩逻辑（超过 5MB 的图片压缩为 WebP）。
+ */
+async function prepareLocalImages(payload, autoCompress) {
+    const localImages = [];
+    const warnings = [];
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+
+    for (let index = 0; index < attachments.length; index += 1) {
+        const img = attachments[index];
+        if (img.kind !== 'image') continue;
+        const vaultPath = img.vaultPath || img.filename;
+        if (!vaultPath || typeof payload.readAttachment !== 'function') continue;
+
+        const buffer = await payload.readAttachment(vaultPath);
+        if (!buffer) throw new Error(`无法读取图片：${img.filename || vaultPath}`);
+
+        const source = new Uint8Array(buffer);
+        let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
+        let filename = img.filename || `image-${index + 1}`;
+        let mimeType = getImageMimeType(filename);
+        const originalBytes = source.byteLength;
+
+        if (originalBytes > MAX_NOTION_ATTACHMENT_SIZE) {
+            warnings.push({ filename, bytes: originalBytes, canCompress: /^(image\/(png|jpe?g|webp))$/i.test(mimeType) });
+            if (autoCompress && /^(image\/(png|jpe?g|webp))$/i.test(mimeType)) {
+                const compressed = await compressImageToWebp(uploadBuffer, mimeType);
+                if (compressed && compressed.byteLength < originalBytes) {
+                    uploadBuffer = compressed;
+                    filename = filename.replace(/\.[^.]+$/, '') + '.webp';
+                    mimeType = 'image/webp';
+                }
+            }
+        }
+
+        const tokenMatch = String(img.token || '').match(/^@图片(\d+)$/);
+        localImages.push({
+            token: tokenMatch ? tokenMatch[1] : String(index + 1),
+            filename,
+            mimeType,
+            buffer: uploadBuffer
+        });
+    }
+
+    return { localImages, warnings };
+}
+
+/**
+ * 根据 config.titleSource 决定最终标题。
+ * - 'scope': 使用 payload.title（来自发送范围标题/文件名）
+ * - 'first_heading': 从正文提取第一个 Markdown 标题
+ * - 'none': 不设标题
+ */
+function resolveTitle(config, payload) {
+    const titleSource = config.titleSource || 'scope';
+    if (titleSource === 'none') return '';
+    if (titleSource === 'first_heading') {
+        const headingMatch = String(payload.content || '').match(/^#\s+(.+)$/m);
+        return headingMatch ? headingMatch[1].trim() : '';
+    }
+    return String(payload.title || '');
+}
+
+/**
+ * 预检验证
+ */
+export async function validate({ payload }) {
+    const warnings = [];
+    const errors = [];
+
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+    const images = attachments.filter(a => a.kind === 'image');
+
+    for (const img of images) {
+        // 预检无法知道文件大小（需要读取），只检查类型
+        const ext = String(img.filename || '').split('.').pop().toLowerCase();
+        if (!['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext)) {
+            warnings.push(`Notion 可能不支持图片格式：${img.filename}`);
+        }
+    }
+
+    return { warnings, errors };
+}
+
+/**
+ * 统一执行接口
+ * @param {object} options
+ * @param {object} options.config - Notion 配置 { token, pageId, targetType, pageWriteMode, titleSource, ... }
+ * @param {object} options.payload - 统一 payload { content, title, attachments, readAttachment }
+ * @param {Function} options.requestUrl
+ */
+export async function execute({ config = {}, payload = {}, requestUrl }) {
     const token = String(config.token || '').trim();
     if (!token) return { success: false, error: 'Notion Token 未配置' };
     if (!requestUrl) return { success: false, error: 'Notion 请求接口不可用' };
 
     try {
-        const imageMap = await prepareImages({ requestUrl, token, localImages, externalImages });
-        const children = markdownToBlocks(content, imageMap);
-        const targetType = config.targetType || 'page';
+        // 准备图片（含压缩）
+        const autoCompress = Boolean(config.autoCompressLargeImages);
+        const { localImages, warnings: imageWarnings } = await prepareLocalImages(payload, autoCompress);
+        const imageMap = await prepareImages({ requestUrl, token, localImages, externalImages: {} });
+
+        // 构建内容块
+        const children = markdownToBlocks(payload.content, imageMap);
+
+        // 解析标题
+        const title = resolveTitle(config, payload);
         const normalizedTitle = cleanText(title);
+
+        const targetType = config.targetType || 'page';
 
         if (targetType === 'database') {
             if (!config.dataSourceId || !config.titleProperty) return { success: false, error: 'Notion Data Source ID 或标题字段未配置' };
             const pageId = await createPage(requestUrl, token, { type: 'data_source_id', id: config.dataSourceId, titleProperty: config.titleProperty }, normalizedTitle, children);
-            return { success: true, pageId };
+            return { success: true, pageId, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
         }
 
         if (!config.pageId) return { success: false, error: 'Notion 父页面 ID 未配置' };
@@ -394,14 +523,14 @@ export async function execute({ config = {}, requestUrl, content, title = '', lo
             let dailyPage = await findDailyPage(requestUrl, token, config.pageId, dateTitle);
             if (!dailyPage) {
                 const pageId = await createPage(requestUrl, token, { type: 'page_id', id: config.pageId }, dateTitle, appendChildren);
-                return { success: true, pageId, daily: true };
+                return { success: true, pageId, daily: true, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
             }
             await appendBlocks(requestUrl, token, dailyPage.id, appendChildren);
-            return { success: true, pageId: dailyPage.id, daily: true };
+            return { success: true, pageId: dailyPage.id, daily: true, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
         }
 
         const pageId = await createPage(requestUrl, token, { type: 'page_id', id: config.pageId }, normalizedTitle, children);
-        return { success: true, pageId };
+        return { success: true, pageId, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
     } catch (error) {
         return { success: false, error: error.message || String(error) };
     }
@@ -425,4 +554,4 @@ export async function retrieveDataSource({ config = {}, requestUrl }) {
     return { titles, properties };
 }
 
-export default { manifest, execute, retrieveDataSource };
+export default { manifest, execute, validate, retrieveDataSource };

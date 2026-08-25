@@ -12,6 +12,15 @@ export const manifest = {
     name: 'Flomo',
     description: '同步内容到 flomo',
     enabledByDefault: true,
+    capabilities: {
+        text: true,
+        attachments: false,
+        attachmentTypes: [],
+        maxAttachments: 0,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: false,
+        warnOnAttachmentSize: false
+    },
     settings: {
         fields: [
             {
@@ -46,19 +55,40 @@ function extractRemoteImageUrls(content) {
     return urls;
 }
 
-export async function execute({ content, apiUrl, requestUrl }) {
-    const normalizedContent = String(content || '');
+/**
+ * 预检验证：Flomo 不支持本地附件
+ */
+export async function validate({ payload }) {
+    const warnings = [];
+    const errors = [];
+
+    if (!payload.plainText && extractRemoteImageUrls(payload.content).length === 0) {
+        errors.push('没有可发送的内容');
+    }
+
+    return { warnings, errors };
+}
+
+/**
+ * 统一执行接口
+ * @param {object} options
+ * @param {object} options.config - 适配器配置 { apiUrl }
+ * @param {object} options.payload - 统一 payload { content, plainText, ... }
+ * @param {Function} options.requestUrl
+ */
+export async function execute({ config = {}, payload = {}, requestUrl }) {
+    const apiUrl = String(config.apiUrl || '').trim();
+    const content = String(payload.content || '');
 
     if (!apiUrl) {
         return { success: false, error: 'Flomo API URL 未配置' };
     }
 
-    const imageUrls = extractRemoteImageUrls(normalizedContent);
+    const imageUrls = extractRemoteImageUrls(content);
 
-    // 移除正文中的 Markdown 图片和 Obsidian 本地图片嵌入
-    const textContent = normalizedContent
-        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-        .replace(/!\[\[[^\]]+\]\]/g, '')
+    // plainText 已由统一 payload 去除本地图片 token 和 Markdown 图片语法。
+    const textContent = String(payload.plainText ?? content)
+        .replace(/@图片\d+/g, '')
         .trim();
 
     const warnings = [];
@@ -69,7 +99,7 @@ export async function execute({ content, apiUrl, requestUrl }) {
 
     try {
         const response = await requestUrl({
-            url: apiUrl.trim(),
+            url: apiUrl,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -105,4 +135,4 @@ export async function execute({ content, apiUrl, requestUrl }) {
     }
 }
 
-export default { manifest, execute };
+export default { manifest, execute, validate };

@@ -9,6 +9,15 @@ export const manifest = {
     name: 'Mastodon',
     description: '发布内容到 Mastodon',
     enabledByDefault: false,
+    capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ['image/*'],
+        maxAttachments: 4,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: true,
+        warnOnAttachmentSize: false
+    },
     settings: {
         fields: [
             {
@@ -41,22 +50,20 @@ export const manifest = {
     }
 };
 
-const MAX_MASTODON_IMAGES = 4;
+const MAX_MASTODON_IMAGES = manifest.capabilities.maxAttachments;
 
 function getMimeType(filename) {
     const ext = String(filename || '').split('.').pop().toLowerCase();
     const mimeTypes = {
-        jpg: 'image/jpeg', jpeg: 'image/jpeg',
-        png: 'image/png', gif: 'image/gif',
-        webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
-        svg: 'image/svg+xml'
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+        mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm'
     };
     return mimeTypes[ext] || 'application/octet-stream';
 }
 
 /**
  * 上传单张图片到 Mastodon /api/v1/media，返回 media_id
- * （从原 Journal-Sync 项目的 uploadImageToMastodon 迁移，改用 Obsidian requestUrl + Vault ArrayBuffer）
  */
 async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken, requestUrl) {
     const safeFilename = String(filename || 'image').replace(/["\r\n]/g, '_');
@@ -86,16 +93,15 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': `multipart/form-data; boundary=${boundary}`
         },
-        // requestUrl accepts string or ArrayBuffer; pass the exact binary range.
-        body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+        body: body.buffer,
         throw: false
     });
 
     let result = {};
     try { result = response.json || {}; } catch {}
+
     if (response.status < 200 || response.status >= 300) {
-        const message = result.error || result.description || response.text || `HTTP ${response.status}`;
-        return { id: null, error: String(message).trim() || `HTTP ${response.status}` };
+        return { id: null, error: `HTTP ${response.status}: ${result.error || response.text || ''}` };
     }
 
     if (!result.id) {
@@ -105,57 +111,72 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
 }
 
 /**
- * @param {object} payload
- * @param {string} payload.content
- * @param {string} payload.serverUrl
- * @param {string} payload.accessToken
- * @param {string} [payload.visibility]
- * @param {Function} payload.requestUrl
- * @param {string[]} [payload.images] - 需要附带的本地图片文件名列表
- * @param {Function} [payload.readImageFile] - 按文件名读取 Vault 图片为 ArrayBuffer
+ * 预检验证
  */
-export async function execute({ content, serverUrl, accessToken, visibility = 'public', requestUrl, images = [], readImageFile }) {
+export async function validate({ payload }) {
+    const warnings = [];
+    const errors = [];
+
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+    const images = attachments.filter(a => a.kind === 'image');
+
+
+    if (!payload.plainText && images.length === 0) {
+        errors.push('内容不能为空');
+    }
+
+    return { warnings, errors };
+}
+
+/**
+ * 统一执行接口
+ * @param {object} options
+ * @param {object} options.config - { serverUrl, accessToken, visibility }
+ * @param {object} options.payload - 统一 payload
+ * @param {Function} options.requestUrl
+ */
+export async function execute({ config = {}, payload = {}, requestUrl }) {
+    const serverUrl = String(config.serverUrl || '').trim();
+    const accessToken = String(config.accessToken || '').trim();
+    const visibility = config.visibility || 'public';
+
     if (!serverUrl || !accessToken) {
         return { success: false, error: 'Mastodon 实例地址或 Access Token 未配置' };
     }
 
-    const normalizedContent = String(content || '').trim();
-    // 清理正文中的 Markdown / Obsidian 图片引用，避免发布残留语法
-    const textContent = normalizedContent
-        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-        .replace(/!\[\[[^\]]+\]\]/g, '')
-        .trim();
-
-    const baseUrl = String(serverUrl).trim().replace(/\/+$/, '');
+    const textContent = String(payload.plainText || '').trim();
+    const baseUrl = serverUrl.replace(/\/+$/, '');
     const warnings = [];
 
     try {
-        // 先上传图片，拿到 media_ids 后再发帖（Mastodon 单条最多 4 张）
+        // 上传图片，拿到 media_ids
         const mediaIds = [];
-        const imageList = Array.isArray(images) ? images.filter(Boolean) : [];
-        if (imageList.length > MAX_MASTODON_IMAGES) {
-            return {
-                success: false,
-                error: `Mastodon 单条最多支持 ${MAX_MASTODON_IMAGES} 张图片，本次选择了 ${imageList.length} 张；未发送任何内容。`
-            };
+        const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+        const allImages = attachments.filter(a => a.kind === 'image');
+        const images = allImages.slice(0, MAX_MASTODON_IMAGES);
+
+        if (allImages.length > MAX_MASTODON_IMAGES) {
+            warnings.push(`超过 ${MAX_MASTODON_IMAGES} 张图片，只发送前 ${MAX_MASTODON_IMAGES} 张`);
         }
 
-        for (const filename of imageList) {
+        for (const img of images) {
             try {
-                const buffer = typeof readImageFile === 'function' ? await readImageFile(filename) : null;
+                const buffer = typeof payload.readAttachment === 'function'
+                    ? await payload.readAttachment(img.vaultPath)
+                    : null;
                 if (!buffer) {
-                    return { success: false, error: `图片读取失败：${filename}；未发送任何内容。` };
+                    return { success: false, error: `图片读取失败：${img.filename}；未发送任何内容。` };
                 }
-                const uploadResult = await uploadImageToMastodon(buffer, filename, baseUrl, accessToken, requestUrl);
+                const uploadResult = await uploadImageToMastodon(buffer, img.filename, baseUrl, accessToken, requestUrl);
                 if (!uploadResult.id) {
                     return {
                         success: false,
-                        error: `图片上传失败：${filename}${uploadResult.error ? `（${uploadResult.error}）` : ''}；未发送任何内容。`
+                        error: `图片上传失败：${img.filename}${uploadResult.error ? `（${uploadResult.error}）` : ''}；未发送任何内容。`
                     };
                 }
                 mediaIds.push(uploadResult.id);
             } catch (error) {
-                return { success: false, error: `图片处理失败：${filename}（${error.message || String(error)}）；未发送任何内容。` };
+                return { success: false, error: `图片处理失败：${img.filename}（${error.message || String(error)}）；未发送任何内容。` };
             }
         }
 
@@ -192,4 +213,4 @@ export async function execute({ content, serverUrl, accessToken, visibility = 'p
     }
 }
 
-export default { manifest, execute };
+export default { manifest, execute, validate };

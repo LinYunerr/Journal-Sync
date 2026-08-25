@@ -20,7 +20,6 @@ const {
 const AdapterRegistry     = require('./core/adapter-registry');
 const JournalSyncSendModal = require('./ui/send-modal');
 const JournalSyncSettingTab = require('./ui/settings-tab');
-const { renderRichContent } = require('./core/content-renderer');
 
 // 适配器（各自独立，按需 require）
 const flomoAdapter    = require('./adapters/flomo');
@@ -28,9 +27,6 @@ const telegramAdapter = require('./adapters/telegram');
 const mastodonAdapter = require('./adapters/mastodon');
 const misskeyAdapter  = require('./adapters/missky');
 const notionAdapter   = require('./adapters/notion');
-
-// Telegraph 核心模块
-const telegraph = require('./core/telegraph');
 
 // ──────────────────────────────────────────────
 // 工具函数（沿用原插件，无外部依赖）
@@ -476,279 +472,25 @@ class JournalSyncPlugin extends Plugin {
     return requestUrl(options);
   }
 
-  async prepareNotionImages(images, readImageFile, autoCompressLargeImages) {
-    const localImages = [];
-    const warnings = [];
-    const imageList = Array.isArray(images) ? images : [];
-
-    for (let index = 0; index < imageList.length; index += 1) {
-      const image = imageList[index];
-      const vaultPath = image?.vaultPath || image?.filename;
-      if (!vaultPath || typeof readImageFile !== 'function') continue;
-      const buffer = await readImageFile(vaultPath);
-      if (!buffer) throw new Error(`无法读取图片：${image.filename || vaultPath}`);
-      const source = new Uint8Array(buffer);
-      let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
-      let filename = image.filename || `image-${index + 1}`;
-      let mimeType = this.getImageMimeType(filename);
-      const originalBytes = source.byteLength;
-
-      if (originalBytes > 5 * 1024 * 1024) {
-        warnings.push({ filename, bytes: originalBytes, canCompress: /^(image\/(png|jpe?g|webp))$/i.test(mimeType) });
-        if (autoCompressLargeImages && /^(image\/(png|jpe?g|webp))$/i.test(mimeType)) {
-          const compressed = await this.compressImageToWebp(uploadBuffer, mimeType);
-          if (compressed && compressed.byteLength < originalBytes) {
-            uploadBuffer = compressed;
-            filename = filename.replace(/\.[^.]+$/, '') + '.webp';
-            mimeType = 'image/webp';
-          }
-        }
-      }
-
-      const tokenMatch = String(image?.token || '').match(/^@图片(\d+)$/);
-      localImages.push({
-        token: tokenMatch ? tokenMatch[1] : String(index + 1),
-        filename,
-        mimeType,
-        buffer: uploadBuffer
-      });
-    }
-
-    return { localImages, warnings };
-  }
-
-  getImageMimeType(filename) {
-    const ext = String(filename || '').split('.').pop().toLowerCase();
-    const types = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
-    return types[ext] || 'application/octet-stream';
-  }
-
-  async compressImageToWebp(arrayBuffer, mimeType) {
-    const source = new Blob([arrayBuffer], { type: mimeType });
-    const bitmap = await createImageBitmap(source);
-    const maxDimension = 2560;
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext('2d');
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
-    return blob ? await blob.arrayBuffer() : null;
-  }
-
   // ── 执行适配器 ──────────────────────────────
 
   /**
-   * 执行单个适配器的发送
+   * 执行单个适配器的发送（统一接口）
    * @param {string} adapterId
-   * @param {object} payload - { content, richDraft, telegramSegments, readImageFile, channelIds }
+   * @param {object} payload - 统一 payload { content, plainText, title, attachments, readAttachment }
+   * @param {object} [extraConfig] - 单次执行的配置覆盖，不写入持久化设置
    */
-  async executeAdapter(adapterId, payload) {
+  async executeAdapter(adapterId, payload, extraConfig = {}) {
     const adapter = this.adapterRegistry.get(adapterId);
     if (!adapter) return { success: false, error: '适配器不存在' };
 
-    const config = this.getAdapterConfig(adapterId);
-
-    if (adapterId === 'flomo') {
-      return adapter.execute({
-        content: payload.content,
-        apiUrl: config.apiUrl,
-        requestUrl: requestUrl
-      });
-    }
-
-    if (adapterId === 'telegram') {
-      return adapter.execute({
-        content: payload.content,
-        config,
-        telegramSegments: payload.telegramSegments,
-        requestUrl: requestUrl,
-        readImageFile: payload.readImageFile,
-        channelIds: payload.channelIds,
-        isRichText: payload.isRichText,
-        showLinkPreview: payload.showLinkPreview
-      });
-    }
-
-    if (adapterId === 'mastodon') {
-      return adapter.execute({
-        content: payload.content,
-        serverUrl: config.serverUrl,
-        accessToken: config.accessToken,
-        visibility: config.visibility,
-        requestUrl: requestUrl,
-        images: payload.images,
-        readImageFile: payload.readImageFile
-      });
-    }
-
-    if (adapterId === 'missky') {
-      return adapter.execute({
-        content: payload.content,
-        serverUrl: config.serverUrl,
-        apiToken: config.apiToken,
-        visibility: config.visibility,
-        requestUrl: requestUrl,
-        images: payload.images,
-        readImageFile: payload.readImageFile
-      });
-    }
-
-    if (adapterId === 'notion') {
-      return adapter.execute({
-        config,
-        content: payload.content,
-        title: payload.title,
-        localImages: payload.localImages,
-        externalImages: payload.externalImages,
-        requestUrl: requestUrl
-      });
-    }
-
-    return { success: false, error: `不支持的适配器: ${adapterId}` };
-  }
-
-  // ── Telegraph 发送编排 ──────────────────────
-
-  /**
-   * 确保 Telegraph access_token 存在，无则自动创建账号
-   * @returns {Promise<string>} access_token
-   */
-  async ensureTelegraphToken() {
-    const tgConfig = this.getAdapterConfig('telegram');
-    if (tgConfig.telegraphAccessToken) return tgConfig.telegraphAccessToken;
-
-    const account = await telegraph.createAccount('JournalSync', tgConfig.telegraphAuthorName || '', requestUrl);
-    await this.setAdapterConfig('telegram', {
-      ...tgConfig,
-      telegraphAccessToken: account.access_token
+    const config = { ...this.getAdapterConfig(adapterId), ...extraConfig };
+    const saveConfig = async (patch = {}) => this.setAdapterConfig(adapterId, {
+      ...this.getAdapterConfig(adapterId),
+      ...patch
     });
-    return account.access_token;
-  }
 
-  /**
-   * Telegraph 发送编排：
-   * 1. 确保 access_token
-   * 2. 上传本地图片到 telegra.ph/upload
-   * 3. Markdown → Telegraph Node
-   * 4. createPage → 获得 telegra.ph 链接
-   * 5. 链接发送到所有选中的 Telegram 频道
-   *
-   * @param {object} params - { content, images, readImageFile, channelIds, telegraphTitle, titleLevel }
-   * @returns {Promise<object>} { success, url, results }
-   */
-  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel, showLinkPreview }) {
-    // 1. 确保 access_token
-    let accessToken;
-    try {
-      accessToken = await this.ensureTelegraphToken();
-    } catch (error) {
-      return { success: false, error: `Telegraph 账号创建失败: ${error.message}` };
-    }
-
-    const tgConfig = this.getAdapterConfig('telegram');
-    const authorName = tgConfig.telegraphAuthorName || '';
-
-    // 2. 上传本地图片，构建 @图片N → 公网 URL 映射
-    const imageUrls = new Map();
-    const referencedImages = Array.isArray(images) ? images : [];
-
-    for (const img of referencedImages) {
-      const token = img.token;
-      const vaultPath = img.vaultPath || img.filename;
-      if (!token || !vaultPath) continue;
-
-      if (isRemoteUrl(vaultPath)) {
-        imageUrls.set(token, vaultPath);
-        continue;
-      }
-
-      try {
-        const buffer = await readImageFile(vaultPath);
-        if (!buffer) {
-          return { success: false, error: `无法读取图片: ${img.filename || vaultPath}` };
-        }
-        const url = await telegraph.uploadImage(buffer, img.filename || 'image.jpg', requestUrl);
-        imageUrls.set(token, url);
-      } catch (error) {
-        return { success: false, error: `图片上传失败 (${img.filename || vaultPath}): ${error.message}` };
-      }
-    }
-
-    // 3. Markdown → Telegraph Node
-    // Clamp titleLevel to sendScope: when sendScope > 0, only headings up to that level
-    // are included in the sent content, so the title level must not exceed it.
-    const sendScope = this.settings.sendScope ?? 2;
-    const maxLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
-    const titleLevelNum = Math.max(1, Math.min(maxLevel, Number(titleLevel) || 1));
-    const { title: extractedTitle, content: nodes } = telegraph.markdownToNodes(content, imageUrls, titleLevelNum);
-
-    // 标题优先级：用户在发送面板编辑的 > 从正文提取的 > 默认
-    const finalTitle = telegraphTitle || extractedTitle || 'Journal Sync';
-
-    // 4. createPage
-    let pageUrl;
-    try {
-      const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, '', requestUrl);
-      pageUrl = page.url;
-    } catch (error) {
-      return { success: false, error: `Telegraph 创建页面失败: ${error.message}` };
-    }
-
-    // 5. 将链接发送到所有选中的 Telegram 频道
-    const botToken = tgConfig.botToken;
-    if (!botToken) {
-      return { success: false, error: 'Telegram Bot Token 未配置', url: pageUrl };
-    }
-
-    const targets = Array.isArray(channelIds) && channelIds.length > 0
-      ? channelIds.map(String)
-      : [];
-
-    if (targets.length === 0) {
-      return { success: false, error: 'Telegram 频道未配置', url: pageUrl };
-    }
-
-    const linkPreviewEnabled = showLinkPreview !== undefined ? showLinkPreview : (tgConfig.showLinkPreview !== false);
-    const linkText = `${finalTitle}\n${pageUrl}`;
-
-    const results = await Promise.all(targets.map(async targetCh => {
-      try {
-        const response = await requestUrl({
-          url: `https://api.telegram.org/bot${botToken}/sendMessage`,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: targetCh,
-            text: linkText,
-            disable_web_page_preview: !linkPreviewEnabled
-          }),
-          throw: false
-        });
-        const data = response.json;
-        if (!data || !data.ok) {
-          return { success: false, channelId: targetCh, error: data?.description || '发送失败' };
-        }
-        return { success: true, channelId: targetCh };
-      } catch (error) {
-        return { success: false, channelId: targetCh, error: error.message || String(error) };
-      }
-    }));
-
-    const allOk = results.every(r => r.success);
-    const errors = results
-      .filter(r => !r.success)
-      .map(r => `${r.channelId}: ${r.error}`)
-      .join('; ');
-
-    return {
-      success: allOk,
-      error: allOk ? undefined : errors,
-      url: pageUrl,
-      results
-    };
+    return adapter.execute({ config, payload, requestUrl, saveConfig });
   }
 
   /**
@@ -837,13 +579,6 @@ class JournalSyncPlugin extends Plugin {
         };
       }
 
-      // 渲染富文本（含 Telegram segments）
-      const renderResult = renderRichContent({
-        richDraft: processResult.richDraft,
-        fallbackContent: processResult.content,
-        fallbackImageFilenames: processResult.imageFilenames
-      });
-
       if (processResult.failed.length > 0) {
         new Notice(`部分图片无法读取（${processResult.failed.length} 张），发送时将跳过。`);
       }
@@ -855,7 +590,6 @@ class JournalSyncPlugin extends Plugin {
       new JournalSyncSendModal(this.app, this, {
         content: processResult.content || current.content,
         richDraft: processResult.richDraft,
-        telegramSegments: renderResult.telegramSegments,
         readImageFile,
         notionTitle: noteTitle
       }).open();

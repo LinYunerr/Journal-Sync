@@ -5,9 +5,16 @@
  * 2. 多图使用 sendMediaGroup 组合 Album 发送
  * 3. 详细抓取 Telegram 官方 API 返回的 error description
  * 4. 支持纯文本直传与本地图片富文本混排
+ *
+ * 三种发送模式（纯内部逻辑，管道不需要知道）：
+ * - plain:  纯文本 + 图片附件
+ * - rich:   富文本图文混排（sendRichMessage）
+ * - telegraph: 创建 Telegraph 页面，将链接发送到频道
  */
 
 const TG_API_BASE = 'https://api.telegram.org';
+
+const telegraph = require('../core/telegraph');
 
 export const manifest = {
     id: 'telegram',
@@ -15,6 +22,15 @@ export const manifest = {
     name: 'Telegram',
     description: '发送内容到 Telegram 频道',
     enabledByDefault: false,
+    capabilities: {
+        text: true,
+        attachments: true,
+        attachmentTypes: ['image/*'],
+        maxAttachments: 9,
+        maxAttachmentSize: 0,
+        warnOnAttachmentCount: true,
+        warnOnAttachmentSize: false
+    },
     settings: {
         fields: [
             {
@@ -46,10 +62,10 @@ export const manifest = {
         ]
     }
 };
+const MAX_TELEGRAM_IMAGES = manifest.capabilities.maxAttachments;
 
-/**
- * 调用 Telegram Bot API
- */
+// ── Telegram Bot API ──────────────────────────
+
 async function tgApi(botToken, method, body, requestUrlFn) {
     const url = `${TG_API_BASE}/bot${botToken}/${method}`;
     const response = await requestUrlFn({
@@ -73,7 +89,6 @@ export async function listChannels(botToken, existingChannels = [], requestUrlFn
 
     const channelMap = new Map();
 
-    // 不内置任何预设频道：仅从已保存的频道和 Telegram 更新中收集
     const initialChannels = Array.isArray(existingChannels) ? existingChannels : [];
 
     for (const ch of initialChannels) {
@@ -129,9 +144,8 @@ export async function listChannels(botToken, existingChannels = [], requestUrlFn
     return Array.from(channelMap.values());
 }
 
-/**
- * 发送普通文本消息
- */
+// ── 文本发送 ──────────────────────────────────
+
 async function sendSingleTextMessage(botToken, chatId, text, options, requestUrlFn) {
     if (!text || !text.trim()) return { success: true };
 
@@ -147,11 +161,9 @@ async function sendSingleTextMessage(botToken, chatId, text, options, requestUrl
     if (!result.ok) {
         const errorDesc = String(result.description || result.result?.description || '').toUpperCase();
         if (errorDesc.includes('WEBPAGE_CURL_FAILED')) {
-            // URL 抓取失败，禁用预览重试
             body.link_preview_options = { is_disabled: true };
             const retryRes = await tgApi(botToken, 'sendMessage', body, requestUrlFn);
             if (retryRes.result.ok) return { success: true };
-            // 如果禁用预览还是失败，继续下面的 markdown 回退逻辑
         }
 
         delete body.parse_mode;
@@ -202,6 +214,9 @@ async function sendTextMessage(botToken, chatId, text, options, requestUrlFn) {
 function richCharacterCount(text) {
     return Array.from(String(text || '')).length;
 }
+
+// ── 图片发送 ──────────────────────────────────
+
 async function sendPhotoByBuffer(botToken, chatId, arrayBuffer, filename, caption, requestUrlFn) {
     const boundary = `----TgBridge${Date.now()}${Math.random().toString(16).slice(2)}`;
     const ext = filename.split('.').pop().toLowerCase();
@@ -259,21 +274,15 @@ async function sendPhotoByBuffer(botToken, chatId, arrayBuffer, filename, captio
     return { status: response.status, result };
 }
 
-/**
- * 发送多图 Media Group (sendMediaGroup)
- * 对照原 telegram_send.py 中的 send_media_group 函数实现
- */
 async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, requestUrlFn) {
     const boundary = `----TgBridgeMedia${Date.now()}${Math.random().toString(16).slice(2)}`;
     const encoder = new TextEncoder();
     const parts = [];
 
-    // 1. chat_id 字段
     parts.push(encoder.encode(
         `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`
     ));
 
-    // 2. media JSON 元数据
     const mediaList = imageItems.map((item, idx) => {
         const entry = { type: 'photo', media: `attach://photo${idx}` };
         if (idx === 0 && caption && caption.trim()) {
@@ -287,7 +296,6 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
         `--${boundary}\r\nContent-Disposition: form-data; name="media"\r\n\r\n${JSON.stringify(mediaList)}\r\n`
     ));
 
-    // 3. 各图片二进制数据
     imageItems.forEach((item, idx) => {
         const filename = item.filename || `photo${idx}.jpg`;
         const ext = filename.split('.').pop().toLowerCase();
@@ -327,12 +335,11 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
 
     let result = {};
     try { result = response.json || {}; } catch {}
-    return { status: response.status, result, _bodyObj: { caption } }; // pass caption for retry logic
+    return { status: response.status, result, _bodyObj: { caption } };
 }
 
-/**
- * 发送图文消息
- */
+// ── 富文本发送 ────────────────────────────────
+
 function getImageMimeType(filename = '') {
     const ext = String(filename).split('.').pop().toLowerCase();
     if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
@@ -456,128 +463,350 @@ async function sendRichContent(botToken, chatId, segments, imageBuffers, config,
             };
         }
 
-        // 纯文本 / 附件模式（普通发送，Fallback）：对照 telegram_send.py 中的 send_segments_as_attachments 逻辑
+        // 纯文本 / 附件模式
         let textPart = '';
         const imageItems = [];
 
-            for (const seg of segments) {
-                if (seg.type === 'richText' || seg.type === 'text') {
-                    const t = String(seg.markdown || seg.text || '').trim();
-                    if (t) textPart = textPart ? `${textPart}\n\n${t}` : t;
-                } else if (seg.type === 'image' && seg.filename) {
-                    const buf = imageBuffers.get(seg.imageKey || seg.vaultPath || seg.filename);
-                    if (buf) {
-                        imageItems.push({ filename: seg.filename, buffer: buf });
-                    }
+        for (const seg of segments) {
+            if (seg.type === 'richText' || seg.type === 'text') {
+                const t = String(seg.markdown || seg.text || '').trim();
+                if (t) textPart = textPart ? `${textPart}\n\n${t}` : t;
+            } else if (seg.type === 'image' && seg.filename) {
+                const buf = imageBuffers.get(seg.imageKey || seg.vaultPath || seg.filename);
+                if (buf) {
+                    imageItems.push({ filename: seg.filename, buffer: buf });
+                }
+            }
+        }
+
+        if (imageItems.length === 0) {
+            return await sendTextMessage(botToken, chatId, textPart, config, requestUrlFn);
+        }
+
+        const caption = richCharacterCount(textPart) <= 1024 ? textPart : '';
+        let textToSendSeparately = caption ? '' : textPart;
+
+        const sendImages = async (items, mediaCaption) => {
+            if (items.length === 1) {
+                return sendPhotoByBuffer(
+                    botToken,
+                    chatId,
+                    items[0].buffer,
+                    items[0].filename,
+                    mediaCaption,
+                    requestUrlFn
+                );
+            }
+            return sendMediaGroupByBuffer(botToken, chatId, items, mediaCaption, requestUrlFn);
+        };
+
+        const chunks = [];
+        for (let index = 0; index < imageItems.length;) {
+            const remaining = imageItems.length - index;
+            const size = remaining === 1 ? 1 : Math.min(10, remaining);
+            chunks.push(imageItems.slice(index, index + size));
+            index += size;
+        }
+
+        for (let index = 0; index < chunks.length; index += 1) {
+            const chunk = chunks[index];
+            const chunkCaption = index === 0 ? caption : '';
+            let { status, result } = await sendImages(chunk, chunkCaption);
+
+            if (!result?.ok && chunkCaption) {
+                const retry = await sendImages(chunk, '');
+                if (retry.result?.ok) {
+                    textToSendSeparately = textPart;
+                    status = retry.status;
+                    result = retry.result;
                 }
             }
 
-            if (imageItems.length === 0) {
-                // 没有图片，仅发送文本
-                return await sendTextMessage(botToken, chatId, textPart, config, requestUrlFn);
+            if (!result?.ok) {
+                const method = chunk.length === 1 ? 'sendPhoto' : 'sendMediaGroup';
+                return { success: false, error: result?.description || `${method} 失败: HTTP ${status}` };
             }
+        }
 
-            // 有图片附件：不截断 caption。长正文完整地作为独立消息发送，避免内容重复。
-            const caption = richCharacterCount(textPart) <= 1024 ? textPart : '';
-            let textToSendSeparately = caption ? '' : textPart;
+        if (textToSendSeparately) {
+            const textResult = await sendTextMessage(botToken, chatId, textToSendSeparately, config, requestUrlFn);
+            if (!textResult.success) return textResult;
+        }
 
-            const sendImages = async (items, mediaCaption) => {
-                if (items.length === 1) {
-                    return sendPhotoByBuffer(
-                        botToken,
-                        chatId,
-                        items[0].buffer,
-                        items[0].filename,
-                        mediaCaption,
-                        requestUrlFn
-                    );
-                }
-                return sendMediaGroupByBuffer(botToken, chatId, items, mediaCaption, requestUrlFn);
-            };
-
-            // Telegram media groups require 2-10 items. A trailing single image is sent separately.
-            const chunks = [];
-            for (let index = 0; index < imageItems.length;) {
-                const remaining = imageItems.length - index;
-                const size = remaining === 1 ? 1 : Math.min(10, remaining);
-                chunks.push(imageItems.slice(index, index + size));
-                index += size;
-            }
-
-            for (let index = 0; index < chunks.length; index += 1) {
-                const chunk = chunks[index];
-                const chunkCaption = index === 0 ? caption : '';
-                let { status, result } = await sendImages(chunk, chunkCaption);
-
-                if (!result?.ok && chunkCaption) {
-                    const retry = await sendImages(chunk, '');
-                    if (retry.result?.ok) {
-                        textToSendSeparately = textPart;
-                        status = retry.status;
-                        result = retry.result;
-                    }
-                }
-
-                if (!result?.ok) {
-                    const method = chunk.length === 1 ? 'sendPhoto' : 'sendMediaGroup';
-                    return { success: false, error: result?.description || `${method} 失败: HTTP ${status}` };
-                }
-            }
-
-            if (textToSendSeparately) {
-                const textResult = await sendTextMessage(botToken, chatId, textToSendSeparately, config, requestUrlFn);
-                if (!textResult.success) return textResult;
-            }
-
-            return { success: true };
+        return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
     }
 }
 
+// ── Segment 构建（从 send-modal 移入） ────────
+
 /**
- * 主执行函数
+ * 从正文内容和附件列表构建 Telegram segments。
+ * 将 @图片N token 处为 image segment，其余为 richText segment。
  */
-export async function execute({ content, config, telegramSegments, requestUrl, readImageFile, channelId, channelIds, isRichText = true, showLinkPreview }) {
-    const botToken = config?.botToken;
+function buildTelegramSegmentsFromContent(content, attachments) {
+    const imageByToken = new Map(
+        (Array.isArray(attachments) ? attachments : [])
+            .filter(a => a?.token && a?.filename)
+            .map(a => [a.token, a])
+    );
+    const segments = [];
+    const tokenPattern = /@图片\d+/g;
+    const source = String(content || '');
+    let cursor = 0;
+    let match;
+
+    const pushText = (text) => {
+        const trimmed = text.trim();
+        if (trimmed) segments.push({ type: 'richText', markdown: trimmed });
+    };
+
+    while ((match = tokenPattern.exec(source)) !== null) {
+        if (match.index > cursor) pushText(source.slice(cursor, match.index));
+        const img = imageByToken.get(match[0]);
+        if (img) {
+            segments.push({
+                type: 'image',
+                filename: img.filename,
+                vaultPath: img.vaultPath || img.filename
+            });
+        }
+        cursor = match.index + match[0].length;
+    }
+    pushText(source.slice(cursor));
+    return segments;
+}
+
+// ── Telegraph 编排（从 main.js 移入） ─────────
+
+/**
+ * 确保 Telegraph access_token 存在，无则自动创建账号
+ */
+async function ensureTelegraphToken(config, requestUrlFn, saveConfig) {
+    if (config.telegraphAccessToken) return config.telegraphAccessToken;
+
+    const account = await telegraph.createAccount('JournalSync', config.telegraphAuthorName || '', requestUrlFn);
+    if (typeof saveConfig === 'function') {
+        await saveConfig({ telegraphAccessToken: account.access_token });
+    }
+    return account.access_token;
+}
+
+/**
+ * Telegraph 发送编排：
+ * 1. 确保 access_token
+ * 2. 上传本地图片到 telegra.ph/upload
+ * 3. Markdown → Telegraph Node
+ * 4. createPage → 获得 telegra.ph 链接
+ * 5. 链接发送到所有选中的 Telegram 频道
+ */
+async function executeTelegraphSend({ botToken, config, payload, requestUrl, channelIds, telegraphTitle, titleLevel, showLinkPreview, saveConfig }) {
+    // 1. 确保 access_token
+    let accessToken;
+    try {
+        accessToken = await ensureTelegraphToken(config, requestUrl, saveConfig);
+    } catch (error) {
+        return { success: false, error: `Telegraph 账号创建失败: ${error.message}` };
+    }
+
+    const authorName = config.telegraphAuthorName || '';
+
+    // 2. 上传本地图片，构建 @图片N → 公网 URL 映射
+    const imageUrls = new Map();
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+
+    for (const img of attachments) {
+        const token = img.token;
+        const vaultPath = img.vaultPath || img.filename;
+        if (!token || !vaultPath) continue;
+
+        if (/^https?:\/\//i.test(vaultPath)) {
+            imageUrls.set(token, vaultPath);
+            continue;
+        }
+
+        try {
+            const buffer = typeof payload.readAttachment === 'function' ? await payload.readAttachment(vaultPath) : null;
+            if (!buffer) {
+                return { success: false, error: `无法读取图片: ${img.filename || vaultPath}` };
+            }
+            const url = await telegraph.uploadImage(buffer, img.filename || 'image.jpg', requestUrl);
+            imageUrls.set(token, url);
+        } catch (error) {
+            return { success: false, error: `图片上传失败 (${img.filename || vaultPath}): ${error.message}` };
+        }
+    }
+
+    // 3. Markdown → Telegraph Node
+    const titleLevelNum = Math.max(1, Math.min(6, Number(titleLevel) || 1));
+    const { title: extractedTitle, content: nodes } = telegraph.markdownToNodes(payload.content, imageUrls, titleLevelNum);
+
+    const finalTitle = telegraphTitle || extractedTitle || 'Journal Sync';
+
+    // 4. createPage
+    let pageUrl;
+    try {
+        const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, '', requestUrl);
+        pageUrl = page.url;
+    } catch (error) {
+        return { success: false, error: `Telegraph 创建页面失败: ${error.message}` };
+    }
+
+    // 5. 将链接发送到所有选中的 Telegram 频道
     if (!botToken) {
-        return { success: false, error: 'Telegram Bot Token 未配置' };
+        return { success: false, error: 'Telegram Bot Token 未配置', url: pageUrl };
     }
 
     const targets = Array.isArray(channelIds) && channelIds.length > 0
         ? channelIds.map(String)
-        : (channelId ? [String(channelId)] : []);
+        : [];
 
     if (targets.length === 0) {
+        return { success: false, error: 'Telegram 频道未配置', url: pageUrl };
+    }
+
+    const linkPreviewEnabled = showLinkPreview !== undefined ? showLinkPreview : (config.showLinkPreview !== false);
+    const linkText = `${finalTitle}\n${pageUrl}`;
+
+    const results = await Promise.all(targets.map(async targetCh => {
+        try {
+            const response = await requestUrl({
+                url: `${TG_API_BASE}/bot${botToken}/sendMessage`,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: targetCh,
+                    text: linkText,
+                    disable_web_page_preview: !linkPreviewEnabled
+                }),
+                throw: false
+            });
+            const data = response.json;
+            if (!data || !data.ok) {
+                return { success: false, channelId: targetCh, error: data?.description || '发送失败' };
+            }
+            return { success: true, channelId: targetCh };
+        } catch (error) {
+            return { success: false, channelId: targetCh, error: error.message || String(error) };
+        }
+    }));
+
+    const allOk = results.every(r => r.success);
+    const errors = results
+        .filter(r => !r.success)
+        .map(r => `${r.channelId}: ${r.error}`)
+        .join('; ');
+
+    return {
+        success: allOk,
+        error: allOk ? undefined : errors,
+        url: pageUrl,
+        results
+    };
+}
+
+// ── 预检验证 ──────────────────────────────────
+
+/**
+ * 预检验证
+ */
+export async function validate({ payload, config }) {
+    const warnings = [];
+    const errors = [];
+
+    const channelIds = Array.isArray(config.channelIds) ? config.channelIds : [];
+    if (channelIds.length === 0 && !(Array.isArray(config.homeChannels) && config.homeChannels.length > 0)) {
+        warnings.push('Telegram 频道未选择');
+    }
+
+    return { warnings, errors };
+}
+
+// ── 统一执行接口 ──────────────────────────────
+
+/**
+ * 统一执行接口
+ * @param {object} options
+ * @param {object} options.config - Telegram 配置（含 botToken, channels, tgSendMode, channelIds, ...）
+ * @param {object} options.payload - 统一 payload { content, plainText, attachments, readAttachment }
+ * @param {Function} options.requestUrl
+ * @param {Function} [options.saveConfig] - 保存配置回调（用于 Telegraph token 持久化）
+ */
+export async function execute({ config = {}, payload = {}, requestUrl, saveConfig }) {
+    const botToken = config.botToken;
+    if (!botToken) {
+        return { success: false, error: 'Telegram Bot Token 未配置' };
+    }
+
+    const warnings = [];
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+    const imageCount = attachments.filter(item => item?.kind === 'image').length;
+    let effectivePayload = payload;
+    if (imageCount > MAX_TELEGRAM_IMAGES) {
+        let keptImages = 0;
+        const limitedAttachments = attachments.filter(item => {
+            if (item?.kind !== 'image') return true;
+            keptImages += 1;
+            return keptImages <= MAX_TELEGRAM_IMAGES;
+        });
+        effectivePayload = { ...payload, attachments: limitedAttachments };
+        warnings.push(`超过 ${MAX_TELEGRAM_IMAGES} 张图片，只发送前 ${MAX_TELEGRAM_IMAGES} 张`);
+    }
+
+    // 发送模式、频道和 Telegraph 临时选项均来自本次 config 覆盖或持久化配置。
+    const tgSendMode = config.tgSendMode || 'plain';  // 'plain' | 'rich' | 'telegraph'
+    const isRich = tgSendMode === 'rich';
+    const isTelegraph = tgSendMode === 'telegraph';
+    const channelIds = (Array.isArray(config.channelIds) ? config.channelIds : []).map(String);
+
+    if (channelIds.length === 0) {
         const homeChannelIds = Array.isArray(config.homeChannels) ? config.homeChannels.map(String) : [];
         const configuredChannels = Array.isArray(config.channels) ? config.channels : [];
         const firstHomeChannel = homeChannelIds.find(Boolean);
         const firstKnownChannel = configuredChannels.find(c => c?.id)?.id;
         if (firstHomeChannel || firstKnownChannel) {
-            targets.push(String(firstHomeChannel || firstKnownChannel));
+            channelIds.push(String(firstHomeChannel || firstKnownChannel));
         }
     }
 
-    if (targets.length === 0) {
+    if (channelIds.length === 0) {
         return { success: false, error: 'Telegram 频道未配置，请先在设置中获取频道列表' };
     }
 
-    const segments = Array.isArray(telegramSegments) && telegramSegments.length > 0
-        ? telegramSegments
-        : [{ type: 'richText', markdown: String(content || '').trim() }];
+    // ── Telegraph 模式 ──
+    if (isTelegraph) {
+        const result = await executeTelegraphSend({
+            botToken,
+            config,
+            payload: effectivePayload,
+            requestUrl,
+            channelIds,
+            telegraphTitle: config.telegraphTitle || '',
+            titleLevel: config.telegraphTitleLevel || 1,
+            showLinkPreview: config.showLinkPreview,
+            saveConfig
+        });
+        return warnings.length > 0
+            ? { ...result, warnings: [...(result.warnings || []), ...warnings] }
+            : result;
+    }
 
-    // 收集需要加载的图片 Buffer。图片 token 已进入待发送内容时，读取失败必须显式报错。
+    // ── Plain / Rich 模式 ──
+    const segments = buildTelegramSegmentsFromContent(effectivePayload.content, effectivePayload.attachments);
+
+    // 收集需要加载的图片 Buffer
     const imageBuffers = new Map();
     const missingImages = new Set();
     for (const seg of segments) {
         const imageKey = seg.vaultPath || seg.filename;
         if (seg.type !== 'image' || !seg.filename || !imageKey || imageBuffers.has(imageKey) || missingImages.has(imageKey)) continue;
-        if (typeof readImageFile !== 'function') {
+        if (typeof payload.readAttachment !== 'function') {
             missingImages.add(imageKey);
             continue;
         }
         try {
-            const buffer = await readImageFile(imageKey);
+            const buffer = await payload.readAttachment(imageKey);
             if (buffer) imageBuffers.set(imageKey, buffer);
             else missingImages.add(imageKey);
         } catch {
@@ -596,13 +825,10 @@ export async function execute({ content, config, telegramSegments, requestUrl, r
         return { ...segment, imageKey: segment.vaultPath || segment.filename };
     });
 
-    // 发送面板的预览开关覆盖设置中的默认值
-    const effectiveConfig = showLinkPreview !== undefined
-        ? { ...config, showLinkPreview }
-        : config;
-    const results = await Promise.all(targets.map(async targetCh => {
+    const effectiveConfig = { showLinkPreview: config.showLinkPreview };
+    const results = await Promise.all(channelIds.map(async targetCh => {
         try {
-            const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl, isRichText);
+            const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl, isRich);
             return { channelId: targetCh, ...res };
         } catch (error) {
             return { success: false, channelId: targetCh, error: error.message || String(error) };
@@ -618,15 +844,17 @@ export async function execute({ content, config, telegramSegments, requestUrl, r
     return {
         success: allOk,
         error: allOk ? undefined : errors,
-        results
+        results,
+        warnings
     };
-}
 
+}
 /**
  * 运行配置相关操作
  */
 export async function runAction(actionId, config, requestUrlFn) {
     if (actionId === 'discoverChannels' || actionId === 'testConnection') {
+        if (!config?.botToken) throw new Error('Bot Token 未配置');
         const channels = await listChannels(config.botToken, config.channels || [], requestUrlFn);
         return {
             success: true,
@@ -636,8 +864,7 @@ export async function runAction(actionId, config, requestUrlFn) {
             data: { channels }
         };
     }
-
     throw new Error(`未知操作: ${actionId}`);
 }
 
-export default { manifest, execute, listChannels, runAction };
+export default { manifest, execute, validate, listChannels, runAction };

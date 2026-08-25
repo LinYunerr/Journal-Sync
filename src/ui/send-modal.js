@@ -15,52 +15,8 @@
  */
 
 const { Modal, Notice } = require('obsidian');
+const { buildPayload } = require('../core/payload');
 
-function getPlainTextWithoutImageTokens(text) {
-    return String(text || '')
-        .replace(/@图片\d+/g, '')
-        .replace(/!\[\[[^\]]+\]\]/g, '')
-        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-}
-
-function buildTelegramSegmentsFromEditor(content, images) {
-    const imageByToken = new Map(
-        (Array.isArray(images) ? images : [])
-            .filter(image => image?.token && image?.filename)
-            .map(image => [image.token, image])
-    );
-    const segments = [];
-    const tokenPattern = /@图片\d+/g;
-    const source = String(content || '');
-    let cursor = 0;
-    let match;
-
-    const pushText = (text) => {
-        if (!text) return;
-        const previous = segments[segments.length - 1];
-        if (previous?.type === 'richText') previous.markdown += text;
-        else segments.push({ type: 'richText', markdown: text });
-    };
-
-    while ((match = tokenPattern.exec(source)) !== null) {
-        pushText(source.slice(cursor, match.index));
-        const image = imageByToken.get(match[0]);
-        if (image) {
-            segments.push({
-                type: 'image',
-                filename: image.filename,
-                vaultPath: image.vaultPath || image.filename
-            });
-        } else {
-            pushText(match[0]);
-        }
-        cursor = match.index + match[0].length;
-    }
-    pushText(source.slice(cursor));
-    return segments;
-}
 
 class JournalSyncSendModal extends Modal {
     /**
@@ -68,18 +24,15 @@ class JournalSyncSendModal extends Modal {
      * @param {object} plugin
      * @param {string} content
      * @param {object} richDraft
-     * @param {Array} telegramSegments
      * @param {Function} readImageFile
      */
-    constructor(app, plugin, { content, richDraft, telegramSegments, readImageFile, notionTitle = '' }) {
+    constructor(app, plugin, { content, richDraft, readImageFile, notionTitle = '' }) {
         super(app);
         this.plugin = plugin;
         this.rawContent = content || '';
         this.richDraft = richDraft || { version: 1, blocks: [], images: [] };
-        this.telegramSegments = telegramSegments || [];
         this.readImageFile = readImageFile;
         this.notionTitle = notionTitle;
-        this.notionImageWarnings = [];
 
         this.tgSendMode = 'plain'; // 'plain' | 'rich' | 'telegraph'
         this.telegraphTitle = '';  // Telegraph 标题缓存（仅窗口生命周期内有效）
@@ -91,7 +44,9 @@ class JournalSyncSendModal extends Modal {
         this.images = [];
         this._objectUrls = new Set(); // 跟踪当前缩略图预览 URL，关闭时统一释放
         this._imageGridRenderId = 0; // 使过期的异步缩略图加载失效
-        this._oversizedConfirmed = false; // 图片过大二次确认标志
+        this._warningConfirmActive = false;
+        this._warningKey = '';
+        this._warningTimer = null;
         this.initContentAndImages();
 
         this.loadActivePresetSelection();
@@ -104,19 +59,7 @@ class JournalSyncSendModal extends Modal {
      */
     initContentAndImages() {
         const imgs = [];
-        if (Array.isArray(this.telegramSegments)) {
-            for (const seg of this.telegramSegments) {
-                if (seg.type === 'image' && seg.filename) {
-                    imgs.push({
-                        filename: seg.filename,
-                        vaultPath: seg.vaultPath || seg.filename,
-                        id: seg.vaultPath || seg.filename,
-                        token: `@图片${imgs.length + 1}`
-                    });
-                }
-            }
-        }
-        if (imgs.length === 0 && Array.isArray(this.richDraft.images)) {
+        if (Array.isArray(this.richDraft.images)) {
             for (const img of this.richDraft.images) {
                 if (img.filename) {
                     imgs.push({
@@ -231,8 +174,6 @@ class JournalSyncSendModal extends Modal {
             const mediaGrid = inputPanel.createDiv({ cls: 'media-thumb-grid' });
             this.mediaGridEl = mediaGrid;
             this.renderImageGrid(mediaGrid);
-            this.notionImageWarningEl = inputPanel.createDiv({ cls: 'notion-image-warning-list' });
-            this.updateNotionImageWarnings();
         }
 
         // 3. 发布目标与预设分组区域
@@ -547,22 +488,12 @@ class JournalSyncSendModal extends Modal {
         // 在光标位置插入 token chip
         this.insertTokenAtCursor(richDiv, token);
 
-        // 确保缩略图网格容器存在
         if (!this.mediaGridEl && this.inputPanelEl) {
             this.mediaGridEl = this.inputPanelEl.createDiv({ cls: 'media-thumb-grid' });
-            if (this.notionImageWarningEl) {
-                this.inputPanelEl.insertBefore(this.mediaGridEl, this.notionImageWarningEl);
-            }
         }
         if (this.mediaGridEl) {
             this.renderImageGrid(this.mediaGridEl);
         }
-
-        // 确保 notion 图片预警区域存在并更新
-        if (!this.notionImageWarningEl && this.inputPanelEl) {
-            this.notionImageWarningEl = this.inputPanelEl.createDiv({ cls: 'notion-image-warning-list' });
-        }
-        this.updateNotionImageWarnings();
     }
 
     renderImageGrid(containerEl) {
@@ -618,9 +549,6 @@ class JournalSyncSendModal extends Modal {
                     this.editorEl?.querySelectorAll('.image-token-chip').forEach(chip => {
                         if (chip.getAttribute('data-token') === removedImage.token) chip.remove();
                     });
-                    this.telegramSegments = this.telegramSegments.filter(segment => {
-                        return segment.type !== 'image' || segment.vaultPath !== removedImage.vaultPath;
-                    });
                     this.richDraft = {
                         ...this.richDraft,
                         blocks: (this.richDraft.blocks || []).filter(block => block.imageId !== removedImage.id),
@@ -630,7 +558,6 @@ class JournalSyncSendModal extends Modal {
                     };
                 }
                 this.renderImageGrid(containerEl);
-                this.updateNotionImageWarnings();
             });
 
             thumb.addEventListener('click', () => {
@@ -639,28 +566,6 @@ class JournalSyncSendModal extends Modal {
         });
     }
 
-    async updateNotionImageWarnings() {
-        if (!this.notionImageWarningEl) return;
-        const threshold = 5 * 1024 * 1024;
-        const warningItems = [];
-        for (const image of this.images) {
-            try {
-                // 粘贴的图片直接从内存 Blob 读取大小
-                if (image.blob) {
-                    if (image.blob.size > threshold) warningItems.push({ filename: image.filename, bytes: image.blob.size });
-                    continue;
-                }
-                const buffer = await this.readImageFile(image.vaultPath);
-                if (buffer?.byteLength > threshold) warningItems.push({ filename: image.filename, bytes: buffer.byteLength });
-            } catch {}
-        }
-        this.notionImageWarnings = warningItems;
-        this.notionImageWarningEl.empty();
-        for (const warning of warningItems) {
-            const size = (warning.bytes / 1024 / 1024).toFixed(1);
-            this.notionImageWarningEl.createDiv({ cls: 'notion-image-warning', text: `Notion 提示：${warning.filename} 为 ${size} MB，可能超过当前方案的 5 MB 限制，图片可能发送失败。` });
-        }
-    }
 
     showImagePreview(src) {
         this.previewImgEl.src = src;
@@ -1047,6 +952,41 @@ class JournalSyncSendModal extends Modal {
         input.addEventListener('blur', saveEdit);
     }
 
+    _resetSendButton() {
+        if (!this.sendBtn) return;
+        this.sendBtn.textContent = '发布';
+        this.sendBtn.classList.remove('mod-warning');
+        this.sendBtn.removeAttribute('title');
+    }
+
+    _clearAttachmentWarningState() {
+        if (this._warningTimer) window.clearTimeout(this._warningTimer);
+        this._warningTimer = null;
+        this._warningConfirmActive = false;
+        this._warningKey = '';
+        this._resetSendButton();
+    }
+
+    _showAttachmentWarnings(warnings) {
+        const messages = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+        if (messages.length === 0) return;
+
+        if (this._warningTimer) window.clearTimeout(this._warningTimer);
+        this._warningConfirmActive = true;
+        this._warningKey = messages.join('\n');
+        if (this.sendBtn) {
+            this.sendBtn.textContent = messages.length === 1
+                ? `⚠️ ${messages[0]}`
+                : `⚠️ ${messages.length} 项预警，确认发送`;
+            this.sendBtn.title = messages.join('\n');
+            this.sendBtn.classList.add('mod-warning');
+        }
+        this._warningTimer = window.setTimeout(() => {
+            this._clearAttachmentWarningState();
+        }, 5000);
+    }
+
+
     /**
      * 执行发送（即时关窗 + 后台无阻塞异步发送）
      */
@@ -1058,7 +998,12 @@ class JournalSyncSendModal extends Modal {
             plugin.adapterRegistry.has(adapterId) &&
             plugin.isAdapterEnabled(adapterId)
         );
-        const tgChannels = Array.from(this.selectedTgChannels);
+        const tgChannels = plugin.adapterRegistry.has('telegram') && plugin.isAdapterEnabled('telegram')
+            ? Array.from(this.selectedTgChannels)
+            : [];
+        if (tgChannels.length > 0) {
+            targetAdapters.push('telegram');
+        }
 
         if (targetAdapters.length === 0 && tgChannels.length === 0) {
             new Notice('请至少选择一个发送目标或 Telegram 频道');
@@ -1066,57 +1011,75 @@ class JournalSyncSendModal extends Modal {
         }
 
         // 提取待发送参数
-        const tgSendMode = this.tgSendMode;
-        const isRich = tgSendMode === 'rich';
-        const isTelegraph = tgSendMode === 'telegraph';
-        const telegraphTitle = this.telegraphTitle;
         const rawContent = this.content;
-        const plainTextContent = getPlainTextWithoutImageTokens(rawContent);
-        const richDraft = this.richDraft;
         const referencedTokens = new Set(rawContent.match(/@图片\d+/g) || []);
         const images = this.images.filter(image => referencedTokens.has(image.token));
+
         // 包装 readImageFile：粘贴的图片从内存 Blob 读取，vault 图片走原逻辑
         const vaultReadImageFile = this.readImageFile;
-        const readImageFile = (vaultPath) => {
+        const readAttachment = (vaultPath) => {
             const img = images.find(i => i.vaultPath === vaultPath && i.blob);
             if (img && img.blob) return Promise.resolve(img.blob.arrayBuffer());
             return vaultReadImageFile(vaultPath);
         };
 
-        // 图片过大二次确认：检测所有引用图片是否超过 10 MB
-        const SIZE_THRESHOLD = 10 * 1024 * 1024;
-        if (!this._oversizedConfirmed) {
-            let hasOversized = false;
-            for (const img of images) {
-                let bytes = 0;
-                if (img.blob) {
-                    bytes = img.blob.size;
-                } else if (img.vaultPath && typeof vaultReadImageFile === 'function') {
-                    try {
-                        const buf = await vaultReadImageFile(img.vaultPath);
-                        bytes = buf?.byteLength || 0;
-                    } catch {}
-                }
-                if (bytes > SIZE_THRESHOLD) {
-                    hasOversized = true;
-                    break;
-                }
-            }
-            if (hasOversized) {
-                this._oversizedConfirmed = true;
-                if (this.sendBtn) {
-                    this.sendBtn.textContent = '⚠️ 图片过大，确认发送';
-                    this.sendBtn.classList.add('mod-warning');
-                }
-                return;
-            }
+        // 构建统一 payload；图片实体沿用发送面板当前状态，保证编辑后的 token 与附件一致。
+        const payload = buildPayload({
+            content: rawContent,
+            richDraft: { ...this.richDraft, images },
+            title: this.notionTitle || '',
+            readAttachment
+        });
+        const targetConfigOverrides = {};
+        if (tgChannels.length > 0) {
+            targetConfigOverrides.telegram = {
+                tgSendMode: this.tgSendMode,
+                channelIds: tgChannels,
+                telegraphTitle: this.telegraphTitle,
+                showLinkPreview: this.tgShowLinkPreview
+            };
         }
 
-        // 重置确认标志，恢复按钮文字
-        this._oversizedConfirmed = false;
-        if (this.sendBtn) {
-            this.sendBtn.textContent = '发布';
-            this.sendBtn.classList.remove('mod-warning');
+        // 按目标适配器的能力声明做统一图片预警；预警状态只保留 5 秒。
+        let capabilityWarnings;
+        try {
+            capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
+        } catch (error) {
+            new Notice(`图片预检失败：${error.message || String(error)}`, 10000);
+            return;
+        }
+        const warningMessages = capabilityWarnings.warnings || [];
+        const warningKey = warningMessages.join('\n');
+        if (warningMessages.length > 0) {
+            if (!this._warningConfirmActive || this._warningKey !== warningKey) {
+                this._showAttachmentWarnings(warningMessages);
+                return;
+            }
+            this._clearAttachmentWarningState();
+        } else {
+            this._clearAttachmentWarningState();
+        }
+        // 发布前执行所有目标适配器的预检。预检策略沿用各适配器现有声明，不在此处改写风险等级。
+        let validation;
+        try {
+            const configs = {};
+            for (const adapterId of targetAdapters) {
+                configs[adapterId] = {
+                    ...plugin.getAdapterConfig(adapterId),
+                    ...(targetConfigOverrides[adapterId] || {})
+                };
+            }
+            validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
+        } catch (error) {
+            new Notice(`发送预检失败：${error.message || String(error)}`, 10000);
+            return;
+        }
+        if (validation.warnings.length > 0) {
+            new Notice(`发送预检提示：${validation.warnings.join('；')}`, 10000);
+        }
+        if (validation.errors.length > 0) {
+            new Notice(`发送预检未通过：${validation.errors.join('；')}`, 10000);
+            return;
         }
 
         // 1. 立即关闭弹窗，不阻塞用户操作
@@ -1126,81 +1089,16 @@ class JournalSyncSendModal extends Modal {
         // 2. 在独立异步任务中运行网络传输，保证关窗后进程绝不中断
         (async () => {
             const results = {};
-
-            // 发送通用目标（Flomo, Mastodon, Misskey, Notion 等）
             for (const adapterId of targetAdapters) {
                 try {
-                    if (adapterId === 'notion') {
-                        const notionConfig = plugin.getAdapterConfig('notion') || {};
-                        const prepared = await plugin.prepareNotionImages(images, readImageFile, Boolean(notionConfig.autoCompressLargeImages));
-                        let notionTitle = this.notionTitle;
-                        if (notionConfig.titleSource === 'none') notionTitle = '';
-                        if (notionConfig.titleSource === 'first_heading') {
-                            const headingMatch = rawContent.match(/^#\s+(.+)$/m);
-                            notionTitle = headingMatch ? headingMatch[1].trim() : '';
-                        }
-                        const result = await plugin.executeAdapter(adapterId, {
-                            content: rawContent,
-                            title: notionTitle,
-                            localImages: prepared.localImages,
-                            externalImages: {}
-                        });
-                        result.warnings = prepared.warnings.map(item => `${item.filename} 超过 5 MB 预警阈值`);
-                        results[adapterId] = result;
-                    } else {
-                        const result = await plugin.executeAdapter(adapterId, {
-                            content: plainTextContent,
-                            richDraft: {
-                                ...richDraft,
-                                images
-                            },
-                            images: images.map(img => img.vaultPath).filter(Boolean),
-                            readImageFile
-                        });
-                        results[adapterId] = result;
-                    }
+                    const result = await plugin.executeAdapter(
+                        adapterId,
+                        payload,
+                        targetConfigOverrides[adapterId] || {}
+                    );
+                    results[adapterId] = result;
                 } catch (error) {
                     results[adapterId] = { success: false, error: error.message };
-                }
-            }
-
-            // 发送 Telegram 频道
-            if (tgChannels.length > 0 && plugin.isAdapterEnabled('telegram')) {
-                if (isTelegraph) {
-                    // Telegraph 模式：创建 Telegraph 页面，将链接发送到 Telegram
-                    try {
-                        const tgConfig = plugin.getAdapterConfig('telegram');
-                        const titleLevel = tgConfig.telegraphTitleLevel || 1;
-                        const tgResult = await plugin.executeTelegraphSend({
-                            content: rawContent,
-                            images,
-                            readImageFile,
-                            channelIds: tgChannels,
-                            telegraphTitle,
-                            titleLevel,
-                            showLinkPreview: this.tgShowLinkPreview
-                        });
-                        results['Telegram'] = tgResult;
-                    } catch (error) {
-                        results['Telegram'] = { success: false, error: error.message };
-                    }
-                } else {
-                    try {
-                        // 始终从发布时的编辑器内容重建段落，避免发送弹窗打开时的旧草稿。
-                        const tgSegs = buildTelegramSegmentsFromEditor(rawContent, images);
-
-                        const tgResult = await plugin.executeAdapter('telegram', {
-                            content: isRich ? rawContent : plainTextContent,
-                            telegramSegments: tgSegs,
-                            readImageFile,
-                            channelIds: tgChannels,
-                            isRichText: isRich,
-                            showLinkPreview: this.tgShowLinkPreview
-                        });
-                        results['Telegram'] = tgResult;
-                    } catch (error) {
-                        results['Telegram'] = { success: false, error: error.message };
-                    }
                 }
             }
 
@@ -1209,7 +1107,7 @@ class JournalSyncSendModal extends Modal {
             const summary = Object.entries(results)
                 .flatMap(([id, result]) => {
                     const channelResults = Array.isArray(result.results) ? result.results : null;
-                    if (id === 'Telegram' && channelResults) {
+                    if ((id === 'Telegram' || id === 'telegram') && channelResults) {
                         return channelResults.map(channel => {
                             return `Telegram ${channel.channelId}: ${channel.success ? '成功' : `失败(${channel.error || '未知错误'})`}`;
                         });
@@ -1238,6 +1136,7 @@ class JournalSyncSendModal extends Modal {
     }
 
     onClose() {
+        this._clearAttachmentWarningState();
         this._imageGridRenderId += 1;
         // 释放所有缩略图预览 URL，避免内存泄漏。
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
