@@ -188,7 +188,9 @@
   border-radius: 999px;
   font-weight: 700;
   font-size: 12px;
-  padding: 4px 12px;
+  height: 26px;
+  line-height: 1;
+  padding: 0 10px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -232,7 +234,7 @@
 /* 展开动画 */
 .tg-telegraph-btn.expanded {
   transition: width 0.25s ease, padding 0.25s ease;
-  padding: 4px 14px;
+  padding: 0 10px;
   max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;

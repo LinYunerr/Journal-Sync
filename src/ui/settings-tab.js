@@ -200,10 +200,6 @@ class JournalSyncSettingTab extends PluginSettingTab {
             }));
 
         this._renderChannelSelection(containerEl, tgConfig);
-        new Setting(containerEl).setName('普通发送时显示网址预览').setDesc('仅普通文本发送时生效。关闭后，消息中的网址不会展开预览卡片。').addToggle(toggle => toggle
-            .setValue(tgConfig.showLinkPreview !== false).onChange(async value => {
-                await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), showLinkPreview: value });
-            }));
 
         new Setting(containerEl)
             .setName('启用富文本发送')

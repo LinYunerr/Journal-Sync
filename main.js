@@ -117,13 +117,18 @@ var require_send_modal = __commonJS({
         this.notionImageWarnings = [];
         this.tgSendMode = "plain";
         this.telegraphTitle = "";
+        this.tgShowLinkPreview = true;
         this.selectedTargets = /* @__PURE__ */ new Set();
         this.selectedTgChannels = /* @__PURE__ */ new Set();
         this.editingPresetId = "";
         this.images = [];
         this._objectUrls = /* @__PURE__ */ new Set();
+        this._imageGridRenderId = 0;
+        this._oversizedConfirmed = false;
         this.initContentAndImages();
         this.loadActivePresetSelection();
+        const _tgConfig = this.plugin.getAdapterConfig("telegram");
+        this.tgShowLinkPreview = (_tgConfig == null ? void 0 : _tgConfig.showLinkPreview) !== false;
       }
       /**
        * 初始化文本与图片 Token 逻辑
@@ -228,21 +233,21 @@ ${tokenStr}` : tokenStr;
         modalEl.style.maxWidth = "92vw";
         modalEl.style.position = "relative";
         const headerRow = contentEl.createDiv({ cls: "js-bridge-header-row" });
-        headerRow.createEl("h2", { text: "Journal Sync \xB7 \u53D1\u9001\u5185\u5BB9", cls: "js-bridge-send-title" });
+        headerRow.createEl("h2", { text: "Journal-Sync", cls: "js-bridge-send-title" });
         const inputPanel = contentEl.createDiv({ cls: "js-bridge-panel" });
-        const inputTitleRow = inputPanel.createDiv({ cls: "js-bridge-panel-title-row" });
-        inputTitleRow.createEl("h4", { text: "1. \u5185\u5BB9\u7F16\u8F91\u4E0E\u9884\u89C8", cls: "js-bridge-section-title" });
+        this.inputPanelEl = inputPanel;
         const editorContainer = inputPanel.createDiv({ cls: "js-bridge-editor-container" });
         this.renderEditorContent(editorContainer);
         if (this.images.length > 0) {
           const mediaGrid = inputPanel.createDiv({ cls: "media-thumb-grid" });
+          this.mediaGridEl = mediaGrid;
           this.renderImageGrid(mediaGrid);
           this.notionImageWarningEl = inputPanel.createDiv({ cls: "notion-image-warning-list" });
           this.updateNotionImageWarnings();
         }
         const publishPanel = contentEl.createDiv({ cls: "js-bridge-panel" });
         const publishTitleRow = publishPanel.createDiv({ cls: "js-bridge-panel-title-row" });
-        publishTitleRow.createEl("h4", { text: "2. \u9009\u62E9\u53D1\u5E03\u76EE\u6807", cls: "js-bridge-section-title" });
+        publishTitleRow.createEl("h4", { text: "\u9009\u62E9\u53D1\u5E03\u76EE\u6807", cls: "js-bridge-section-title" });
         this.presetControlsEl = publishTitleRow.createDiv({ cls: "publish-preset-controls" });
         this.renderPresetControls();
         this.simpleTargetsEl = publishPanel.createDiv({ cls: "target-list" });
@@ -255,6 +260,9 @@ ${tokenStr}` : tokenStr;
         });
         this.sendBtn.addEventListener("click", () => this.doSend());
         this.previewModalEl = contentEl.createDiv({ cls: "media-preview-modal" });
+        this.previewModalEl.addEventListener("click", (e) => {
+          if (e.target === this.previewModalEl) this.hideImagePreview();
+        });
         const previewShell = this.previewModalEl.createDiv({ cls: "media-preview-shell" });
         const closePreviewBtn = previewShell.createEl("button", {
           type: "button",
@@ -393,6 +401,24 @@ ${tokenStr}` : tokenStr;
           });
           this.content = text;
         });
+        richDiv.addEventListener("paste", (e) => {
+          var _a;
+          const items = (_a = e.clipboardData) == null ? void 0 : _a.items;
+          if (!items) return;
+          let imageItem = null;
+          for (const item of items) {
+            if (item.type && item.type.startsWith("image/")) {
+              imageItem = item;
+              break;
+            }
+          }
+          if (!imageItem) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const file = imageItem.getAsFile();
+          if (!file) return;
+          this.addPastedImage(file, richDiv);
+        });
       }
       showMentionDropdown(dropdownEl, richDiv, range, matchedText) {
         dropdownEl.empty();
@@ -455,7 +481,40 @@ ${tokenStr}` : tokenStr;
         sel.addRange(range);
         richDiv.dispatchEvent(new Event("input"));
       }
+      /**
+       * 将粘贴的图片文件加入图片列表，在光标处插入 token chip，刷新缩略图网格。
+       * 图片仅存于内存 Blob，不写入 vault；预览 URL 在渲染时创建，关闭窗口时释放。
+       */
+      addPastedImage(file, richDiv) {
+        const ext = file.type && file.type.split("/")[1] || "png";
+        const filename = `clipboard_${Date.now()}.${ext}`;
+        const token = `@\u56FE\u7247${this.images.length + 1}`;
+        const imageEntry = {
+          filename,
+          vaultPath: filename,
+          id: `paste_${Date.now()}`,
+          token,
+          blob: file,
+          blobUrl: ""
+        };
+        this.images.push(imageEntry);
+        this.insertTokenAtCursor(richDiv, token);
+        if (!this.mediaGridEl && this.inputPanelEl) {
+          this.mediaGridEl = this.inputPanelEl.createDiv({ cls: "media-thumb-grid" });
+          if (this.notionImageWarningEl) {
+            this.inputPanelEl.insertBefore(this.mediaGridEl, this.notionImageWarningEl);
+          }
+        }
+        if (this.mediaGridEl) {
+          this.renderImageGrid(this.mediaGridEl);
+        }
+        if (!this.notionImageWarningEl && this.inputPanelEl) {
+          this.notionImageWarningEl = this.inputPanelEl.createDiv({ cls: "notion-image-warning-list" });
+        }
+        this.updateNotionImageWarnings();
+      }
       renderImageGrid(containerEl) {
+        const renderId = ++this._imageGridRenderId;
         containerEl.empty();
         if (this.images.length === 0) return;
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
@@ -463,14 +522,25 @@ ${tokenStr}` : tokenStr;
         this.images.forEach((img, index) => {
           const thumb = containerEl.createDiv({ cls: "media-thumb" });
           const imgEl = thumb.createEl("img", { attr: { alt: img.filename } });
-          this.readImageFile(img.vaultPath).then((arrayBuf) => {
-            if (!arrayBuf) return;
-            const blob = new Blob([arrayBuf]);
-            const url = URL.createObjectURL(blob);
+          if (img.blob) {
+            const url = URL.createObjectURL(img.blob);
+            img.blobUrl = url;
             this._objectUrls.add(url);
             imgEl.src = url;
-          }).catch(() => {
-          });
+          } else {
+            this.readImageFile(img.vaultPath).then((arrayBuf) => {
+              if (!arrayBuf) return;
+              const blob = new Blob([arrayBuf]);
+              const url = URL.createObjectURL(blob);
+              if (renderId !== this._imageGridRenderId) {
+                URL.revokeObjectURL(url);
+                return;
+              }
+              this._objectUrls.add(url);
+              imgEl.src = url;
+            }).catch(() => {
+            });
+          }
           thumb.createEl("span", { cls: "media-thumb-order", text: `${index + 1}` });
           const removeBtn = thumb.createEl("button", {
             type: "button",
@@ -506,7 +576,7 @@ ${tokenStr}` : tokenStr;
             this.updateNotionImageWarnings();
           });
           thumb.addEventListener("click", () => {
-            if (imgEl.src) this.showImagePreview(imgEl.src);
+            if (imgEl.src && imgEl.complete && imgEl.naturalWidth > 0) this.showImagePreview(imgEl.src);
           });
         });
       }
@@ -516,6 +586,10 @@ ${tokenStr}` : tokenStr;
         const warningItems = [];
         for (const image of this.images) {
           try {
+            if (image.blob) {
+              if (image.blob.size > threshold) warningItems.push({ filename: image.filename, bytes: image.blob.size });
+              continue;
+            }
             const buffer = await this.readImageFile(image.vaultPath);
             if ((buffer == null ? void 0 : buffer.byteLength) > threshold) warningItems.push({ filename: image.filename, bytes: buffer.byteLength });
           } catch (e) {
@@ -531,10 +605,22 @@ ${tokenStr}` : tokenStr;
       showImagePreview(src) {
         this.previewImgEl.src = src;
         this.previewModalEl.addClass("active");
+        this._previewEscHandler = (e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            this.hideImagePreview();
+          }
+        };
+        document.addEventListener("keydown", this._previewEscHandler, true);
       }
       hideImagePreview() {
         this.previewModalEl.removeClass("active");
         this.previewImgEl.src = "";
+        if (this._previewEscHandler) {
+          document.removeEventListener("keydown", this._previewEscHandler, true);
+          this._previewEscHandler = null;
+        }
       }
       renderPresetControls() {
         if (!this.presetControlsEl) return;
@@ -676,7 +762,7 @@ ${tokenStr}` : tokenStr;
         const tgConfig = this.plugin.getAdapterConfig("telegram");
         const channels = Array.isArray(tgConfig == null ? void 0 : tgConfig.channels) ? tgConfig.channels : [];
         const tgLabelRow = this.tgSectionEl.createDiv({ cls: "tg-channel-label-row" });
-        tgLabelRow.createEl("div", { text: "Telegram \u76EE\u6807\u9891\u9053\uFF1A", cls: "target-sub-label" });
+        tgLabelRow.createEl("div", { text: "Telegram\uFF1A", cls: "target-sub-label" });
         const tgBtnGroup = tgLabelRow.createDiv({ cls: "tg-btn-group" });
         const telegraphBtn = tgBtnGroup.createEl("button", {
           type: "button",
@@ -684,6 +770,17 @@ ${tokenStr}` : tokenStr;
           cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === "telegraph" ? " active expanded" : ""}`
         });
         telegraphBtn.title = "\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001";
+        const previewToggleBtn = tgBtnGroup.createEl("button", {
+          type: "button",
+          text: "\u9884\u89C8",
+          cls: `tg-input-mode-btn tg-preview-btn${this.tgShowLinkPreview ? " active" : ""}`
+        });
+        previewToggleBtn.title = this.tgShowLinkPreview ? "\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8" : "\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8";
+        previewToggleBtn.addEventListener("click", () => {
+          this.tgShowLinkPreview = !this.tgShowLinkPreview;
+          previewToggleBtn.classList.toggle("active", this.tgShowLinkPreview);
+          previewToggleBtn.title = this.tgShowLinkPreview ? "\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8" : "\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8";
+        });
         if (tgConfig.richTextEnabled !== false) {
           const richToggleBtn = tgBtnGroup.createEl("button", {
             type: "button",
@@ -716,7 +813,7 @@ ${tokenStr}` : tokenStr;
           }
           this.tgSendMode = "telegraph";
           telegraphBtn.classList.add("active", "expanded");
-          const richBtn = tgLabelRow.querySelector(".tg-input-mode-btn:not(.tg-telegraph-btn)");
+          const richBtn = tgLabelRow.querySelector(".tg-input-mode-btn:not(.tg-telegraph-btn):not(.tg-preview-btn)");
           if (richBtn) richBtn.classList.remove("active");
           this._expandTelegraphBtn(telegraphBtn);
         });
@@ -832,7 +929,7 @@ ${tokenStr}` : tokenStr;
       /**
        * 执行发送（即时关窗 + 后台无阻塞异步发送）
        */
-      doSend() {
+      async doSend() {
         const plugin = this.plugin;
         const targetAdapters = Array.from(this.selectedTargets).filter(
           (adapterId) => adapterId !== "telegram" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
@@ -849,9 +946,47 @@ ${tokenStr}` : tokenStr;
         const rawContent = this.content;
         const plainTextContent = getPlainTextWithoutImageTokens(rawContent);
         const richDraft = this.richDraft;
-        const readImageFile = this.readImageFile;
         const referencedTokens = new Set(rawContent.match(/@图片\d+/g) || []);
         const images = this.images.filter((image) => referencedTokens.has(image.token));
+        const vaultReadImageFile = this.readImageFile;
+        const readImageFile = (vaultPath) => {
+          const img = images.find((i) => i.vaultPath === vaultPath && i.blob);
+          if (img && img.blob) return Promise.resolve(img.blob.arrayBuffer());
+          return vaultReadImageFile(vaultPath);
+        };
+        const SIZE_THRESHOLD = 10 * 1024 * 1024;
+        if (!this._oversizedConfirmed) {
+          let hasOversized = false;
+          for (const img of images) {
+            let bytes = 0;
+            if (img.blob) {
+              bytes = img.blob.size;
+            } else if (img.vaultPath && typeof vaultReadImageFile === "function") {
+              try {
+                const buf = await vaultReadImageFile(img.vaultPath);
+                bytes = (buf == null ? void 0 : buf.byteLength) || 0;
+              } catch (e) {
+              }
+            }
+            if (bytes > SIZE_THRESHOLD) {
+              hasOversized = true;
+              break;
+            }
+          }
+          if (hasOversized) {
+            this._oversizedConfirmed = true;
+            if (this.sendBtn) {
+              this.sendBtn.textContent = "\u26A0\uFE0F \u56FE\u7247\u8FC7\u5927\uFF0C\u786E\u8BA4\u53D1\u9001";
+              this.sendBtn.classList.add("mod-warning");
+            }
+            return;
+          }
+        }
+        this._oversizedConfirmed = false;
+        if (this.sendBtn) {
+          this.sendBtn.textContent = "\u53D1\u5E03";
+          this.sendBtn.classList.remove("mod-warning");
+        }
         this.close();
         new Notice2("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
         (async () => {
@@ -902,7 +1037,8 @@ ${tokenStr}` : tokenStr;
                   readImageFile,
                   channelIds: tgChannels,
                   telegraphTitle,
-                  titleLevel
+                  titleLevel,
+                  showLinkPreview: this.tgShowLinkPreview
                 });
                 results["Telegram"] = tgResult;
               } catch (error) {
@@ -916,7 +1052,8 @@ ${tokenStr}` : tokenStr;
                   telegramSegments: tgSegs,
                   readImageFile,
                   channelIds: tgChannels,
-                  isRichText: isRich
+                  isRichText: isRich,
+                  showLinkPreview: this.tgShowLinkPreview
                 });
                 results["Telegram"] = tgResult;
               } catch (error) {
@@ -940,11 +1077,19 @@ ${tokenStr}` : tokenStr;
           } else {
             new Notice2(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
           }
-        })();
+        })().finally(() => {
+          for (const image of images) {
+            if (image == null ? void 0 : image.blob) image.blob = null;
+            image.blobUrl = "";
+          }
+          images.length = 0;
+        });
       }
       onClose() {
+        this._imageGridRenderId += 1;
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
+        this.images = [];
         this.contentEl.empty();
       }
     };
@@ -1428,9 +1573,6 @@ var require_settings_tab = __commonJS({
           }
         }));
         this._renderChannelSelection(containerEl, tgConfig);
-        new Setting(containerEl).setName("\u666E\u901A\u53D1\u9001\u65F6\u663E\u793A\u7F51\u5740\u9884\u89C8").setDesc("\u4EC5\u666E\u901A\u6587\u672C\u53D1\u9001\u65F6\u751F\u6548\u3002\u5173\u95ED\u540E\uFF0C\u6D88\u606F\u4E2D\u7684\u7F51\u5740\u4E0D\u4F1A\u5C55\u5F00\u9884\u89C8\u5361\u7247\u3002").addToggle((toggle) => toggle.setValue(tgConfig.showLinkPreview !== false).onChange(async (value) => {
-          await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), showLinkPreview: value });
-        }));
         new Setting(containerEl).setName("\u542F\u7528\u5BCC\u6587\u672C\u53D1\u9001").setDesc("\u5F00\u542F\u540E\u4F7F\u7528 Telegram \u539F\u751F\u5A92\u4F53\u4E0A\u4F20\u53D1\u9001\u56FE\u6587\u6DF7\u6392\u5185\u5BB9\u3002\u5173\u95ED\u540E\u4EE5\u666E\u901A\u9644\u4EF6\u65B9\u5F0F\u53D1\u9001\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(tgConfig.richTextEnabled !== false).onChange(async (value) => {
           const config = this.plugin.getAdapterConfig("telegram") || {};
           await this.plugin.setAdapterConfig("telegram", { ...config, richTextEnabled: value });
@@ -2353,7 +2495,7 @@ ${t}` : t;
     return { success: false, error: error.message };
   }
 }
-async function execute2({ content, config, telegramSegments, requestUrl: requestUrl2, readImageFile, channelId, channelIds, isRichText = true }) {
+async function execute2({ content, config, telegramSegments, requestUrl: requestUrl2, readImageFile, channelId, channelIds, isRichText = true, showLinkPreview }) {
   var _a;
   const botToken = config == null ? void 0 : config.botToken;
   if (!botToken) {
@@ -2400,9 +2542,10 @@ async function execute2({ content, config, telegramSegments, requestUrl: request
     if (segment.type !== "image") return segment;
     return { ...segment, imageKey: segment.vaultPath || segment.filename };
   });
+  const effectiveConfig = showLinkPreview !== void 0 ? { ...config, showLinkPreview } : config;
   const results = await Promise.all(targets.map(async (targetCh) => {
     try {
-      const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, config, requestUrl2, isRichText);
+      const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl2, isRichText);
       return { channelId: targetCh, ...res };
     } catch (error) {
       return { success: false, channelId: targetCh, error: error.message || String(error) };
@@ -3687,7 +3830,8 @@ var JournalSyncPlugin = class extends Plugin {
         requestUrl,
         readImageFile: payload.readImageFile,
         channelIds: payload.channelIds,
-        isRichText: payload.isRichText
+        isRichText: payload.isRichText,
+        showLinkPreview: payload.showLinkPreview
       });
     }
     if (adapterId === "mastodon") {
@@ -3750,7 +3894,7 @@ var JournalSyncPlugin = class extends Plugin {
    * @param {object} params - { content, images, readImageFile, channelIds, telegraphTitle, titleLevel }
    * @returns {Promise<object>} { success, url, results }
    */
-  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel }) {
+  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel, showLinkPreview }) {
     var _a;
     let accessToken;
     try {
@@ -3801,7 +3945,7 @@ var JournalSyncPlugin = class extends Plugin {
     if (targets.length === 0) {
       return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E", url: pageUrl };
     }
-    const showLinkPreview = tgConfig.showLinkPreview !== false;
+    const linkPreviewEnabled = showLinkPreview !== void 0 ? showLinkPreview : tgConfig.showLinkPreview !== false;
     const linkText = `${finalTitle}
 ${pageUrl}`;
     const results = await Promise.all(targets.map(async (targetCh) => {
@@ -3813,7 +3957,7 @@ ${pageUrl}`;
           body: JSON.stringify({
             chat_id: targetCh,
             text: linkText,
-            disable_web_page_preview: !showLinkPreview
+            disable_web_page_preview: !linkPreviewEnabled
           }),
           throw: false
         });

@@ -567,7 +567,8 @@ class JournalSyncPlugin extends Plugin {
         requestUrl: requestUrl,
         readImageFile: payload.readImageFile,
         channelIds: payload.channelIds,
-        isRichText: payload.isRichText
+        isRichText: payload.isRichText,
+        showLinkPreview: payload.showLinkPreview
       });
     }
 
@@ -638,7 +639,7 @@ class JournalSyncPlugin extends Plugin {
    * @param {object} params - { content, images, readImageFile, channelIds, telegraphTitle, titleLevel }
    * @returns {Promise<object>} { success, url, results }
    */
-  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel }) {
+  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel, showLinkPreview }) {
     // 1. 确保 access_token
     let accessToken;
     try {
@@ -710,7 +711,7 @@ class JournalSyncPlugin extends Plugin {
       return { success: false, error: 'Telegram 频道未配置', url: pageUrl };
     }
 
-    const showLinkPreview = tgConfig.showLinkPreview !== false;
+    const linkPreviewEnabled = showLinkPreview !== undefined ? showLinkPreview : (tgConfig.showLinkPreview !== false);
     const linkText = `${finalTitle}\n${pageUrl}`;
 
     const results = await Promise.all(targets.map(async targetCh => {
@@ -722,7 +723,7 @@ class JournalSyncPlugin extends Plugin {
           body: JSON.stringify({
             chat_id: targetCh,
             text: linkText,
-            disable_web_page_preview: !showLinkPreview
+            disable_web_page_preview: !linkPreviewEnabled
           }),
           throw: false
         });

@@ -80,3 +80,4 @@ For iterative local development, use `npm run dev`. Do not leave the watch proce
 - Keep `package.json`, `manifest.json`, and `versions.json` aligned when releasing. The release tag must exactly match `manifest.json.version` and must not use a `v` prefix.
 - Do not manually alter generated `main.js`; verify it changes only as a result of `npm run build`.
 - `.github/workflows/release.yml` builds tagged versions and attaches only `main.js`, `manifest.json`, and `styles.css` to the GitHub Release.
+- To trigger the release workflow, push a git tag matching `manifest.json.version` (no `v` prefix). The workflow verifies version alignment across tag, `manifest.json`, `package.json`, and `versions.json`, then builds and creates the GitHub Release automatically—no manual release steps.

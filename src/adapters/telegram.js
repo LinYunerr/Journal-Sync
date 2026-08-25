@@ -538,7 +538,7 @@ async function sendRichContent(botToken, chatId, segments, imageBuffers, config,
 /**
  * 主执行函数
  */
-export async function execute({ content, config, telegramSegments, requestUrl, readImageFile, channelId, channelIds, isRichText = true }) {
+export async function execute({ content, config, telegramSegments, requestUrl, readImageFile, channelId, channelIds, isRichText = true, showLinkPreview }) {
     const botToken = config?.botToken;
     if (!botToken) {
         return { success: false, error: 'Telegram Bot Token 未配置' };
@@ -595,9 +595,14 @@ export async function execute({ content, config, telegramSegments, requestUrl, r
         if (segment.type !== 'image') return segment;
         return { ...segment, imageKey: segment.vaultPath || segment.filename };
     });
+
+    // 发送面板的预览开关覆盖设置中的默认值
+    const effectiveConfig = showLinkPreview !== undefined
+        ? { ...config, showLinkPreview }
+        : config;
     const results = await Promise.all(targets.map(async targetCh => {
         try {
-            const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, config, requestUrl, isRichText);
+            const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl, isRichText);
             return { channelId: targetCh, ...res };
         } catch (error) {
             return { success: false, channelId: targetCh, error: error.message || String(error) };

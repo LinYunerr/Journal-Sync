@@ -83,14 +83,20 @@ class JournalSyncSendModal extends Modal {
 
         this.tgSendMode = 'plain'; // 'plain' | 'rich' | 'telegraph'
         this.telegraphTitle = '';  // Telegraph 标题缓存（仅窗口生命周期内有效）
+        this.tgShowLinkPreview = true; // 网址预览开关（从设置初始化，发送时可临时切换）
         this.selectedTargets = new Set();
         this.selectedTgChannels = new Set();
 
         this.editingPresetId = '';
         this.images = [];
-        this._objectUrls = new Set(); // 跟踪缩略图预览 URL，关闭时统一释放
+        this._objectUrls = new Set(); // 跟踪当前缩略图预览 URL，关闭时统一释放
+        this._imageGridRenderId = 0; // 使过期的异步缩略图加载失效
+        this._oversizedConfirmed = false; // 图片过大二次确认标志
         this.initContentAndImages();
+
         this.loadActivePresetSelection();
+        const _tgConfig = this.plugin.getAdapterConfig('telegram');
+        this.tgShowLinkPreview = _tgConfig?.showLinkPreview !== false;
     }
 
     /**
@@ -210,13 +216,12 @@ class JournalSyncSendModal extends Modal {
 
         // 1. 标题
         const headerRow = contentEl.createDiv({ cls: 'js-bridge-header-row' });
-        headerRow.createEl('h2', { text: 'Journal Sync · 发送内容', cls: 'js-bridge-send-title' });
+        headerRow.createEl('h2', { text: 'Journal-Sync', cls: 'js-bridge-send-title' });
 
         // 2. 文本编辑区域
         const inputPanel = contentEl.createDiv({ cls: 'js-bridge-panel' });
+        this.inputPanelEl = inputPanel;
 
-        const inputTitleRow = inputPanel.createDiv({ cls: 'js-bridge-panel-title-row' });
-        inputTitleRow.createEl('h4', { text: '1. 内容编辑与预览', cls: 'js-bridge-section-title' });
 
         const editorContainer = inputPanel.createDiv({ cls: 'js-bridge-editor-container' });
         this.renderEditorContent(editorContainer);
@@ -224,6 +229,7 @@ class JournalSyncSendModal extends Modal {
         // 缩略图网格
         if (this.images.length > 0) {
             const mediaGrid = inputPanel.createDiv({ cls: 'media-thumb-grid' });
+            this.mediaGridEl = mediaGrid;
             this.renderImageGrid(mediaGrid);
             this.notionImageWarningEl = inputPanel.createDiv({ cls: 'notion-image-warning-list' });
             this.updateNotionImageWarnings();
@@ -233,7 +239,7 @@ class JournalSyncSendModal extends Modal {
         const publishPanel = contentEl.createDiv({ cls: 'js-bridge-panel' });
 
         const publishTitleRow = publishPanel.createDiv({ cls: 'js-bridge-panel-title-row' });
-        publishTitleRow.createEl('h4', { text: '2. 选择发布目标', cls: 'js-bridge-section-title' });
+        publishTitleRow.createEl('h4', { text: '选择发布目标', cls: 'js-bridge-section-title' });
 
         this.presetControlsEl = publishTitleRow.createDiv({ cls: 'publish-preset-controls' });
         this.renderPresetControls();
@@ -257,6 +263,9 @@ class JournalSyncSendModal extends Modal {
 
         // Lightbox Modal
         this.previewModalEl = contentEl.createDiv({ cls: 'media-preview-modal' });
+        this.previewModalEl.addEventListener('click', (e) => {
+            if (e.target === this.previewModalEl) this.hideImagePreview();
+        });
         const previewShell = this.previewModalEl.createDiv({ cls: 'media-preview-shell' });
         const closePreviewBtn = previewShell.createEl('button', {
             type: 'button',
@@ -416,8 +425,30 @@ class JournalSyncSendModal extends Modal {
             });
             this.content = text;
         });
-    }
 
+        // 监听粘贴事件：拦截剪贴板中的图片，转为 @图片N token
+        richDiv.addEventListener('paste', (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            let imageItem = null;
+            for (const item of items) {
+                if (item.type && item.type.startsWith('image/')) {
+                    imageItem = item;
+                    break;
+                }
+            }
+            if (!imageItem) return; // 纯文本粘贴走默认行为
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            const file = imageItem.getAsFile();
+            if (!file) return;
+
+            this.addPastedImage(file, richDiv);
+        });
+    }
     showMentionDropdown(dropdownEl, richDiv, range, matchedText) {
         dropdownEl.empty();
         dropdownEl.removeClass('hidden');
@@ -494,11 +525,52 @@ class JournalSyncSendModal extends Modal {
         richDiv.dispatchEvent(new Event('input'));
     }
 
+    /**
+     * 将粘贴的图片文件加入图片列表，在光标处插入 token chip，刷新缩略图网格。
+     * 图片仅存于内存 Blob，不写入 vault；预览 URL 在渲染时创建，关闭窗口时释放。
+     */
+    addPastedImage(file, richDiv) {
+        const ext = (file.type && file.type.split('/')[1]) || 'png';
+        const filename = `clipboard_${Date.now()}.${ext}`;
+        const token = `@图片${this.images.length + 1}`;
+
+        const imageEntry = {
+            filename,
+            vaultPath: filename,
+            id: `paste_${Date.now()}`,
+            token,
+            blob: file,
+            blobUrl: ''
+        };
+        this.images.push(imageEntry);
+
+        // 在光标位置插入 token chip
+        this.insertTokenAtCursor(richDiv, token);
+
+        // 确保缩略图网格容器存在
+        if (!this.mediaGridEl && this.inputPanelEl) {
+            this.mediaGridEl = this.inputPanelEl.createDiv({ cls: 'media-thumb-grid' });
+            if (this.notionImageWarningEl) {
+                this.inputPanelEl.insertBefore(this.mediaGridEl, this.notionImageWarningEl);
+            }
+        }
+        if (this.mediaGridEl) {
+            this.renderImageGrid(this.mediaGridEl);
+        }
+
+        // 确保 notion 图片预警区域存在并更新
+        if (!this.notionImageWarningEl && this.inputPanelEl) {
+            this.notionImageWarningEl = this.inputPanelEl.createDiv({ cls: 'notion-image-warning-list' });
+        }
+        this.updateNotionImageWarnings();
+    }
+
     renderImageGrid(containerEl) {
+        const renderId = ++this._imageGridRenderId;
         containerEl.empty();
         if (this.images.length === 0) return;
 
-        // 释放上一轮渲染创建的预览 URL，避免内存泄漏
+        // 每次重绘只释放上一轮预览 URL；粘贴图片的 Blob 数据仍保留，可重新生成 URL。
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
 
@@ -506,13 +578,25 @@ class JournalSyncSendModal extends Modal {
             const thumb = containerEl.createDiv({ cls: 'media-thumb' });
             const imgEl = thumb.createEl('img', { attr: { alt: img.filename } });
 
-            this.readImageFile(img.vaultPath).then(arrayBuf => {
-                if (!arrayBuf) return;
-                const blob = new Blob([arrayBuf]);
-                const url = URL.createObjectURL(blob);
+            // 粘贴图片从内存 Blob 重新创建预览 URL；Vault 图片走 readImageFile。
+            if (img.blob) {
+                const url = URL.createObjectURL(img.blob);
+                img.blobUrl = url;
                 this._objectUrls.add(url);
                 imgEl.src = url;
-            }).catch(() => {});
+            } else {
+                this.readImageFile(img.vaultPath).then(arrayBuf => {
+                    if (!arrayBuf) return;
+                    const blob = new Blob([arrayBuf]);
+                    const url = URL.createObjectURL(blob);
+                    if (renderId !== this._imageGridRenderId) {
+                        URL.revokeObjectURL(url);
+                        return;
+                    }
+                    this._objectUrls.add(url);
+                    imgEl.src = url;
+                }).catch(() => {});
+            }
 
             thumb.createEl('span', { cls: 'media-thumb-order', text: `${index + 1}` });
 
@@ -550,7 +634,7 @@ class JournalSyncSendModal extends Modal {
             });
 
             thumb.addEventListener('click', () => {
-                if (imgEl.src) this.showImagePreview(imgEl.src);
+                if (imgEl.src && imgEl.complete && imgEl.naturalWidth > 0) this.showImagePreview(imgEl.src);
             });
         });
     }
@@ -561,6 +645,11 @@ class JournalSyncSendModal extends Modal {
         const warningItems = [];
         for (const image of this.images) {
             try {
+                // 粘贴的图片直接从内存 Blob 读取大小
+                if (image.blob) {
+                    if (image.blob.size > threshold) warningItems.push({ filename: image.filename, bytes: image.blob.size });
+                    continue;
+                }
                 const buffer = await this.readImageFile(image.vaultPath);
                 if (buffer?.byteLength > threshold) warningItems.push({ filename: image.filename, bytes: buffer.byteLength });
             } catch {}
@@ -576,11 +665,23 @@ class JournalSyncSendModal extends Modal {
     showImagePreview(src) {
         this.previewImgEl.src = src;
         this.previewModalEl.addClass('active');
+        this._previewEscHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.hideImagePreview();
+            }
+        };
+        document.addEventListener('keydown', this._previewEscHandler, true);
     }
 
     hideImagePreview() {
         this.previewModalEl.removeClass('active');
         this.previewImgEl.src = '';
+        if (this._previewEscHandler) {
+            document.removeEventListener('keydown', this._previewEscHandler, true);
+            this._previewEscHandler = null;
+        }
     }
 
     renderPresetControls() {
@@ -744,7 +845,7 @@ class JournalSyncSendModal extends Modal {
         const channels = Array.isArray(tgConfig?.channels) ? tgConfig.channels : [];
 
         const tgLabelRow = this.tgSectionEl.createDiv({ cls: 'tg-channel-label-row' });
-        tgLabelRow.createEl('div', { text: 'Telegram 目标频道：', cls: 'target-sub-label' });
+        tgLabelRow.createEl('div', { text: 'Telegram：', cls: 'target-sub-label' });
 
         // 按钮组：Telegraph + 富文本，紧贴右侧
         const tgBtnGroup = tgLabelRow.createDiv({ cls: 'tg-btn-group' });
@@ -756,6 +857,19 @@ class JournalSyncSendModal extends Modal {
             cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === 'telegraph' ? ' active expanded' : ''}`
         });
         telegraphBtn.title = '点击使用 Telegraph 方式发送';
+
+        // 网址预览开关：放在富文本左侧、Telegraph 右侧，样式与其它两个按钮一致。
+        const previewToggleBtn = tgBtnGroup.createEl('button', {
+            type: 'button',
+            text: '预览',
+            cls: `tg-input-mode-btn tg-preview-btn${this.tgShowLinkPreview ? ' active' : ''}`
+        });
+        previewToggleBtn.title = this.tgShowLinkPreview ? '当前为显示网址预览，点击关闭预览' : '当前为关闭网址预览，点击显示预览';
+        previewToggleBtn.addEventListener('click', () => {
+            this.tgShowLinkPreview = !this.tgShowLinkPreview;
+            previewToggleBtn.classList.toggle('active', this.tgShowLinkPreview);
+            previewToggleBtn.title = this.tgShowLinkPreview ? '当前为显示网址预览，点击关闭预览' : '当前为关闭网址预览，点击显示预览';
+        });
 
         // 富文本开关：仅在 Telegram「启用富文本发送」开启时显示。
         // 按钮文字固定为「富文本」，灰态（未激活）表示当前实际为纯文本发送。
@@ -800,7 +914,7 @@ class JournalSyncSendModal extends Modal {
             this.tgSendMode = 'telegraph';
             telegraphBtn.classList.add('active', 'expanded');
             // 取消富文本激活态
-            const richBtn = tgLabelRow.querySelector('.tg-input-mode-btn:not(.tg-telegraph-btn)');
+            const richBtn = tgLabelRow.querySelector('.tg-input-mode-btn:not(.tg-telegraph-btn):not(.tg-preview-btn)');
             if (richBtn) richBtn.classList.remove('active');
 
             // 展开按钮：显示 "Telegraph：标题"
@@ -936,7 +1050,7 @@ class JournalSyncSendModal extends Modal {
     /**
      * 执行发送（即时关窗 + 后台无阻塞异步发送）
      */
-    doSend() {
+    async doSend() {
         const plugin = this.plugin;
         // 二次校验：设置可能在弹窗打开后被停用，停用适配器不得发送。
         const targetAdapters = Array.from(this.selectedTargets).filter(adapterId =>
@@ -959,9 +1073,51 @@ class JournalSyncSendModal extends Modal {
         const rawContent = this.content;
         const plainTextContent = getPlainTextWithoutImageTokens(rawContent);
         const richDraft = this.richDraft;
-        const readImageFile = this.readImageFile;
         const referencedTokens = new Set(rawContent.match(/@图片\d+/g) || []);
         const images = this.images.filter(image => referencedTokens.has(image.token));
+        // 包装 readImageFile：粘贴的图片从内存 Blob 读取，vault 图片走原逻辑
+        const vaultReadImageFile = this.readImageFile;
+        const readImageFile = (vaultPath) => {
+            const img = images.find(i => i.vaultPath === vaultPath && i.blob);
+            if (img && img.blob) return Promise.resolve(img.blob.arrayBuffer());
+            return vaultReadImageFile(vaultPath);
+        };
+
+        // 图片过大二次确认：检测所有引用图片是否超过 10 MB
+        const SIZE_THRESHOLD = 10 * 1024 * 1024;
+        if (!this._oversizedConfirmed) {
+            let hasOversized = false;
+            for (const img of images) {
+                let bytes = 0;
+                if (img.blob) {
+                    bytes = img.blob.size;
+                } else if (img.vaultPath && typeof vaultReadImageFile === 'function') {
+                    try {
+                        const buf = await vaultReadImageFile(img.vaultPath);
+                        bytes = buf?.byteLength || 0;
+                    } catch {}
+                }
+                if (bytes > SIZE_THRESHOLD) {
+                    hasOversized = true;
+                    break;
+                }
+            }
+            if (hasOversized) {
+                this._oversizedConfirmed = true;
+                if (this.sendBtn) {
+                    this.sendBtn.textContent = '⚠️ 图片过大，确认发送';
+                    this.sendBtn.classList.add('mod-warning');
+                }
+                return;
+            }
+        }
+
+        // 重置确认标志，恢复按钮文字
+        this._oversizedConfirmed = false;
+        if (this.sendBtn) {
+            this.sendBtn.textContent = '发布';
+            this.sendBtn.classList.remove('mod-warning');
+        }
 
         // 1. 立即关闭弹窗，不阻塞用户操作
         this.close();
@@ -1021,7 +1177,8 @@ class JournalSyncSendModal extends Modal {
                             readImageFile,
                             channelIds: tgChannels,
                             telegraphTitle,
-                            titleLevel
+                            titleLevel,
+                            showLinkPreview: this.tgShowLinkPreview
                         });
                         results['Telegram'] = tgResult;
                     } catch (error) {
@@ -1037,7 +1194,8 @@ class JournalSyncSendModal extends Modal {
                             telegramSegments: tgSegs,
                             readImageFile,
                             channelIds: tgChannels,
-                            isRichText: isRich
+                            isRichText: isRich,
+                            showLinkPreview: this.tgShowLinkPreview
                         });
                         results['Telegram'] = tgResult;
                     } catch (error) {
@@ -1068,13 +1226,24 @@ class JournalSyncSendModal extends Modal {
             } else {
                 new Notice(`✅ 发送成功：${summary}`, 6000);
             }
-        })();
+        })().finally(() => {
+            // 后台发送完成后释放对粘贴图片 Blob 的引用；发送期间必须保留它们。
+            for (const image of images) {
+                if (image?.blob) image.blob = null;
+                image.blobUrl = '';
+            }
+            images.length = 0;
+        });
+
     }
 
     onClose() {
-        // 释放所有缩略图预览 URL，避免内存泄漏
+        this._imageGridRenderId += 1;
+        // 释放所有缩略图预览 URL，避免内存泄漏。
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
+        // 关闭窗口后不再保留粘贴图片的内存 Blob；后台发送使用自己的 images 引用。
+        this.images = [];
         this.contentEl.empty();
     }
 }
