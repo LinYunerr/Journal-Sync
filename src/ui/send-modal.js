@@ -81,7 +81,8 @@ class JournalSyncSendModal extends Modal {
         this.notionTitle = notionTitle;
         this.notionImageWarnings = [];
 
-        this.isRichTextMode = false; // 默认模式为纯文本
+        this.tgSendMode = 'plain'; // 'plain' | 'rich' | 'telegraph'
+        this.telegraphTitle = '';  // Telegraph 标题缓存（仅窗口生命周期内有效）
         this.selectedTargets = new Set();
         this.selectedTgChannels = new Set();
 
@@ -216,25 +217,6 @@ class JournalSyncSendModal extends Modal {
 
         const inputTitleRow = inputPanel.createDiv({ cls: 'js-bridge-panel-title-row' });
         inputTitleRow.createEl('h4', { text: '1. 内容编辑与预览', cls: 'js-bridge-section-title' });
-
-        const inputActions = inputTitleRow.createDiv({ cls: 'js-bridge-input-actions' });
-
-        // 富文本开关：仅在 Telegram「启用富文本发送」开启时显示。
-        // 按钮文字固定为「富文本」，灰态（未激活）表示当前实际为纯文本发送。
-        const tgConfig = this.plugin.getAdapterConfig('telegram') || {};
-        if (tgConfig.richTextEnabled !== false) {
-            const richToggleBtn = inputActions.createEl('button', {
-                type: 'button',
-                text: '富文本',
-                cls: `tg-input-mode-btn${this.isRichTextMode ? ' active' : ''}`
-            });
-            richToggleBtn.title = this.isRichTextMode ? '当前为富文本发送，点击切换为纯文本' : '当前为纯文本发送，点击切换为富文本';
-            richToggleBtn.addEventListener('click', () => {
-                this.isRichTextMode = !this.isRichTextMode;
-                richToggleBtn.classList.toggle('active', this.isRichTextMode);
-                richToggleBtn.title = this.isRichTextMode ? '当前为富文本发送，点击切换为纯文本' : '当前为纯文本发送，点击切换为富文本';
-            });
-        }
 
         const editorContainer = inputPanel.createDiv({ cls: 'js-bridge-editor-container' });
         this.renderEditorContent(editorContainer);
@@ -761,7 +743,76 @@ class JournalSyncSendModal extends Modal {
         const tgConfig = this.plugin.getAdapterConfig('telegram');
         const channels = Array.isArray(tgConfig?.channels) ? tgConfig.channels : [];
 
-        this.tgSectionEl.createEl('div', { text: 'Telegram 目标频道：', cls: 'target-sub-label' });
+        const tgLabelRow = this.tgSectionEl.createDiv({ cls: 'tg-channel-label-row' });
+        tgLabelRow.createEl('div', { text: 'Telegram 目标频道：', cls: 'target-sub-label' });
+
+        // 按钮组：Telegraph + 富文本，紧贴右侧
+        const tgBtnGroup = tgLabelRow.createDiv({ cls: 'tg-btn-group' });
+
+        // Telegraph 按钮（放在富文本按钮左侧）
+        const telegraphBtn = tgBtnGroup.createEl('button', {
+            type: 'button',
+            text: 'Telegraph',
+            cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === 'telegraph' ? ' active expanded' : ''}`
+        });
+        telegraphBtn.title = '点击使用 Telegraph 方式发送';
+
+        // 富文本开关：仅在 Telegram「启用富文本发送」开启时显示。
+        // 按钮文字固定为「富文本」，灰态（未激活）表示当前实际为纯文本发送。
+        if (tgConfig.richTextEnabled !== false) {
+            const richToggleBtn = tgBtnGroup.createEl('button', {
+                type: 'button',
+                text: '富文本',
+                cls: `tg-input-mode-btn${this.tgSendMode === 'rich' ? ' active' : ''}`
+            });
+            richToggleBtn.title = this.tgSendMode === 'rich' ? '当前为富文本发送，点击切换为纯文本' : '当前为纯文本发送，点击切换为富文本';
+            richToggleBtn.addEventListener('click', () => {
+                if (this.tgSendMode === 'rich') {
+                    this.tgSendMode = 'plain';
+                } else {
+                    this.tgSendMode = 'rich';
+                }
+                richToggleBtn.classList.toggle('active', this.tgSendMode === 'rich');
+                richToggleBtn.title = this.tgSendMode === 'rich' ? '当前为富文本发送，点击切换为纯文本' : '当前为纯文本发送，点击切换为富文本';
+                // 取消 Telegraph 激活态并收起
+                telegraphBtn.classList.remove('active', 'expanded');
+                this._collapseTelegraphBtn(telegraphBtn);
+            });
+        }
+
+        // Telegraph 按钮交互：单击展开/激活，双击标题编辑，单击前缀关闭
+        telegraphBtn.addEventListener('click', (e) => {
+            // 如果已展开，检查点击区域
+            if (this.tgSendMode === 'telegraph') {
+                // 点击的是前缀区域 → 关闭
+                const prefixEl = telegraphBtn.querySelector('.tg-telegraph-prefix');
+                if (prefixEl && prefixEl.contains(e.target)) {
+                    this.tgSendMode = 'plain';
+                    telegraphBtn.classList.remove('active', 'expanded');
+                    this._collapseTelegraphBtn(telegraphBtn);
+                    return;
+                }
+                // 点击标题区域不做操作（双击由 dblclick 处理）
+                return;
+            }
+
+            // 激活 Telegraph 模式
+            this.tgSendMode = 'telegraph';
+            telegraphBtn.classList.add('active', 'expanded');
+            // 取消富文本激活态
+            const richBtn = tgLabelRow.querySelector('.tg-input-mode-btn:not(.tg-telegraph-btn)');
+            if (richBtn) richBtn.classList.remove('active');
+
+            // 展开按钮：显示 "Telegraph：标题"
+            this._expandTelegraphBtn(telegraphBtn);
+        });
+
+        telegraphBtn.addEventListener('dblclick', (e) => {
+            if (this.tgSendMode !== 'telegraph') return;
+            const titleEl = telegraphBtn.querySelector('.tg-telegraph-title');
+            if (!titleEl || !titleEl.contains(e.target)) return;
+            this._editTelegraphTitle(telegraphBtn, titleEl);
+        });
 
         if (channels.length === 0) {
             this.tgSectionEl.createDiv({
@@ -804,6 +855,84 @@ class JournalSyncSendModal extends Modal {
         });
     }
 
+    // ── Telegraph 按钮辅助方法 ─────────────────
+
+    /**
+     * 获取默认 Telegraph 标题：从正文提取或使用笔记标题
+     */
+    _getDefaultTelegraphTitle() {
+        const tgConfig = this.plugin.getAdapterConfig('telegram');
+        const titleLevel = tgConfig.telegraphTitleLevel || 1;
+        const headingRe = new RegExp(`^#{${titleLevel}}\\s+(.+)$`, 'm');
+        const match = this.content.match(headingRe);
+        if (match) return match[1].trim();
+        // 回退到 notionTitle（笔记标题/heading 标题）
+        return this.notionTitle || 'Journal Sync';
+    }
+
+    /**
+     * 展开 Telegraph 按钮：显示 "Telegraph：标题"
+     */
+    _expandTelegraphBtn(btn) {
+        if (!this.telegraphTitle) {
+            this.telegraphTitle = this._getDefaultTelegraphTitle();
+        }
+        btn.empty();
+        const prefix = btn.createSpan({ cls: 'tg-telegraph-prefix', text: 'Telegraph：' });
+        prefix.title = '点击此处关闭 Telegraph 发送';
+        const titleSpan = btn.createSpan({ cls: 'tg-telegraph-title', text: this.telegraphTitle });
+        titleSpan.title = '双击编辑标题';
+        btn.title = 'Telegraph 模式：单击前缀关闭，双击标题编辑';
+    }
+
+    /**
+     * 收起 Telegraph 按钮：恢复为 "Telegraph"
+     */
+    _collapseTelegraphBtn(btn) {
+        btn.empty();
+        btn.textContent = 'Telegraph';
+        btn.title = '点击使用 Telegraph 方式发送';
+    }
+
+    /**
+     * 双击编辑 Telegraph 标题
+     */
+    _editTelegraphTitle(btn, titleEl) {
+        const currentText = this.telegraphTitle || '';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'tg-telegraph-title-input';
+        input.value = currentText;
+        input.style.width = `${Math.max(120, currentText.length * 14 + 20)}px`;
+        titleEl.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let saved = false;
+        const saveEdit = () => {
+            if (saved) return;
+            saved = true;
+            const newTitle = input.value.trim();
+            if (newTitle) {
+                this.telegraphTitle = newTitle;
+            }
+            // 重建按钮内容
+            this._expandTelegraphBtn(btn);
+        };
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                saveEdit();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                saved = true;
+                this._expandTelegraphBtn(btn);
+            }
+        });
+        input.addEventListener('blur', saveEdit);
+    }
+
     /**
      * 执行发送（即时关窗 + 后台无阻塞异步发送）
      */
@@ -823,7 +952,10 @@ class JournalSyncSendModal extends Modal {
         }
 
         // 提取待发送参数
-        const isRich = this.isRichTextMode;
+        const tgSendMode = this.tgSendMode;
+        const isRich = tgSendMode === 'rich';
+        const isTelegraph = tgSendMode === 'telegraph';
+        const telegraphTitle = this.telegraphTitle;
         const rawContent = this.content;
         const plainTextContent = getPlainTextWithoutImageTokens(rawContent);
         const richDraft = this.richDraft;
@@ -878,20 +1010,39 @@ class JournalSyncSendModal extends Modal {
 
             // 发送 Telegram 频道
             if (tgChannels.length > 0 && plugin.isAdapterEnabled('telegram')) {
-                try {
-                    // 始终从发布时的编辑器内容重建段落，避免发送弹窗打开时的旧草稿。
-                    const tgSegs = buildTelegramSegmentsFromEditor(rawContent, images);
+                if (isTelegraph) {
+                    // Telegraph 模式：创建 Telegraph 页面，将链接发送到 Telegram
+                    try {
+                        const tgConfig = plugin.getAdapterConfig('telegram');
+                        const titleLevel = tgConfig.telegraphTitleLevel || 1;
+                        const tgResult = await plugin.executeTelegraphSend({
+                            content: rawContent,
+                            images,
+                            readImageFile,
+                            channelIds: tgChannels,
+                            telegraphTitle,
+                            titleLevel
+                        });
+                        results['Telegram'] = tgResult;
+                    } catch (error) {
+                        results['Telegram'] = { success: false, error: error.message };
+                    }
+                } else {
+                    try {
+                        // 始终从发布时的编辑器内容重建段落，避免发送弹窗打开时的旧草稿。
+                        const tgSegs = buildTelegramSegmentsFromEditor(rawContent, images);
 
-                    const tgResult = await plugin.executeAdapter('telegram', {
-                        content: isRich ? rawContent : plainTextContent,
-                        telegramSegments: tgSegs,
-                        readImageFile,
-                        channelIds: tgChannels,
-                        isRichText: isRich
-                    });
-                    results['Telegram'] = tgResult;
-                } catch (error) {
-                    results['Telegram'] = { success: false, error: error.message };
+                        const tgResult = await plugin.executeAdapter('telegram', {
+                            content: isRich ? rawContent : plainTextContent,
+                            telegramSegments: tgSegs,
+                            readImageFile,
+                            channelIds: tgChannels,
+                            isRichText: isRich
+                        });
+                        results['Telegram'] = tgResult;
+                    } catch (error) {
+                        results['Telegram'] = { success: false, error: error.message };
+                    }
                 }
             }
 

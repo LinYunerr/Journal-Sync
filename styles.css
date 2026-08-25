@@ -211,6 +211,62 @@
   color: #89e1b0;
 }
 
+/* ── Telegraph 按钮 ─────────────────────────── */
+.tg-telegraph-btn {
+  /* 继承 .tg-input-mode-btn 基础样式 */
+}
+
+/* Telegraph 激活态：绿色，与富文本按钮统一 */
+.tg-telegraph-btn.active {
+  border-color: #8ed3a8;
+  background: #eaf8ef;
+  color: #125b32;
+}
+
+.theme-dark .tg-telegraph-btn.active {
+  background: rgba(84, 201, 138, 0.16);
+  border-color: rgba(84, 201, 138, 0.52);
+  color: #89e1b0;
+}
+
+/* 展开动画 */
+.tg-telegraph-btn.expanded {
+  transition: width 0.25s ease, padding 0.25s ease;
+  padding: 4px 14px;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 前缀部分：可点击关闭 */
+.tg-telegraph-prefix {
+  cursor: pointer;
+  opacity: 0.7;
+  margin-right: 2px;
+}
+
+.tg-telegraph-prefix:hover {
+  opacity: 1;
+}
+
+/* 标题部分：双击可编辑 */
+.tg-telegraph-title {
+  cursor: text;
+  font-weight: 600;
+}
+
+/* 标题编辑输入框 */
+.tg-telegraph-title-input {
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #8ed3a8;
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
 /* ── 自动自适应高度文本框 ────────────────────── */
 .js-bridge-auto-textarea {
   width: 100%;
@@ -552,8 +608,23 @@
   width: 100%;
 }
 
-.target-sub-label {
+.tg-channel-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   margin: 8px 0 6px 0;
+}
+
+/* 按钮组：Telegraph + 富文本，紧贴右侧 */
+.tg-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.target-sub-label {
+  margin: 0;
   font-size: 13px;
   font-weight: 700;
   color: var(--text-normal);

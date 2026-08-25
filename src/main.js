@@ -29,6 +29,9 @@ const mastodonAdapter = require('./adapters/mastodon');
 const misskeyAdapter  = require('./adapters/missky');
 const notionAdapter   = require('./adapters/notion');
 
+// Telegraph 核心模块
+const telegraph = require('./core/telegraph');
+
 // ──────────────────────────────────────────────
 // 工具函数（沿用原插件，无外部依赖）
 // ──────────────────────────────────────────────
@@ -285,7 +288,10 @@ const DEFAULT_SETTINGS = {
     flomo: {},
     telegram: {
       showLinkPreview: false,
-      richTextEnabled: true
+      richTextEnabled: true,
+      telegraphAccessToken: '',
+      telegraphAuthorName: '',
+      telegraphTitleLevel: 1
     },
     mastodon: { visibility: 'public' },
     missky: { visibility: 'public' },
@@ -603,7 +609,146 @@ class JournalSyncPlugin extends Plugin {
     return { success: false, error: `不支持的适配器: ${adapterId}` };
   }
 
-  // ── 命令实现 ────────────────────────────────
+  // ── Telegraph 发送编排 ──────────────────────
+
+  /**
+   * 确保 Telegraph access_token 存在，无则自动创建账号
+   * @returns {Promise<string>} access_token
+   */
+  async ensureTelegraphToken() {
+    const tgConfig = this.getAdapterConfig('telegram');
+    if (tgConfig.telegraphAccessToken) return tgConfig.telegraphAccessToken;
+
+    const account = await telegraph.createAccount('JournalSync', tgConfig.telegraphAuthorName || '', requestUrl);
+    await this.setAdapterConfig('telegram', {
+      ...tgConfig,
+      telegraphAccessToken: account.access_token
+    });
+    return account.access_token;
+  }
+
+  /**
+   * Telegraph 发送编排：
+   * 1. 确保 access_token
+   * 2. 上传本地图片到 telegra.ph/upload
+   * 3. Markdown → Telegraph Node
+   * 4. createPage → 获得 telegra.ph 链接
+   * 5. 链接发送到所有选中的 Telegram 频道
+   *
+   * @param {object} params - { content, images, readImageFile, channelIds, telegraphTitle, titleLevel }
+   * @returns {Promise<object>} { success, url, results }
+   */
+  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel }) {
+    // 1. 确保 access_token
+    let accessToken;
+    try {
+      accessToken = await this.ensureTelegraphToken();
+    } catch (error) {
+      return { success: false, error: `Telegraph 账号创建失败: ${error.message}` };
+    }
+
+    const tgConfig = this.getAdapterConfig('telegram');
+    const authorName = tgConfig.telegraphAuthorName || '';
+
+    // 2. 上传本地图片，构建 @图片N → 公网 URL 映射
+    const imageUrls = new Map();
+    const referencedImages = Array.isArray(images) ? images : [];
+
+    for (const img of referencedImages) {
+      const token = img.token;
+      const vaultPath = img.vaultPath || img.filename;
+      if (!token || !vaultPath) continue;
+
+      if (isRemoteUrl(vaultPath)) {
+        imageUrls.set(token, vaultPath);
+        continue;
+      }
+
+      try {
+        const buffer = await readImageFile(vaultPath);
+        if (!buffer) {
+          return { success: false, error: `无法读取图片: ${img.filename || vaultPath}` };
+        }
+        const url = await telegraph.uploadImage(buffer, img.filename || 'image.jpg', requestUrl);
+        imageUrls.set(token, url);
+      } catch (error) {
+        return { success: false, error: `图片上传失败 (${img.filename || vaultPath}): ${error.message}` };
+      }
+    }
+
+    // 3. Markdown → Telegraph Node
+    // Clamp titleLevel to sendScope: when sendScope > 0, only headings up to that level
+    // are included in the sent content, so the title level must not exceed it.
+    const sendScope = this.settings.sendScope ?? 2;
+    const maxLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
+    const titleLevelNum = Math.max(1, Math.min(maxLevel, Number(titleLevel) || 1));
+    const { title: extractedTitle, content: nodes } = telegraph.markdownToNodes(content, imageUrls, titleLevelNum);
+
+    // 标题优先级：用户在发送面板编辑的 > 从正文提取的 > 默认
+    const finalTitle = telegraphTitle || extractedTitle || 'Journal Sync';
+
+    // 4. createPage
+    let pageUrl;
+    try {
+      const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, '', requestUrl);
+      pageUrl = page.url;
+    } catch (error) {
+      return { success: false, error: `Telegraph 创建页面失败: ${error.message}` };
+    }
+
+    // 5. 将链接发送到所有选中的 Telegram 频道
+    const botToken = tgConfig.botToken;
+    if (!botToken) {
+      return { success: false, error: 'Telegram Bot Token 未配置', url: pageUrl };
+    }
+
+    const targets = Array.isArray(channelIds) && channelIds.length > 0
+      ? channelIds.map(String)
+      : [];
+
+    if (targets.length === 0) {
+      return { success: false, error: 'Telegram 频道未配置', url: pageUrl };
+    }
+
+    const showLinkPreview = tgConfig.showLinkPreview !== false;
+    const linkText = `${finalTitle}\n${pageUrl}`;
+
+    const results = await Promise.all(targets.map(async targetCh => {
+      try {
+        const response = await requestUrl({
+          url: `https://api.telegram.org/bot${botToken}/sendMessage`,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: targetCh,
+            text: linkText,
+            disable_web_page_preview: !showLinkPreview
+          }),
+          throw: false
+        });
+        const data = response.json;
+        if (!data || !data.ok) {
+          return { success: false, channelId: targetCh, error: data?.description || '发送失败' };
+        }
+        return { success: true, channelId: targetCh };
+      } catch (error) {
+        return { success: false, channelId: targetCh, error: error.message || String(error) };
+      }
+    }));
+
+    const allOk = results.every(r => r.success);
+    const errors = results
+      .filter(r => !r.success)
+      .map(r => `${r.channelId}: ${r.error}`)
+      .join('; ');
+
+    return {
+      success: allOk,
+      error: allOk ? undefined : errors,
+      url: pageUrl,
+      results
+    };
+  }
 
   /**
    * 新建今日日记（无需后端服务）

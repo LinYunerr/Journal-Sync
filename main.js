@@ -115,7 +115,8 @@ var require_send_modal = __commonJS({
         this.readImageFile = readImageFile;
         this.notionTitle = notionTitle;
         this.notionImageWarnings = [];
-        this.isRichTextMode = false;
+        this.tgSendMode = "plain";
+        this.telegraphTitle = "";
         this.selectedTargets = /* @__PURE__ */ new Set();
         this.selectedTgChannels = /* @__PURE__ */ new Set();
         this.editingPresetId = "";
@@ -231,21 +232,6 @@ ${tokenStr}` : tokenStr;
         const inputPanel = contentEl.createDiv({ cls: "js-bridge-panel" });
         const inputTitleRow = inputPanel.createDiv({ cls: "js-bridge-panel-title-row" });
         inputTitleRow.createEl("h4", { text: "1. \u5185\u5BB9\u7F16\u8F91\u4E0E\u9884\u89C8", cls: "js-bridge-section-title" });
-        const inputActions = inputTitleRow.createDiv({ cls: "js-bridge-input-actions" });
-        const tgConfig = this.plugin.getAdapterConfig("telegram") || {};
-        if (tgConfig.richTextEnabled !== false) {
-          const richToggleBtn = inputActions.createEl("button", {
-            type: "button",
-            text: "\u5BCC\u6587\u672C",
-            cls: `tg-input-mode-btn${this.isRichTextMode ? " active" : ""}`
-          });
-          richToggleBtn.title = this.isRichTextMode ? "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C" : "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C";
-          richToggleBtn.addEventListener("click", () => {
-            this.isRichTextMode = !this.isRichTextMode;
-            richToggleBtn.classList.toggle("active", this.isRichTextMode);
-            richToggleBtn.title = this.isRichTextMode ? "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C" : "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C";
-          });
-        }
         const editorContainer = inputPanel.createDiv({ cls: "js-bridge-editor-container" });
         this.renderEditorContent(editorContainer);
         if (this.images.length > 0) {
@@ -689,7 +675,57 @@ ${tokenStr}` : tokenStr;
         if (!this.plugin.isAdapterEnabled("telegram")) return;
         const tgConfig = this.plugin.getAdapterConfig("telegram");
         const channels = Array.isArray(tgConfig == null ? void 0 : tgConfig.channels) ? tgConfig.channels : [];
-        this.tgSectionEl.createEl("div", { text: "Telegram \u76EE\u6807\u9891\u9053\uFF1A", cls: "target-sub-label" });
+        const tgLabelRow = this.tgSectionEl.createDiv({ cls: "tg-channel-label-row" });
+        tgLabelRow.createEl("div", { text: "Telegram \u76EE\u6807\u9891\u9053\uFF1A", cls: "target-sub-label" });
+        const tgBtnGroup = tgLabelRow.createDiv({ cls: "tg-btn-group" });
+        const telegraphBtn = tgBtnGroup.createEl("button", {
+          type: "button",
+          text: "Telegraph",
+          cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === "telegraph" ? " active expanded" : ""}`
+        });
+        telegraphBtn.title = "\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001";
+        if (tgConfig.richTextEnabled !== false) {
+          const richToggleBtn = tgBtnGroup.createEl("button", {
+            type: "button",
+            text: "\u5BCC\u6587\u672C",
+            cls: `tg-input-mode-btn${this.tgSendMode === "rich" ? " active" : ""}`
+          });
+          richToggleBtn.title = this.tgSendMode === "rich" ? "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C" : "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C";
+          richToggleBtn.addEventListener("click", () => {
+            if (this.tgSendMode === "rich") {
+              this.tgSendMode = "plain";
+            } else {
+              this.tgSendMode = "rich";
+            }
+            richToggleBtn.classList.toggle("active", this.tgSendMode === "rich");
+            richToggleBtn.title = this.tgSendMode === "rich" ? "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C" : "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C";
+            telegraphBtn.classList.remove("active", "expanded");
+            this._collapseTelegraphBtn(telegraphBtn);
+          });
+        }
+        telegraphBtn.addEventListener("click", (e) => {
+          if (this.tgSendMode === "telegraph") {
+            const prefixEl = telegraphBtn.querySelector(".tg-telegraph-prefix");
+            if (prefixEl && prefixEl.contains(e.target)) {
+              this.tgSendMode = "plain";
+              telegraphBtn.classList.remove("active", "expanded");
+              this._collapseTelegraphBtn(telegraphBtn);
+              return;
+            }
+            return;
+          }
+          this.tgSendMode = "telegraph";
+          telegraphBtn.classList.add("active", "expanded");
+          const richBtn = tgLabelRow.querySelector(".tg-input-mode-btn:not(.tg-telegraph-btn)");
+          if (richBtn) richBtn.classList.remove("active");
+          this._expandTelegraphBtn(telegraphBtn);
+        });
+        telegraphBtn.addEventListener("dblclick", (e) => {
+          if (this.tgSendMode !== "telegraph") return;
+          const titleEl = telegraphBtn.querySelector(".tg-telegraph-title");
+          if (!titleEl || !titleEl.contains(e.target)) return;
+          this._editTelegraphTitle(telegraphBtn, titleEl);
+        });
         if (channels.length === 0) {
           this.tgSectionEl.createDiv({
             cls: "target-sub",
@@ -724,6 +760,75 @@ ${tokenStr}` : tokenStr;
           });
         });
       }
+      // ── Telegraph 按钮辅助方法 ─────────────────
+      /**
+       * 获取默认 Telegraph 标题：从正文提取或使用笔记标题
+       */
+      _getDefaultTelegraphTitle() {
+        const tgConfig = this.plugin.getAdapterConfig("telegram");
+        const titleLevel = tgConfig.telegraphTitleLevel || 1;
+        const headingRe = new RegExp(`^#{${titleLevel}}\\s+(.+)$`, "m");
+        const match = this.content.match(headingRe);
+        if (match) return match[1].trim();
+        return this.notionTitle || "Journal Sync";
+      }
+      /**
+       * 展开 Telegraph 按钮：显示 "Telegraph：标题"
+       */
+      _expandTelegraphBtn(btn) {
+        if (!this.telegraphTitle) {
+          this.telegraphTitle = this._getDefaultTelegraphTitle();
+        }
+        btn.empty();
+        const prefix = btn.createSpan({ cls: "tg-telegraph-prefix", text: "Telegraph\uFF1A" });
+        prefix.title = "\u70B9\u51FB\u6B64\u5904\u5173\u95ED Telegraph \u53D1\u9001";
+        const titleSpan = btn.createSpan({ cls: "tg-telegraph-title", text: this.telegraphTitle });
+        titleSpan.title = "\u53CC\u51FB\u7F16\u8F91\u6807\u9898";
+        btn.title = "Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u53CC\u51FB\u6807\u9898\u7F16\u8F91";
+      }
+      /**
+       * 收起 Telegraph 按钮：恢复为 "Telegraph"
+       */
+      _collapseTelegraphBtn(btn) {
+        btn.empty();
+        btn.textContent = "Telegraph";
+        btn.title = "\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001";
+      }
+      /**
+       * 双击编辑 Telegraph 标题
+       */
+      _editTelegraphTitle(btn, titleEl) {
+        const currentText = this.telegraphTitle || "";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "tg-telegraph-title-input";
+        input.value = currentText;
+        input.style.width = `${Math.max(120, currentText.length * 14 + 20)}px`;
+        titleEl.replaceWith(input);
+        input.focus();
+        input.select();
+        let saved = false;
+        const saveEdit = () => {
+          if (saved) return;
+          saved = true;
+          const newTitle = input.value.trim();
+          if (newTitle) {
+            this.telegraphTitle = newTitle;
+          }
+          this._expandTelegraphBtn(btn);
+        };
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            saveEdit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            saved = true;
+            this._expandTelegraphBtn(btn);
+          }
+        });
+        input.addEventListener("blur", saveEdit);
+      }
       /**
        * 执行发送（即时关窗 + 后台无阻塞异步发送）
        */
@@ -737,7 +842,10 @@ ${tokenStr}` : tokenStr;
           new Notice2("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807\u6216 Telegram \u9891\u9053");
           return;
         }
-        const isRich = this.isRichTextMode;
+        const tgSendMode = this.tgSendMode;
+        const isRich = tgSendMode === "rich";
+        const isTelegraph = tgSendMode === "telegraph";
+        const telegraphTitle = this.telegraphTitle;
         const rawContent = this.content;
         const plainTextContent = getPlainTextWithoutImageTokens(rawContent);
         const richDraft = this.richDraft;
@@ -784,18 +892,36 @@ ${tokenStr}` : tokenStr;
             }
           }
           if (tgChannels.length > 0 && plugin.isAdapterEnabled("telegram")) {
-            try {
-              const tgSegs = buildTelegramSegmentsFromEditor(rawContent, images);
-              const tgResult = await plugin.executeAdapter("telegram", {
-                content: isRich ? rawContent : plainTextContent,
-                telegramSegments: tgSegs,
-                readImageFile,
-                channelIds: tgChannels,
-                isRichText: isRich
-              });
-              results["Telegram"] = tgResult;
-            } catch (error) {
-              results["Telegram"] = { success: false, error: error.message };
+            if (isTelegraph) {
+              try {
+                const tgConfig = plugin.getAdapterConfig("telegram");
+                const titleLevel = tgConfig.telegraphTitleLevel || 1;
+                const tgResult = await plugin.executeTelegraphSend({
+                  content: rawContent,
+                  images,
+                  readImageFile,
+                  channelIds: tgChannels,
+                  telegraphTitle,
+                  titleLevel
+                });
+                results["Telegram"] = tgResult;
+              } catch (error) {
+                results["Telegram"] = { success: false, error: error.message };
+              }
+            } else {
+              try {
+                const tgSegs = buildTelegramSegmentsFromEditor(rawContent, images);
+                const tgResult = await plugin.executeAdapter("telegram", {
+                  content: isRich ? rawContent : plainTextContent,
+                  telegramSegments: tgSegs,
+                  readImageFile,
+                  channelIds: tgChannels,
+                  isRichText: isRich
+                });
+                results["Telegram"] = tgResult;
+              } catch (error) {
+                results["Telegram"] = { success: false, error: error.message };
+              }
             }
           }
           const anyFailure = Object.values(results).some((r) => !r.success && !r.skipped);
@@ -823,6 +949,317 @@ ${tokenStr}` : tokenStr;
       }
     };
     module2.exports = JournalSyncSendModal2;
+  }
+});
+
+// src/core/telegraph.js
+var require_telegraph = __commonJS({
+  "src/core/telegraph.js"(exports2, module2) {
+    "use strict";
+    var TELEGRAPH_API_BASE = "https://api.telegra.ph";
+    var TELEGRAPH_UPLOAD_URL = "https://telegra.ph/upload";
+    async function telegraphApi(method, params, requestUrlFn) {
+      const url = `${TELEGRAPH_API_BASE}/${method}`;
+      const body = JSON.stringify(params || {});
+      const response = await requestUrlFn({
+        url,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        throw: false
+      });
+      const data = response.json;
+      if (!data || data.ok !== true) {
+        throw new Error((data == null ? void 0 : data.error) || `Telegraph API ${method} \u5931\u8D25 (HTTP ${response.status})`);
+      }
+      return data.result;
+    }
+    async function createAccount(shortName, authorName, requestUrlFn) {
+      const params = { short_name: shortName };
+      if (authorName) params.author_name = authorName;
+      return telegraphApi("createAccount", params, requestUrlFn);
+    }
+    async function getAccountInfo(accessToken, requestUrlFn) {
+      return telegraphApi("getAccountInfo", { access_token: accessToken, fields: ["short_name", "author_name"] }, requestUrlFn);
+    }
+    async function createPage2(accessToken, title, content, authorName, authorUrl, requestUrlFn) {
+      const params = {
+        access_token: accessToken,
+        title: String(title || "").slice(0, 256),
+        content: JSON.stringify(content)
+      };
+      if (authorName) params.author_name = authorName;
+      if (authorUrl) params.author_url = authorUrl;
+      return telegraphApi("createPage", params, requestUrlFn);
+    }
+    async function uploadImage(arrayBuffer, filename, requestUrlFn) {
+      var _a;
+      const formData = new FormData();
+      const blob = new Blob([arrayBuffer]);
+      formData.append("file", blob, filename || "image.jpg");
+      const response = await requestUrlFn({
+        url: TELEGRAPH_UPLOAD_URL,
+        method: "POST",
+        body: formData,
+        throw: false
+      });
+      const data = response.json;
+      if (!Array.isArray(data) || data.length === 0 || !data[0].src) {
+        const errMsg = Array.isArray(data) && ((_a = data[0]) == null ? void 0 : _a.error) ? data[0].error : "\u4E0A\u4F20\u5931\u8D25";
+        throw new Error(`Telegraph \u56FE\u7247\u4E0A\u4F20\u5931\u8D25: ${errMsg}`);
+      }
+      return `https://telegra.ph${data[0].src}`;
+    }
+    function markdownToNodes(markdown, imageUrls, titleLevel) {
+      const lines = String(markdown || "").split("\n");
+      const titleLevelNum = Math.max(1, Math.min(6, Number(titleLevel) || 1));
+      let pageTitle = "";
+      let titleLineIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^(#{1,6})\s+(.+)$/);
+        if (m) {
+          const level = m[1].length;
+          if (level === titleLevelNum) {
+            pageTitle = m[2].trim();
+            titleLineIndex = i;
+            break;
+          }
+        }
+      }
+      const bodyLines = lines.filter((_, i) => i !== titleLineIndex);
+      const content = parseBodyLines(bodyLines, imageUrls, titleLevelNum);
+      return { title: pageTitle, content };
+    }
+    function bodyHeadingTag(headingLevel, titleLevel) {
+      const offset = headingLevel - titleLevel;
+      if (offset <= 1) return "h3";
+      return "h4";
+    }
+    function parseBodyLines(lines, imageUrls, titleLevelNum) {
+      const nodes = [];
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line.trim()) {
+          i++;
+          continue;
+        }
+        const tokenMatch = line.trim().match(/^@图片(\d+)$/);
+        if (tokenMatch) {
+          const url = imageUrls.get(`@\u56FE\u7247${tokenMatch[1]}`);
+          if (url) {
+            nodes.push({ tag: "img", attrs: { src: url } });
+          }
+          i++;
+          continue;
+        }
+        const imgMatch = line.trim().match(/^!\[[^\]]*\]\(([^)]+)\)$/);
+        if (imgMatch) {
+          const src = imgMatch[1].replace(/^<|>$/g, "");
+          if (/^https?:\/\//i.test(src)) {
+            nodes.push({ tag: "img", attrs: { src } });
+          }
+          i++;
+          continue;
+        }
+        const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+          const level = headingMatch[1].length;
+          const text = headingMatch[2].trim();
+          const tag = bodyHeadingTag(level, titleLevelNum);
+          nodes.push({ tag, children: parseInline2(text, imageUrls) });
+          i++;
+          continue;
+        }
+        if (/^---+\s*$/.test(line.trim()) || /^\*\*\*+\s*$/.test(line.trim())) {
+          nodes.push({ tag: "hr" });
+          i++;
+          continue;
+        }
+        if (line.trim().startsWith("```")) {
+          const codeLines = [];
+          i++;
+          while (i < lines.length && !lines[i].trim().startsWith("```")) {
+            codeLines.push(lines[i]);
+            i++;
+          }
+          i++;
+          nodes.push({ tag: "pre", children: [codeLines.join("\n")] });
+          continue;
+        }
+        if (line.trim().startsWith(">")) {
+          const quoteLines = [];
+          while (i < lines.length && lines[i].trim().startsWith(">")) {
+            quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
+            i++;
+          }
+          const quoteContent = [];
+          for (const qLine of quoteLines) {
+            quoteContent.push(...parseInline2(qLine, imageUrls));
+            quoteContent.push({ tag: "br" });
+          }
+          if (quoteContent.length > 0 && quoteContent[quoteContent.length - 1].tag === "br") {
+            quoteContent.pop();
+          }
+          nodes.push({ tag: "blockquote", children: quoteContent });
+          continue;
+        }
+        if (/^[-*+]\s+/.test(line.trim())) {
+          const items = [];
+          while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+            const itemText = lines[i].trim().replace(/^[-*+]\s+/, "");
+            items.push({ tag: "li", children: parseInline2(itemText, imageUrls) });
+            i++;
+          }
+          nodes.push({ tag: "ul", children: items });
+          continue;
+        }
+        if (/^\d+\.\s+/.test(line.trim())) {
+          const items = [];
+          while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+            const itemText = lines[i].trim().replace(/^\d+\.\s+/, "");
+            items.push({ tag: "li", children: parseInline2(itemText, imageUrls) });
+            i++;
+          }
+          nodes.push({ tag: "ol", children: items });
+          continue;
+        }
+        if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+          const tableLines = [];
+          while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+            tableLines.push(lines[i].trim());
+            i++;
+          }
+          const tableText = tableLines.map((row) => row.replace(/^\||\|$/g, "").replace(/\|/g, " | ")).join("\n");
+          nodes.push({ tag: "p", children: [tableText] });
+          continue;
+        }
+        const paraLines = [];
+        while (i < lines.length) {
+          const l = lines[i];
+          if (!l.trim()) break;
+          if (/^(#{1,6})\s+/.test(l)) break;
+          if (/^[-*+]\s+/.test(l.trim())) break;
+          if (/^\d+\.\s+/.test(l.trim())) break;
+          if (l.trim().startsWith(">")) break;
+          if (l.trim().startsWith("```")) break;
+          if (/^---+\s*$/.test(l.trim()) || /^\*\*\*+\s*$/.test(l.trim())) break;
+          if (l.trim().startsWith("|") && l.trim().endsWith("|")) break;
+          const tokM = l.trim().match(/^@图片(\d+)$/);
+          if (tokM) break;
+          const imgM = l.trim().match(/^!\[[^\]]*\]\(([^)]+)\)$/);
+          if (imgM) break;
+          paraLines.push(l);
+          i++;
+        }
+        if (paraLines.length > 0) {
+          const paraText = paraLines.join("\n");
+          const inlineParts = splitByImageTokens(paraText, imageUrls);
+          if (inlineParts.length > 1 || inlineParts.length === 1 && inlineParts[0].type === "image") {
+            const children = [];
+            for (const part of inlineParts) {
+              if (part.type === "image") {
+                children.push({ tag: "img", attrs: { src: part.url } });
+              } else if (part.text) {
+                children.push(...parseInline2(part.text, imageUrls));
+              }
+            }
+            nodes.push({ tag: "p", children });
+          } else {
+            const inlineNodes = parseInline2(paraText, imageUrls);
+            if (inlineNodes.length > 0) {
+              nodes.push({ tag: "p", children: inlineNodes });
+            }
+          }
+        }
+      }
+      return nodes;
+    }
+    function splitByImageTokens(text, imageUrls) {
+      const parts = [];
+      const pattern = /@图片\d+/g;
+      let cursor = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > cursor) {
+          parts.push({ type: "text", text: text.slice(cursor, match.index) });
+        }
+        const url = imageUrls.get(match[0]);
+        if (url) {
+          parts.push({ type: "image", url });
+        } else {
+          parts.push({ type: "text", text: match[0] });
+        }
+        cursor = match.index + match[0].length;
+      }
+      if (cursor < text.length) {
+        parts.push({ type: "text", text: text.slice(cursor) });
+      }
+      return parts;
+    }
+    function parseInline2(text, imageUrls) {
+      if (!text) return [];
+      const tokenParts = splitByImageTokens(text, imageUrls);
+      const result = [];
+      for (const part of tokenParts) {
+        if (part.type === "image") {
+          result.push({ tag: "img", attrs: { src: part.url } });
+        } else if (part.text) {
+          result.push(...parseInlineFormatting(part.text));
+        }
+      }
+      return result;
+    }
+    function parseInlineFormatting(text) {
+      const nodes = [];
+      let remaining = text;
+      const pattern = /(\*\*(.+?)\*\*)|(\*(.+?)\*)|(_(.+?)_)|(`(.+?)`)|(~~(.+?)~~)|(\[([^\]]+)\]\(([^)]+)\))/g;
+      let lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(remaining)) !== null) {
+        if (match.index > lastIndex) {
+          nodes.push(remaining.slice(lastIndex, match.index));
+        }
+        if (match[1]) {
+          nodes.push({ tag: "strong", children: [match[2]] });
+        } else if (match[3]) {
+          nodes.push({ tag: "em", children: [match[4]] });
+        } else if (match[5]) {
+          nodes.push({ tag: "em", children: [match[6]] });
+        } else if (match[7]) {
+          nodes.push({ tag: "code", children: [match[8]] });
+        } else if (match[9]) {
+          nodes.push({ tag: "s", children: [match[10]] });
+        } else if (match[11]) {
+          nodes.push({ tag: "a", attrs: { href: match[13] }, children: [match[12]] });
+        }
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < remaining.length) {
+        nodes.push(remaining.slice(lastIndex));
+      }
+      const finalNodes = [];
+      for (const node of nodes) {
+        if (typeof node === "string") {
+          const parts = node.split("\n");
+          for (let j = 0; j < parts.length; j++) {
+            if (parts[j]) finalNodes.push(parts[j]);
+            if (j < parts.length - 1) finalNodes.push({ tag: "br" });
+          }
+        } else {
+          finalNodes.push(node);
+        }
+      }
+      return finalNodes;
+    }
+    module2.exports = {
+      createAccount,
+      createPage: createPage2,
+      uploadImage,
+      markdownToNodes,
+      telegraphApi,
+      getAccountInfo
+    };
   }
 });
 
@@ -892,7 +1329,15 @@ var require_settings_tab = __commonJS({
           for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
           dropdown.setValue(String((_a = this.plugin.settings.sendScope) != null ? _a : 2)).onChange(async (value) => {
             this.plugin.settings.sendScope = Number(value);
+            const newScope = Number(value);
+            const maxLv = newScope === 0 ? 6 : Math.min(6, newScope);
+            const tgCfg = this.plugin.getAdapterConfig("telegram");
+            const currentLv = tgCfg.telegraphTitleLevel || 1;
+            if (currentLv > maxLv) {
+              await this.plugin.setAdapterConfig("telegram", { ...tgCfg, telegraphTitleLevel: maxLv });
+            }
             await this.plugin.saveSettings();
+            this.display();
           });
         });
         new Setting(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u7EA7\u522B").setDesc("\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002").addDropdown((dropdown) => {
@@ -989,6 +1434,82 @@ var require_settings_tab = __commonJS({
         new Setting(containerEl).setName("\u542F\u7528\u5BCC\u6587\u672C\u53D1\u9001").setDesc("\u5F00\u542F\u540E\u4F7F\u7528 Telegram \u539F\u751F\u5A92\u4F53\u4E0A\u4F20\u53D1\u9001\u56FE\u6587\u6DF7\u6392\u5185\u5BB9\u3002\u5173\u95ED\u540E\u4EE5\u666E\u901A\u9644\u4EF6\u65B9\u5F0F\u53D1\u9001\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(tgConfig.richTextEnabled !== false).onChange(async (value) => {
           const config = this.plugin.getAdapterConfig("telegram") || {};
           await this.plugin.setAdapterConfig("telegram", { ...config, richTextEnabled: value });
+        }));
+        new Setting(containerEl).setName("Telegraph \u4F5C\u8005\u540D").setDesc("\u663E\u793A\u5728 Telegraph \u9875\u9762\u4E0A\u7684\u4F5C\u8005\u540D\u79F0\uFF0C\u53EF\u7559\u7A7A\u3002").addText((text) => {
+          text.setPlaceholder("Journal Sync").setValue(tgConfig.telegraphAuthorName || "").onChange(async (value) => {
+            await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), telegraphAuthorName: value.trim() });
+          });
+        });
+        const sendScope = this.plugin.settings.sendScope || 2;
+        const maxTitleLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
+        const titleLevelDesc = maxTitleLevel === 1 ? "\u5F53\u524D\u53D1\u9001\u5C42\u7EA7\u4E3A 1\uFF0C\u4EC5\u53EF\u4F7F\u7528\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u6807\u9898\u3002" : `\u9009\u62E9\u54EA\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u9875\u9762\u6807\u9898\uFF081-${maxTitleLevel}\uFF09\u3002\u6B63\u6587\u4E2D\u7684\u6807\u9898\u4F1A\u76F8\u5E94\u504F\u79FB\u3002\u7ED1\u5B9A\u53D1\u9001\u5C42\u7EA7\uFF08\u5F53\u524D: ${sendScope === 0 ? "\u6574\u9875" : sendScope}\uFF09\u3002`;
+        new Setting(containerEl).setName("Telegraph \u6807\u9898\u5C42\u7EA7").setDesc(titleLevelDesc).addDropdown((dropdown) => {
+          const currentLevel = tgConfig.telegraphTitleLevel || 1;
+          for (let lv = 1; lv <= maxTitleLevel; lv++) {
+            dropdown.addOption(String(lv), `H${lv}`);
+          }
+          dropdown.setValue(String(Math.min(currentLevel, maxTitleLevel))).onChange(async (value) => {
+            await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), telegraphTitleLevel: Number(value) });
+          });
+        });
+        new Setting(containerEl).setName("Telegraph \u8D26\u53F7").setDesc(tgConfig.telegraphAccessToken ? "\u5DF2\u8FDE\u63A5\u3002\u53EF\u9A8C\u8BC1\u65B0 token\u3001\u521B\u5EFA\u65B0\u8D26\u53F7\u6216\u590D\u5236\u5F53\u524D token\u3002" : '\u8F93\u5165\u5DF2\u6709 Telegraph token\uFF0C\u6216\u70B9\u51FB"\u521B\u5EFA\u65B0\u8D26\u53F7"\u83B7\u53D6\u3002\u9996\u6B21\u53D1\u9001\u65F6\u4E5F\u4F1A\u81EA\u52A8\u521B\u5EFA\u3002').addText((text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("\u8F93\u5165 Telegraph access_token");
+          text.setValue(tgConfig.telegraphAccessToken || "");
+          this._telegraphTokenInput = text.inputEl;
+        }).addButton((btn) => btn.setButtonText("\u9A8C\u8BC1\u5E76\u4FDD\u5B58").onClick(async () => {
+          var _a;
+          const token = (((_a = this._telegraphTokenInput) == null ? void 0 : _a.value) || "").trim();
+          if (!token) {
+            new Notice2("\u8BF7\u5148\u8F93\u5165 token");
+            return;
+          }
+          try {
+            btn.setButtonText("\u9A8C\u8BC1\u4E2D...");
+            btn.disabled = true;
+            const telegraph2 = require_telegraph();
+            await telegraph2.getAccountInfo(token, this.plugin.requestUrl.bind(this.plugin));
+            await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), telegraphAccessToken: token });
+            new Notice2("Telegraph token \u9A8C\u8BC1\u6210\u529F");
+            this.display();
+          } catch (error) {
+            new Notice2(`Token \u9A8C\u8BC1\u5931\u8D25: ${error.message}`);
+          } finally {
+            btn.setButtonText("\u9A8C\u8BC1\u5E76\u4FDD\u5B58");
+            btn.disabled = false;
+          }
+        })).addButton((btn) => btn.setButtonText("\u521B\u5EFA\u65B0\u8D26\u53F7").onClick(async () => {
+          var _a;
+          if (tgConfig.telegraphAccessToken) {
+            if (!confirm("\u5DF2\u6709\u8D26\u53F7\u8FDE\u63A5\uFF0C\u521B\u5EFA\u65B0\u8D26\u53F7\u540E\u5C06\u65E0\u6CD5\u7528\u65B0 token \u7F16\u8F91\u65E7\u9875\u9762\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F")) return;
+          }
+          try {
+            btn.setButtonText("\u521B\u5EFA\u4E2D...");
+            btn.disabled = true;
+            const telegraph2 = require_telegraph();
+            const authorName = ((_a = this.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a.telegraphAuthorName) || "";
+            const account = await telegraph2.createAccount("JournalSync", authorName, this.plugin.requestUrl.bind(this.plugin));
+            await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), telegraphAccessToken: account.access_token });
+            new Notice2("Telegraph \u8D26\u53F7\u521B\u5EFA\u6210\u529F");
+            this.display();
+          } catch (error) {
+            new Notice2(`Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: ${error.message}`);
+          } finally {
+            btn.setButtonText("\u521B\u5EFA\u65B0\u8D26\u53F7");
+            btn.disabled = false;
+          }
+        })).addButton((btn) => btn.setButtonText("\u590D\u5236 token").setDisabled(!tgConfig.telegraphAccessToken).onClick(() => {
+          var _a;
+          const token = ((_a = this.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a.telegraphAccessToken) || "";
+          if (!token) {
+            new Notice2("\u6682\u65E0 token \u53EF\u590D\u5236");
+            return;
+          }
+          navigator.clipboard.writeText(token).then(() => {
+            new Notice2("Token \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+          }).catch(() => {
+            new Notice2("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236");
+          });
         }));
       }
       _renderChannelSelection(containerEl, tgConfig) {
@@ -2713,6 +3234,7 @@ var telegramAdapter = (init_telegram(), __toCommonJS(telegram_exports));
 var mastodonAdapter = (init_mastodon(), __toCommonJS(mastodon_exports));
 var misskeyAdapter = (init_missky(), __toCommonJS(missky_exports));
 var notionAdapter = (init_notion(), __toCommonJS(notion_exports));
+var telegraph = require_telegraph();
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 function padNumber(v, size = 2) {
   return String(v).padStart(size, "0");
@@ -2936,7 +3458,10 @@ var DEFAULT_SETTINGS = {
     flomo: {},
     telegram: {
       showLinkPreview: false,
-      richTextEnabled: true
+      richTextEnabled: true,
+      telegraphAccessToken: "",
+      telegraphAuthorName: "",
+      telegraphTitleLevel: 1
     },
     mastodon: { visibility: "public" },
     missky: { visibility: "public" },
@@ -3199,7 +3724,117 @@ var JournalSyncPlugin = class extends Plugin {
     }
     return { success: false, error: `\u4E0D\u652F\u6301\u7684\u9002\u914D\u5668: ${adapterId}` };
   }
-  // ── 命令实现 ────────────────────────────────
+  // ── Telegraph 发送编排 ──────────────────────
+  /**
+   * 确保 Telegraph access_token 存在，无则自动创建账号
+   * @returns {Promise<string>} access_token
+   */
+  async ensureTelegraphToken() {
+    const tgConfig = this.getAdapterConfig("telegram");
+    if (tgConfig.telegraphAccessToken) return tgConfig.telegraphAccessToken;
+    const account = await telegraph.createAccount("JournalSync", tgConfig.telegraphAuthorName || "", requestUrl);
+    await this.setAdapterConfig("telegram", {
+      ...tgConfig,
+      telegraphAccessToken: account.access_token
+    });
+    return account.access_token;
+  }
+  /**
+   * Telegraph 发送编排：
+   * 1. 确保 access_token
+   * 2. 上传本地图片到 telegra.ph/upload
+   * 3. Markdown → Telegraph Node
+   * 4. createPage → 获得 telegra.ph 链接
+   * 5. 链接发送到所有选中的 Telegram 频道
+   *
+   * @param {object} params - { content, images, readImageFile, channelIds, telegraphTitle, titleLevel }
+   * @returns {Promise<object>} { success, url, results }
+   */
+  async executeTelegraphSend({ content, images, readImageFile, channelIds, telegraphTitle, titleLevel }) {
+    var _a;
+    let accessToken;
+    try {
+      accessToken = await this.ensureTelegraphToken();
+    } catch (error) {
+      return { success: false, error: `Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: ${error.message}` };
+    }
+    const tgConfig = this.getAdapterConfig("telegram");
+    const authorName = tgConfig.telegraphAuthorName || "";
+    const imageUrls = /* @__PURE__ */ new Map();
+    const referencedImages = Array.isArray(images) ? images : [];
+    for (const img of referencedImages) {
+      const token = img.token;
+      const vaultPath = img.vaultPath || img.filename;
+      if (!token || !vaultPath) continue;
+      if (isRemoteUrl(vaultPath)) {
+        imageUrls.set(token, vaultPath);
+        continue;
+      }
+      try {
+        const buffer = await readImageFile(vaultPath);
+        if (!buffer) {
+          return { success: false, error: `\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247: ${img.filename || vaultPath}` };
+        }
+        const url = await telegraph.uploadImage(buffer, img.filename || "image.jpg", requestUrl);
+        imageUrls.set(token, url);
+      } catch (error) {
+        return { success: false, error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25 (${img.filename || vaultPath}): ${error.message}` };
+      }
+    }
+    const sendScope = (_a = this.settings.sendScope) != null ? _a : 2;
+    const maxLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
+    const titleLevelNum = Math.max(1, Math.min(maxLevel, Number(titleLevel) || 1));
+    const { title: extractedTitle, content: nodes } = telegraph.markdownToNodes(content, imageUrls, titleLevelNum);
+    const finalTitle = telegraphTitle || extractedTitle || "Journal Sync";
+    let pageUrl;
+    try {
+      const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, "", requestUrl);
+      pageUrl = page.url;
+    } catch (error) {
+      return { success: false, error: `Telegraph \u521B\u5EFA\u9875\u9762\u5931\u8D25: ${error.message}` };
+    }
+    const botToken = tgConfig.botToken;
+    if (!botToken) {
+      return { success: false, error: "Telegram Bot Token \u672A\u914D\u7F6E", url: pageUrl };
+    }
+    const targets = Array.isArray(channelIds) && channelIds.length > 0 ? channelIds.map(String) : [];
+    if (targets.length === 0) {
+      return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E", url: pageUrl };
+    }
+    const showLinkPreview = tgConfig.showLinkPreview !== false;
+    const linkText = `${finalTitle}
+${pageUrl}`;
+    const results = await Promise.all(targets.map(async (targetCh) => {
+      try {
+        const response = await requestUrl({
+          url: `https://api.telegram.org/bot${botToken}/sendMessage`,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: targetCh,
+            text: linkText,
+            disable_web_page_preview: !showLinkPreview
+          }),
+          throw: false
+        });
+        const data = response.json;
+        if (!data || !data.ok) {
+          return { success: false, channelId: targetCh, error: (data == null ? void 0 : data.description) || "\u53D1\u9001\u5931\u8D25" };
+        }
+        return { success: true, channelId: targetCh };
+      } catch (error) {
+        return { success: false, channelId: targetCh, error: error.message || String(error) };
+      }
+    }));
+    const allOk = results.every((r) => r.success);
+    const errors = results.filter((r) => !r.success).map((r) => `${r.channelId}: ${r.error}`).join("; ");
+    return {
+      success: allOk,
+      error: allOk ? void 0 : errors,
+      url: pageUrl,
+      results
+    };
+  }
   /**
    * 新建今日日记（无需后端服务）
    */

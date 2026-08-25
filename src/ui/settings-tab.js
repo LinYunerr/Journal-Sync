@@ -83,7 +83,17 @@ class JournalSyncSettingTab extends PluginSettingTab {
                 for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
                 dropdown.setValue(String(this.plugin.settings.sendScope ?? 2)).onChange(async value => {
                     this.plugin.settings.sendScope = Number(value);
+                    // Clamp telegraphTitleLevel to the new sendScope
+                    const newScope = Number(value);
+                    const maxLv = newScope === 0 ? 6 : Math.min(6, newScope);
+                    const tgCfg = this.plugin.getAdapterConfig('telegram');
+                    const currentLv = tgCfg.telegraphTitleLevel || 1;
+                    if (currentLv > maxLv) {
+                        await this.plugin.setAdapterConfig('telegram', { ...tgCfg, telegraphTitleLevel: maxLv });
+                    }
                     await this.plugin.saveSettings();
+                    // Refresh settings display so the title-level dropdown updates
+                    this.display();
                 });
             });
 
@@ -202,6 +212,107 @@ class JournalSyncSettingTab extends PluginSettingTab {
                 const config = this.plugin.getAdapterConfig('telegram') || {};
                 await this.plugin.setAdapterConfig('telegram', { ...config, richTextEnabled: value });
             }));
+
+        // ── Telegraph 设置 ──────────────────────
+        new Setting(containerEl)
+            .setName('Telegraph 作者名')
+            .setDesc('显示在 Telegraph 页面上的作者名称，可留空。')
+            .addText(text => {
+                text.setPlaceholder('Journal Sync').setValue(tgConfig.telegraphAuthorName || '').onChange(async value => {
+                    await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), telegraphAuthorName: value.trim() });
+                });
+            });
+
+        const sendScope = this.plugin.settings.sendScope || 2;
+        const maxTitleLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
+        const titleLevelDesc = maxTitleLevel === 1
+            ? '当前发送层级为 1，仅可使用一级标题作为 Telegraph 标题。'
+            : `选择哪一级标题作为 Telegraph 页面标题（1-${maxTitleLevel}）。正文中的标题会相应偏移。绑定发送层级（当前: ${sendScope === 0 ? '整页' : sendScope}）。`;
+
+        new Setting(containerEl)
+            .setName('Telegraph 标题层级')
+            .setDesc(titleLevelDesc)
+            .addDropdown(dropdown => {
+                const currentLevel = tgConfig.telegraphTitleLevel || 1;
+                for (let lv = 1; lv <= maxTitleLevel; lv++) {
+                    dropdown.addOption(String(lv), `H${lv}`);
+                }
+                dropdown.setValue(String(Math.min(currentLevel, maxTitleLevel))).onChange(async value => {
+                    await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), telegraphTitleLevel: Number(value) });
+                });
+            });
+
+        new Setting(containerEl)
+            .setName('Telegraph 账号')
+            .setDesc(tgConfig.telegraphAccessToken
+                ? '已连接。可验证新 token、创建新账号或复制当前 token。'
+                : '输入已有 Telegraph token，或点击"创建新账号"获取。首次发送时也会自动创建。')
+            .addText(text => {
+                text.inputEl.type = 'password';
+                text.setPlaceholder('输入 Telegraph access_token');
+                text.setValue(tgConfig.telegraphAccessToken || '');
+                this._telegraphTokenInput = text.inputEl;
+            })
+            .addButton(btn => btn
+                .setButtonText('验证并保存')
+                .onClick(async () => {
+                    const token = (this._telegraphTokenInput?.value || '').trim();
+                    if (!token) {
+                        new Notice('请先输入 token');
+                        return;
+                    }
+                    try {
+                        btn.setButtonText('验证中...');
+                        btn.disabled = true;
+                        const telegraph = require('../core/telegraph');
+                        await telegraph.getAccountInfo(token, this.plugin.requestUrl.bind(this.plugin));
+                        await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), telegraphAccessToken: token });
+                        new Notice('Telegraph token 验证成功');
+                        this.display();
+                    } catch (error) {
+                        new Notice(`Token 验证失败: ${error.message}`);
+                    } finally {
+                        btn.setButtonText('验证并保存');
+                        btn.disabled = false;
+                    }
+                }))
+            .addButton(btn => btn
+                .setButtonText('创建新账号')
+                .onClick(async () => {
+                    if (tgConfig.telegraphAccessToken) {
+                        if (!confirm('已有账号连接，创建新账号后将无法用新 token 编辑旧页面。确定继续？')) return;
+                    }
+                    try {
+                        btn.setButtonText('创建中...');
+                        btn.disabled = true;
+                        const telegraph = require('../core/telegraph');
+                        const authorName = this.plugin.getAdapterConfig('telegram')?.telegraphAuthorName || '';
+                        const account = await telegraph.createAccount('JournalSync', authorName, this.plugin.requestUrl.bind(this.plugin));
+                        await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), telegraphAccessToken: account.access_token });
+                        new Notice('Telegraph 账号创建成功');
+                        this.display();
+                    } catch (error) {
+                        new Notice(`Telegraph 账号创建失败: ${error.message}`);
+                    } finally {
+                        btn.setButtonText('创建新账号');
+                        btn.disabled = false;
+                    }
+                }))
+            .addButton(btn => btn
+                .setButtonText('复制 token')
+                .setDisabled(!tgConfig.telegraphAccessToken)
+                .onClick(() => {
+                    const token = this.plugin.getAdapterConfig('telegram')?.telegraphAccessToken || '';
+                    if (!token) {
+                        new Notice('暂无 token 可复制');
+                        return;
+                    }
+                    navigator.clipboard.writeText(token).then(() => {
+                        new Notice('Token 已复制到剪贴板');
+                    }).catch(() => {
+                        new Notice('复制失败，请手动复制');
+                    });
+                }));
     }
 
     _renderChannelSelection(containerEl, tgConfig) {
