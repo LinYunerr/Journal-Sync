@@ -1,6 +1,6 @@
 {
   "name": "journal-sync-bridge",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "在 Obsidian 中记录日记并发布到多个平台，无需额外后端服务。",
   "main": "main.js",
   "private": true,

@@ -39,6 +39,7 @@ class JournalSyncSendModal extends Modal {
         this.tgShowLinkPreview = true; // 网址预览开关（从设置初始化，发送时可临时切换）
         this.selectedTargets = new Set();
         this.selectedTgChannels = new Set();
+        this.selectedMastodonAccounts = new Set();
 
         this.editingPresetId = '';
         this.images = [];
@@ -91,6 +92,7 @@ class JournalSyncSendModal extends Modal {
 
         this.selectedTargets.clear();
         this.selectedTgChannels.clear();
+        this.selectedMastodonAccounts.clear();
 
         if (preset && Array.isArray(preset.items)) {
             for (const item of preset.items) {
@@ -100,6 +102,7 @@ class JournalSyncSendModal extends Modal {
                     // 预设可能早于平台停用而保存；停用平台不得进入本次发送集合。
                     if (
                         pluginId !== 'telegram' &&
+                        pluginId !== 'mastodon' &&
                         this.plugin.adapterRegistry.has(pluginId) &&
                         this.plugin.isAdapterEnabled(pluginId)
                     ) {
@@ -108,12 +111,18 @@ class JournalSyncSendModal extends Modal {
                 } else if (id.startsWith('telegram-channel:')) {
                     const chId = id.replace('telegram-channel:', '');
                     this.selectedTgChannels.add(chId);
+                } else if (id.startsWith('mastodon-account:')) {
+                    const acctId = id.replace('mastodon-account:', '');
+                    if (this.plugin.isAdapterEnabled('mastodon') &&
+                        this.plugin.getMastodonAccount(acctId)) {
+                        this.selectedMastodonAccounts.add(acctId);
+                    }
                 }
             }
         } else {
             const adapters = this.plugin.adapterRegistry.getAll();
             for (const a of adapters) {
-                if (a.manifest.id !== 'telegram' && this.plugin.isAdapterEnabled(a.manifest.id)) {
+                if (a.manifest.id !== 'telegram' && a.manifest.id !== 'mastodon' && this.plugin.isAdapterEnabled(a.manifest.id)) {
                     this.selectedTargets.add(a.manifest.id);
                 }
             }
@@ -121,6 +130,12 @@ class JournalSyncSendModal extends Modal {
             const homeChannels = Array.isArray(tgConfig?.homeChannels) ? tgConfig.homeChannels.map(String) : [];
             for (const chId of homeChannels) {
                 this.selectedTgChannels.add(chId);
+            }
+            // 默认选中所有 Mastodon 账号
+            if (this.plugin.isAdapterEnabled('mastodon')) {
+                for (const acct of this.plugin.getMastodonAccounts()) {
+                    this.selectedMastodonAccounts.add(acct.id);
+                }
             }
         }
     }
@@ -187,6 +202,9 @@ class JournalSyncSendModal extends Modal {
 
         // 通用目标 Blocks 容器
         this.simpleTargetsEl = publishPanel.createDiv({ cls: 'target-list' });
+
+        // Mastodon 账号 Block 容器
+        this.mstdSectionEl = publishPanel.createDiv({ cls: 'mstd-account-block' });
 
         // Telegram 频道平行 Block 容器
         this.tgSectionEl = publishPanel.createDiv({ cls: 'tg-channel-block' });
@@ -348,22 +366,25 @@ class JournalSyncSendModal extends Modal {
         });
 
         richDiv.addEventListener('click', () => mentionDropdown.addClass('hidden'));
-
         richDiv.addEventListener('input', () => {
-            let text = '';
-            richDiv.childNodes.forEach(node => {
+            const walk = (node) => {
                 if (node.nodeType === Node.ELEMENT_NODE) {
                     if (node.classList && node.classList.contains('image-token-chip')) {
-                        text += node.getAttribute('data-token') || node.textContent.replace(/^📷\s*/, '');
+                        return node.getAttribute('data-token') || node.textContent.replace(/^📷\s*/, '');
                     } else if (node.tagName === 'BR') {
-                        text += '\n';
+                        return '\n';
                     } else {
-                        text += node.innerText || node.textContent;
+                        let s = '';
+                        node.childNodes.forEach(child => { s += walk(child); });
+                        return s;
                     }
                 } else if (node.nodeType === Node.TEXT_NODE) {
-                    text += node.textContent;
+                    return node.textContent;
                 }
-            });
+                return '';
+            };
+            let text = '';
+            richDiv.childNodes.forEach(node => { text += walk(node); });
             this.content = text;
         });
 
@@ -700,11 +721,15 @@ class JournalSyncSendModal extends Modal {
         for (const chId of this.selectedTgChannels) {
             items.push({ id: `telegram-channel:${chId}` });
         }
+        for (const acctId of this.selectedMastodonAccounts) {
+            items.push({ id: `mastodon-account:${acctId}` });
+        }
         return items;
     }
 
     renderAllTargetSections() {
         this.renderSimpleTargets();
+        this.renderMastodonAccounts();
         this.renderTelegramChannels();
     }
 
@@ -713,7 +738,7 @@ class JournalSyncSendModal extends Modal {
         this.simpleTargetsEl.empty();
 
         const adapters = this.plugin.adapterRegistry.getAll();
-        const generalAdapters = adapters.filter(a => a.manifest.id !== 'telegram' && this.plugin.isAdapterEnabled(a.manifest.id));
+        const generalAdapters = adapters.filter(a => a.manifest.id !== 'telegram' && a.manifest.id !== 'mastodon' && this.plugin.isAdapterEnabled(a.manifest.id));
 
         if (generalAdapters.length === 0) return;
 
@@ -740,6 +765,46 @@ class JournalSyncSendModal extends Modal {
         }
     }
 
+    renderMastodonAccounts() {
+        if (!this.mstdSectionEl) return;
+        this.mstdSectionEl.empty();
+
+        if (!this.plugin.isAdapterEnabled('mastodon')) return;
+
+        const accounts = this.plugin.getMastodonAccounts();
+        if (accounts.length === 0) return;
+
+        const labelRow = this.mstdSectionEl.createDiv({ cls: 'mstd-account-label-row' });
+        labelRow.createEl('div', { text: 'Mastodon：', cls: 'target-sub-label' });
+
+        const accountGrid = this.mstdSectionEl.createDiv({ cls: 'target-list mstd-account-list' });
+
+        for (const acct of accounts) {
+            const isSelected = this.selectedMastodonAccounts.has(acct.id);
+            const displayLabel = acct.label || acct.serverUrl || acct.id;
+
+            const block = accountGrid.createEl('button', {
+                type: 'button',
+                cls: `plugin-toggle-block${isSelected ? ' active' : ''}`
+            });
+
+            const titleRow = block.createDiv({ cls: 'plugin-toggle-title-row' });
+            titleRow.createSpan({ cls: 'plugin-toggle-title', text: displayLabel });
+            if (acct.serverUrl) {
+                titleRow.createSpan({ cls: 'plugin-toggle-sub', text: acct.serverUrl.replace(/^https?:\/\//, '') });
+            }
+
+            block.addEventListener('click', async () => {
+                if (this.selectedMastodonAccounts.has(acct.id)) {
+                    this.selectedMastodonAccounts.delete(acct.id);
+                } else {
+                    this.selectedMastodonAccounts.add(acct.id);
+                }
+                block.classList.toggle('active', this.selectedMastodonAccounts.has(acct.id));
+                await this.savePresetSelection();
+            });
+        }
+    }
     renderTelegramChannels() {
         if (!this.tgSectionEl) return;
         this.tgSectionEl.empty();
@@ -995,6 +1060,7 @@ class JournalSyncSendModal extends Modal {
         // 二次校验：设置可能在弹窗打开后被停用，停用适配器不得发送。
         const targetAdapters = Array.from(this.selectedTargets).filter(adapterId =>
             adapterId !== 'telegram' &&
+            adapterId !== 'mastodon' &&
             plugin.adapterRegistry.has(adapterId) &&
             plugin.isAdapterEnabled(adapterId)
         );
@@ -1005,8 +1071,16 @@ class JournalSyncSendModal extends Modal {
             targetAdapters.push('telegram');
         }
 
-        if (targetAdapters.length === 0 && tgChannels.length === 0) {
-            new Notice('请至少选择一个发送目标或 Telegram 频道');
+        // Mastodon 多账号
+        const mstdAccountIds = plugin.isAdapterEnabled('mastodon')
+            ? Array.from(this.selectedMastodonAccounts).filter(id => plugin.getMastodonAccount(id))
+            : [];
+        if (mstdAccountIds.length > 0) {
+            targetAdapters.push('mastodon');
+        }
+
+        if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
+            new Notice('请至少选择一个发送目标');
             return;
         }
 
@@ -1064,10 +1138,21 @@ class JournalSyncSendModal extends Modal {
         try {
             const configs = {};
             for (const adapterId of targetAdapters) {
-                configs[adapterId] = {
-                    ...plugin.getAdapterConfig(adapterId),
-                    ...(targetConfigOverrides[adapterId] || {})
-                };
+                if (adapterId === 'mastodon') {
+                    // mastodon 多账号：传入第一个选中账号的配置形状，而非 { accounts: [] }
+                    const firstAcctId = mstdAccountIds[0];
+                    const firstAcct = firstAcctId ? plugin.getMastodonAccount(firstAcctId) : null;
+                    configs['mastodon'] = firstAcct ? {
+                        serverUrl: firstAcct.serverUrl,
+                        accessToken: firstAcct.accessToken,
+                        visibility: firstAcct.visibility || 'public'
+                    } : {};
+                } else {
+                    configs[adapterId] = {
+                        ...plugin.getAdapterConfig(adapterId),
+                        ...(targetConfigOverrides[adapterId] || {})
+                    };
+                }
             }
             validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
@@ -1089,7 +1174,11 @@ class JournalSyncSendModal extends Modal {
         // 2. 在独立异步任务中运行网络传输，保证关窗后进程绝不中断
         (async () => {
             const results = {};
+
+            // 通用适配器（flomo, misskey, notion 等）
             for (const adapterId of targetAdapters) {
+                if (adapterId === 'telegram') continue; // telegram 通过 channelIds 在 adapter 内循环
+                if (adapterId === 'mastodon') continue;  // mastodon 按账号循环，下方处理
                 try {
                     const result = await plugin.executeAdapter(
                         adapterId,
@@ -1102,6 +1191,33 @@ class JournalSyncSendModal extends Modal {
                 }
             }
 
+            // Telegram（adapter 内部按 channelIds 循环）
+            if (tgChannels.length > 0) {
+                try {
+                    const result = await plugin.executeAdapter('telegram', payload, targetConfigOverrides.telegram);
+                    results['telegram'] = result;
+                } catch (error) {
+                    results['telegram'] = { success: false, error: error.message };
+                }
+            }
+            // Mastodon 多账号：每个账号独立调用 adapter
+            for (const acctId of mstdAccountIds) {
+                const acct = plugin.getMastodonAccount(acctId);
+                if (!acct) continue;
+                const displayLabel = acct.label || acct.serverUrl || acctId;
+                const key = `mastodon:${acctId}`;
+                try {
+                    const result = await plugin.executeAdapter('mastodon', payload, {
+                        serverUrl: acct.serverUrl,
+                        accessToken: acct.accessToken,
+                        visibility: acct.visibility || 'public'
+                    });
+                    result.displayLabel = displayLabel;
+                    results[key] = result;
+                } catch (error) {
+                    results[key] = { success: false, error: error.message, displayLabel };
+                }
+            }
             // 发送完成，在 Obsidian 弹出非阻塞结果 Notice 提示
             const anyFailure = Object.values(results).some(r => !r.success && !r.skipped);
             const summary = Object.entries(results)
@@ -1112,10 +1228,12 @@ class JournalSyncSendModal extends Modal {
                             return `Telegram ${channel.channelId}: ${channel.success ? '成功' : `失败(${channel.error || '未知错误'})`}`;
                         });
                     }
+                    // Mastodon 多账号结果使用 displayLabel 展示，key 仅为内部唯一标识
+                    const displayId = result.displayLabel || id;
                     const warn = Array.isArray(result.warnings) && result.warnings.length > 0 ? `（${result.warnings.join('；')}）` : '';
                     return result.success
-                        ? (result.skipped ? `${id}: 跳过` : `${id}: 成功${warn}`)
-                        : `${id}: 失败(${result.error || '未知错误'})`;
+                        ? (result.skipped ? `${displayId}: 跳过` : `${displayId}: 成功${warn}`)
+                        : `${displayId}: 失败(${result.error || '未知错误'})`;
                 })
                 .join('；\n');
 

@@ -821,3 +821,61 @@
   background: var(--background-secondary);
   color: var(--text-normal);
 }
+/* ── Mastodon 多账号设置卡片 ─────────────────── */
+.js-bridge-mstd-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--background-secondary);
+}
+
+.js-bridge-mstd-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.js-bridge-mstd-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+
+.js-bridge-mstd-card-url {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.js-bridge-mstd-card-delete {
+  font-size: 12px;
+  padding: 2px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.js-bridge-mstd-card-delete:hover {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: rgb(239, 68, 68);
+}
+
+/* ── Mastodon 账号选择列表（发送面板） ────────── */
+.mstd-account-block {
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+.mstd-account-label-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.mstd-account-list {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}

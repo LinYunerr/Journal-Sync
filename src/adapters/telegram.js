@@ -11,8 +11,13 @@
  * - rich:   富文本图文混排（sendRichMessage）
  * - telegraph: 创建 Telegraph 页面，将链接发送到频道
  */
-
 const TG_API_BASE = 'https://api.telegram.org';
+
+// 转义 Obsidian wikilink [[...]]，避免 Telegram Markdown 解析器将外层 [ ] 当作链接语法而静默剥离。
+// 将 [[text]] → \[text\]，保留内层内容，不影响合法的 [text](url) 链接。
+function escapeTelegramMarkdownWikilinks(text) {
+    return String(text || '').replace(/\[\[([^\]]+)\]\]/g, '\\[$1\\]');
+}
 
 const telegraph = require('../core/telegraph');
 
@@ -151,7 +156,7 @@ async function sendSingleTextMessage(botToken, chatId, text, options, requestUrl
 
     const body = {
         chat_id: chatId,
-        text: text,
+        text: escapeTelegramMarkdownWikilinks(text),
         parse_mode: 'Markdown',
         link_preview_options: { is_disabled: !options?.showLinkPreview }
     };
@@ -241,8 +246,9 @@ async function sendPhotoByBuffer(botToken, chatId, arrayBuffer, filename, captio
     parts.push(encoder.encode('\r\n'));
 
     if (caption && caption.trim()) {
+        const safeCaption = escapeTelegramMarkdownWikilinks(caption.trim());
         parts.push(encoder.encode(
-            `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption.trim()}\r\n`
+            `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${safeCaption}\r\n`
         ));
         parts.push(encoder.encode(
             `--${boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nMarkdown\r\n`
@@ -286,7 +292,7 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
     const mediaList = imageItems.map((item, idx) => {
         const entry = { type: 'photo', media: `attach://photo${idx}` };
         if (idx === 0 && caption && caption.trim()) {
-            entry.caption = caption.trim();
+            entry.caption = escapeTelegramMarkdownWikilinks(caption.trim());
             entry.parse_mode = 'Markdown';
         }
         return entry;

@@ -289,7 +289,7 @@ const DEFAULT_SETTINGS = {
       telegraphAuthorName: '',
       telegraphTitleLevel: 1
     },
-    mastodon: { visibility: 'public' },
+    mastodon: { accounts: [] },
     missky: { visibility: 'public' },
     notion: {
       targetType: 'page',
@@ -313,6 +313,8 @@ class JournalSyncPlugin extends Plugin {
     // 加载并深度合并默认迁移设置
     const loadedData = (await this.loadData()) || {};
     this.settings = deepMergeSettings(loadedData, DEFAULT_SETTINGS);
+    // 迁移 Mastodon 单账号旧格式 → accounts 数组
+    this._migrateMastodonAccounts();
     await this.saveSettings();
 
     // 初始化适配器注册表
@@ -369,6 +371,45 @@ class JournalSyncPlugin extends Plugin {
     if (!this.settings.adaptersConfig) this.settings.adaptersConfig = {};
     this.settings.adaptersConfig[id] = config;
     await this.saveSettings();
+  }
+  // ┌──────────────────────────────────────────────────────────────────┐
+  // │ TEMPORARY MIGRATION CODE — Mastodon 单账号 → 多账号格式迁移       │
+  // │ 计划在 5–6 个版本后删除此方法及其调用。                           │
+  // │ 如果届时所有用户已完成迁移，可安全移除。                           │
+  // └──────────────────────────────────────────────────────────────────┘
+  /**
+   * 迁移 Mastodon 单账号旧格式 { serverUrl, accessToken, visibility } → accounts 数组。
+   * deepMergeSettings 会先用 DEFAULT_SETTINGS 注入 accounts:[]，所以不能靠
+   * Array.isArray(mstd.accounts) 判断是否需要迁移——那样守卫永远命中、迁移被跳过。
+   * 改为检测旧字段是否存在：只要旧字段还在且 accounts 为空，就执行迁移。
+   */
+  _migrateMastodonAccounts() {
+    const mstd = this.settings.adaptersConfig?.mastodon;
+    if (!mstd) return;
+    // 检测旧字段是否存在而非依赖 accounts 是否为数组
+    if ((mstd.serverUrl || mstd.accessToken) && (!Array.isArray(mstd.accounts) || mstd.accounts.length === 0)) {
+      const { serverUrl, accessToken, visibility } = mstd;
+      const label = serverUrl ? serverUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '') : 'Mastodon';
+      mstd.accounts = [{
+        id: `mstd-${Date.now()}-migrate`,
+        label,
+        serverUrl: serverUrl || '',
+        accessToken: accessToken || '',
+        visibility: visibility || 'public'
+      }];
+      delete mstd.serverUrl;
+      delete mstd.accessToken;
+      delete mstd.visibility;
+    }
+    if (!Array.isArray(mstd.accounts)) mstd.accounts = [];
+  }
+  getMastodonAccounts() {
+    const mstd = this.settings.adaptersConfig?.mastodon;
+    return Array.isArray(mstd?.accounts) ? mstd.accounts : [];
+  }
+
+  getMastodonAccount(accountId) {
+    return this.getMastodonAccounts().find(a => a.id === accountId) || null;
   }
 
   // ── Obsidian Vault 工具 ──────────────────────

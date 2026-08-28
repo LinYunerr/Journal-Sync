@@ -333,14 +333,142 @@ class JournalSyncSettingTab extends PluginSettingTab {
             });
         }
     }
-
     _renderMastodon(containerEl) {
         this._addEnabledToggle(containerEl, 'mastodon', 'Mastodon');
         if (!this.plugin.isAdapterEnabled('mastodon')) return;
-        const config = this.plugin.getAdapterConfig('mastodon') || {};
-        new Setting(containerEl).setName('实例地址').setDesc('例如 https://mastodon.social').addText(text => text.setPlaceholder('https://mastodon.social').setValue(config.serverUrl || '').onChange(async value => this.plugin.setAdapterConfig('mastodon', { ...config, serverUrl: value.trim() })));
-        new Setting(containerEl).setName('Access Token').addText(text => { text.inputEl.type = 'password'; text.setPlaceholder('你的 Mastodon Access Token').setValue(config.accessToken || '').onChange(async value => this.plugin.setAdapterConfig('mastodon', { ...config, accessToken: value.trim() })); });
-        new Setting(containerEl).setName('可见性').addDropdown(dropdown => dropdown.addOption('public', '公开').addOption('unlisted', '不列出').addOption('private', '仅关注者').setValue(config.visibility || 'public').onChange(async value => this.plugin.setAdapterConfig('mastodon', { ...config, visibility: value })));
+
+        const accounts = this.plugin.getMastodonAccounts();
+
+        // 逐账号卡片
+        for (let i = 0; i < accounts.length; i++) {
+            const acct = accounts[i];
+            this._renderMastodonAccountCard(containerEl, acct, i);
+        }
+
+        // 添加账号按钮
+        new Setting(containerEl)
+            .setName('添加账号')
+            .setDesc('添加一个新的 Mastodon 实例账号')
+            .addButton(btn => btn
+                .setButtonText('+ 添加')
+                .onClick(async () => {
+                    const newAcct = {
+                        id: `mstd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                        label: '',
+                        serverUrl: '',
+                        accessToken: '',
+                        visibility: 'public'
+                    };
+                    const freshConfig = this.plugin.getAdapterConfig('mastodon') || {};
+                    const freshAccounts = this.plugin.getMastodonAccounts();
+                    const updated = [...freshAccounts, newAcct];
+                    await this.plugin.setAdapterConfig('mastodon', { ...freshConfig, accounts: updated });
+                    this.display();
+                }));
+    }
+    _renderMastodonAccountCard(containerEl, acct, index) {
+        const mstdConfig = this.plugin.getAdapterConfig('mastodon') || {};
+        const accounts = this.plugin.getMastodonAccounts();
+        const cardEl = containerEl.createDiv({ cls: 'js-bridge-mstd-card' });
+
+        // 卡片标题行
+        const headerEl = cardEl.createDiv({ cls: 'js-bridge-mstd-card-header' });
+        const titleText = acct.label || acct.serverUrl || `账号 ${index + 1}`;
+        headerEl.createEl('span', { text: titleText, cls: 'js-bridge-mstd-card-title' });
+        headerEl.createEl('span', { text: acct.serverUrl || '未配置', cls: 'js-bridge-mstd-card-url' });
+
+        // 删除按钮
+        const deleteBtn = headerEl.createEl('button', {
+            type: 'button',
+            text: '删除',
+            cls: 'js-bridge-mstd-card-delete'
+        });
+        deleteBtn.addEventListener('click', async () => {
+            if (!confirm(`确定删除账号「${titleText}」？`)) return;
+            // 读取最新数据，避免闭包捕获过期快照导致编辑后删除其他账号时数据回退
+            const freshConfig = this.plugin.getAdapterConfig('mastodon') || {};
+            const freshAccounts = this.plugin.getMastodonAccounts();
+            const updated = freshAccounts.filter(a => a.id !== acct.id);
+            await this.plugin.setAdapterConfig('mastodon', { ...freshConfig, accounts: updated });
+            // 清理预设中已删除账号的引用，避免 data.json 无限累积
+            this._cleanupMastodonPresets(acct.id);
+            this.display();
+        });
+
+        // 字段：显示名称
+        new Setting(cardEl)
+            .setName('显示名称')
+            .setDesc('在发送面板中显示的文字，如「主账号」「长毛象」')
+            .addText(text => text
+                .setPlaceholder('主账号')
+                .setValue(acct.label || '')
+                .onChange(async value => {
+                    this._updateMastodonAccount(acct.id, { label: value.trim() });
+                }));
+
+        // 字段：实例地址
+        new Setting(cardEl)
+            .setName('实例地址')
+            .setDesc('例如 https://mastodon.social')
+            .addText(text => text
+                .setPlaceholder('https://mastodon.social')
+                .setValue(acct.serverUrl || '')
+                .onChange(async value => {
+                    this._updateMastodonAccount(acct.id, { serverUrl: value.trim() });
+                }));
+
+        // 字段：Access Token
+        new Setting(cardEl)
+            .setName('Access Token')
+            .addText(text => {
+                text.inputEl.type = 'password';
+                text.setPlaceholder('你的 Mastodon Access Token')
+                    .setValue(acct.accessToken || '')
+                    .onChange(async value => {
+                        this._updateMastodonAccount(acct.id, { accessToken: value.trim() });
+                    });
+            });
+
+        // 字段：可见性
+        new Setting(cardEl)
+            .setName('可见性')
+            .addDropdown(dropdown => dropdown
+                .addOption('public', '公开')
+                .addOption('unlisted', '不列出')
+                .addOption('private', '仅关注者')
+                .addOption('direct', '私信')
+                .setValue(acct.visibility || 'public')
+                .onChange(async value => {
+                    this._updateMastodonAccount(acct.id, { visibility: value });
+                }));
+    }
+
+    async _updateMastodonAccount(accountId, patch) {
+        const mstdConfig = this.plugin.getAdapterConfig('mastodon') || {};
+        const accounts = this.plugin.getMastodonAccounts();
+        const updated = accounts.map(a => a.id === accountId ? { ...a, ...patch } : a);
+        await this.plugin.setAdapterConfig('mastodon', { ...mstdConfig, accounts: updated });
+    }
+
+    /**
+     * 删除账号后清理预设中残留的 mastodon-account:<accountId> 引用，
+     * 避免 data.json 无限累积已删除账号的条目。
+     */
+    _cleanupMastodonPresets(accountId) {
+        const presets = this.plugin.settings.publishPresets;
+        if (!Array.isArray(presets) || presets.length === 0) return;
+        const staleKey = `mastodon-account:${accountId}`;
+        let changed = false;
+        for (const preset of presets) {
+            if (!Array.isArray(preset.items)) continue;
+            const before = preset.items.length;
+            preset.items = preset.items.filter(item => item.id !== staleKey);
+            if (preset.items.length !== before) changed = true;
+        }
+        if (changed) {
+            this.plugin.settings.publishPresets = presets;
+            this.plugin.saveSettings();
+        }
     }
 
     _renderMisskey(containerEl) {

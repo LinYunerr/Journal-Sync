@@ -228,6 +228,7 @@ var require_send_modal = __commonJS({
         this.tgShowLinkPreview = true;
         this.selectedTargets = /* @__PURE__ */ new Set();
         this.selectedTgChannels = /* @__PURE__ */ new Set();
+        this.selectedMastodonAccounts = /* @__PURE__ */ new Set();
         this.editingPresetId = "";
         this.images = [];
         this._objectUrls = /* @__PURE__ */ new Set();
@@ -276,23 +277,29 @@ ${tokenStr}` : tokenStr;
         const preset = presets.find((p) => p.id === activeId) || presets[0];
         this.selectedTargets.clear();
         this.selectedTgChannels.clear();
+        this.selectedMastodonAccounts.clear();
         if (preset && Array.isArray(preset.items)) {
           for (const item of preset.items) {
             const id = String(item.id || "");
             if (id.startsWith("plugin:")) {
               const pluginId = id.replace("plugin:", "");
-              if (pluginId !== "telegram" && this.plugin.adapterRegistry.has(pluginId) && this.plugin.isAdapterEnabled(pluginId)) {
+              if (pluginId !== "telegram" && pluginId !== "mastodon" && this.plugin.adapterRegistry.has(pluginId) && this.plugin.isAdapterEnabled(pluginId)) {
                 this.selectedTargets.add(pluginId);
               }
             } else if (id.startsWith("telegram-channel:")) {
               const chId = id.replace("telegram-channel:", "");
               this.selectedTgChannels.add(chId);
+            } else if (id.startsWith("mastodon-account:")) {
+              const acctId = id.replace("mastodon-account:", "");
+              if (this.plugin.isAdapterEnabled("mastodon") && this.plugin.getMastodonAccount(acctId)) {
+                this.selectedMastodonAccounts.add(acctId);
+              }
             }
           }
         } else {
           const adapters = this.plugin.adapterRegistry.getAll();
           for (const a of adapters) {
-            if (a.manifest.id !== "telegram" && this.plugin.isAdapterEnabled(a.manifest.id)) {
+            if (a.manifest.id !== "telegram" && a.manifest.id !== "mastodon" && this.plugin.isAdapterEnabled(a.manifest.id)) {
               this.selectedTargets.add(a.manifest.id);
             }
           }
@@ -300,6 +307,11 @@ ${tokenStr}` : tokenStr;
           const homeChannels = Array.isArray(tgConfig == null ? void 0 : tgConfig.homeChannels) ? tgConfig.homeChannels.map(String) : [];
           for (const chId of homeChannels) {
             this.selectedTgChannels.add(chId);
+          }
+          if (this.plugin.isAdapterEnabled("mastodon")) {
+            for (const acct of this.plugin.getMastodonAccounts()) {
+              this.selectedMastodonAccounts.add(acct.id);
+            }
           }
         }
       }
@@ -347,6 +359,7 @@ ${tokenStr}` : tokenStr;
         this.presetControlsEl = publishTitleRow.createDiv({ cls: "publish-preset-controls" });
         this.renderPresetControls();
         this.simpleTargetsEl = publishPanel.createDiv({ cls: "target-list" });
+        this.mstdSectionEl = publishPanel.createDiv({ cls: "mstd-account-block" });
         this.tgSectionEl = publishPanel.createDiv({ cls: "tg-channel-block" });
         this.renderAllTargetSections();
         const btnArea = contentEl.createDiv({ cls: "js-bridge-btn-area" });
@@ -481,19 +494,27 @@ ${tokenStr}` : tokenStr;
         });
         richDiv.addEventListener("click", () => mentionDropdown.addClass("hidden"));
         richDiv.addEventListener("input", () => {
-          let text = "";
-          richDiv.childNodes.forEach((node) => {
+          const walk = (node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
               if (node.classList && node.classList.contains("image-token-chip")) {
-                text += node.getAttribute("data-token") || node.textContent.replace(/^📷\s*/, "");
+                return node.getAttribute("data-token") || node.textContent.replace(/^📷\s*/, "");
               } else if (node.tagName === "BR") {
-                text += "\n";
+                return "\n";
               } else {
-                text += node.innerText || node.textContent;
+                let s = "";
+                node.childNodes.forEach((child) => {
+                  s += walk(child);
+                });
+                return s;
               }
             } else if (node.nodeType === Node.TEXT_NODE) {
-              text += node.textContent;
+              return node.textContent;
             }
+            return "";
+          };
+          let text = "";
+          richDiv.childNodes.forEach((node) => {
+            text += walk(node);
           });
           this.content = text;
         });
@@ -787,17 +808,21 @@ ${tokenStr}` : tokenStr;
         for (const chId of this.selectedTgChannels) {
           items.push({ id: `telegram-channel:${chId}` });
         }
+        for (const acctId of this.selectedMastodonAccounts) {
+          items.push({ id: `mastodon-account:${acctId}` });
+        }
         return items;
       }
       renderAllTargetSections() {
         this.renderSimpleTargets();
+        this.renderMastodonAccounts();
         this.renderTelegramChannels();
       }
       renderSimpleTargets() {
         if (!this.simpleTargetsEl) return;
         this.simpleTargetsEl.empty();
         const adapters = this.plugin.adapterRegistry.getAll();
-        const generalAdapters = adapters.filter((a) => a.manifest.id !== "telegram" && this.plugin.isAdapterEnabled(a.manifest.id));
+        const generalAdapters = adapters.filter((a) => a.manifest.id !== "telegram" && a.manifest.id !== "mastodon" && this.plugin.isAdapterEnabled(a.manifest.id));
         if (generalAdapters.length === 0) return;
         for (const adapter of generalAdapters) {
           const id = adapter.manifest.id;
@@ -814,6 +839,38 @@ ${tokenStr}` : tokenStr;
               this.selectedTargets.add(id);
             }
             block.classList.toggle("active", this.selectedTargets.has(id));
+            await this.savePresetSelection();
+          });
+        }
+      }
+      renderMastodonAccounts() {
+        if (!this.mstdSectionEl) return;
+        this.mstdSectionEl.empty();
+        if (!this.plugin.isAdapterEnabled("mastodon")) return;
+        const accounts = this.plugin.getMastodonAccounts();
+        if (accounts.length === 0) return;
+        const labelRow = this.mstdSectionEl.createDiv({ cls: "mstd-account-label-row" });
+        labelRow.createEl("div", { text: "Mastodon\uFF1A", cls: "target-sub-label" });
+        const accountGrid = this.mstdSectionEl.createDiv({ cls: "target-list mstd-account-list" });
+        for (const acct of accounts) {
+          const isSelected = this.selectedMastodonAccounts.has(acct.id);
+          const displayLabel = acct.label || acct.serverUrl || acct.id;
+          const block = accountGrid.createEl("button", {
+            type: "button",
+            cls: `plugin-toggle-block${isSelected ? " active" : ""}`
+          });
+          const titleRow = block.createDiv({ cls: "plugin-toggle-title-row" });
+          titleRow.createSpan({ cls: "plugin-toggle-title", text: displayLabel });
+          if (acct.serverUrl) {
+            titleRow.createSpan({ cls: "plugin-toggle-sub", text: acct.serverUrl.replace(/^https?:\/\//, "") });
+          }
+          block.addEventListener("click", async () => {
+            if (this.selectedMastodonAccounts.has(acct.id)) {
+              this.selectedMastodonAccounts.delete(acct.id);
+            } else {
+              this.selectedMastodonAccounts.add(acct.id);
+            }
+            block.classList.toggle("active", this.selectedMastodonAccounts.has(acct.id));
             await this.savePresetSelection();
           });
         }
@@ -1023,14 +1080,18 @@ ${tokenStr}` : tokenStr;
       async doSend() {
         const plugin = this.plugin;
         const targetAdapters = Array.from(this.selectedTargets).filter(
-          (adapterId) => adapterId !== "telegram" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
+          (adapterId) => adapterId !== "telegram" && adapterId !== "mastodon" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
         );
         const tgChannels = plugin.adapterRegistry.has("telegram") && plugin.isAdapterEnabled("telegram") ? Array.from(this.selectedTgChannels) : [];
         if (tgChannels.length > 0) {
           targetAdapters.push("telegram");
         }
-        if (targetAdapters.length === 0 && tgChannels.length === 0) {
-          new Notice2("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807\u6216 Telegram \u9891\u9053");
+        const mstdAccountIds = plugin.isAdapterEnabled("mastodon") ? Array.from(this.selectedMastodonAccounts).filter((id) => plugin.getMastodonAccount(id)) : [];
+        if (mstdAccountIds.length > 0) {
+          targetAdapters.push("mastodon");
+        }
+        if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
+          new Notice2("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
           return;
         }
         const rawContent = this.content;
@@ -1079,10 +1140,20 @@ ${tokenStr}` : tokenStr;
         try {
           const configs = {};
           for (const adapterId of targetAdapters) {
-            configs[adapterId] = {
-              ...plugin.getAdapterConfig(adapterId),
-              ...targetConfigOverrides[adapterId] || {}
-            };
+            if (adapterId === "mastodon") {
+              const firstAcctId = mstdAccountIds[0];
+              const firstAcct = firstAcctId ? plugin.getMastodonAccount(firstAcctId) : null;
+              configs["mastodon"] = firstAcct ? {
+                serverUrl: firstAcct.serverUrl,
+                accessToken: firstAcct.accessToken,
+                visibility: firstAcct.visibility || "public"
+              } : {};
+            } else {
+              configs[adapterId] = {
+                ...plugin.getAdapterConfig(adapterId),
+                ...targetConfigOverrides[adapterId] || {}
+              };
+            }
           }
           validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
@@ -1101,6 +1172,8 @@ ${tokenStr}` : tokenStr;
         (async () => {
           const results = {};
           for (const adapterId of targetAdapters) {
+            if (adapterId === "telegram") continue;
+            if (adapterId === "mastodon") continue;
             try {
               const result = await plugin.executeAdapter(
                 adapterId,
@@ -1112,6 +1185,31 @@ ${tokenStr}` : tokenStr;
               results[adapterId] = { success: false, error: error.message };
             }
           }
+          if (tgChannels.length > 0) {
+            try {
+              const result = await plugin.executeAdapter("telegram", payload, targetConfigOverrides.telegram);
+              results["telegram"] = result;
+            } catch (error) {
+              results["telegram"] = { success: false, error: error.message };
+            }
+          }
+          for (const acctId of mstdAccountIds) {
+            const acct = plugin.getMastodonAccount(acctId);
+            if (!acct) continue;
+            const displayLabel = acct.label || acct.serverUrl || acctId;
+            const key = `mastodon:${acctId}`;
+            try {
+              const result = await plugin.executeAdapter("mastodon", payload, {
+                serverUrl: acct.serverUrl,
+                accessToken: acct.accessToken,
+                visibility: acct.visibility || "public"
+              });
+              result.displayLabel = displayLabel;
+              results[key] = result;
+            } catch (error) {
+              results[key] = { success: false, error: error.message, displayLabel };
+            }
+          }
           const anyFailure = Object.values(results).some((r) => !r.success && !r.skipped);
           const summary = Object.entries(results).flatMap(([id, result]) => {
             const channelResults = Array.isArray(result.results) ? result.results : null;
@@ -1120,8 +1218,9 @@ ${tokenStr}` : tokenStr;
                 return `Telegram ${channel.channelId}: ${channel.success ? "\u6210\u529F" : `\u5931\u8D25(${channel.error || "\u672A\u77E5\u9519\u8BEF"})`}`;
               });
             }
+            const displayId = result.displayLabel || id;
             const warn = Array.isArray(result.warnings) && result.warnings.length > 0 ? `\uFF08${result.warnings.join("\uFF1B")}\uFF09` : "";
-            return result.success ? result.skipped ? `${id}: \u8DF3\u8FC7` : `${id}: \u6210\u529F${warn}` : `${id}: \u5931\u8D25(${result.error || "\u672A\u77E5\u9519\u8BEF"})`;
+            return result.success ? result.skipped ? `${displayId}: \u8DF3\u8FC7` : `${displayId}: \u6210\u529F${warn}` : `${displayId}: \u5931\u8D25(${result.error || "\u672A\u77E5\u9519\u8BEF"})`;
           }).join("\uFF1B\n");
           if (anyFailure) {
             new Notice2(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 1e4);
@@ -1731,13 +1830,89 @@ var require_settings_tab = __commonJS({
       _renderMastodon(containerEl) {
         this._addEnabledToggle(containerEl, "mastodon", "Mastodon");
         if (!this.plugin.isAdapterEnabled("mastodon")) return;
-        const config = this.plugin.getAdapterConfig("mastodon") || {};
-        new Setting(containerEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://mastodon.social").addText((text) => text.setPlaceholder("https://mastodon.social").setValue(config.serverUrl || "").onChange(async (value) => this.plugin.setAdapterConfig("mastodon", { ...config, serverUrl: value.trim() })));
-        new Setting(containerEl).setName("Access Token").addText((text) => {
-          text.inputEl.type = "password";
-          text.setPlaceholder("\u4F60\u7684 Mastodon Access Token").setValue(config.accessToken || "").onChange(async (value) => this.plugin.setAdapterConfig("mastodon", { ...config, accessToken: value.trim() }));
+        const accounts = this.plugin.getMastodonAccounts();
+        for (let i = 0; i < accounts.length; i++) {
+          const acct = accounts[i];
+          this._renderMastodonAccountCard(containerEl, acct, i);
+        }
+        new Setting(containerEl).setName("\u6DFB\u52A0\u8D26\u53F7").setDesc("\u6DFB\u52A0\u4E00\u4E2A\u65B0\u7684 Mastodon \u5B9E\u4F8B\u8D26\u53F7").addButton((btn) => btn.setButtonText("+ \u6DFB\u52A0").onClick(async () => {
+          const newAcct = {
+            id: `mstd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            label: "",
+            serverUrl: "",
+            accessToken: "",
+            visibility: "public"
+          };
+          const freshConfig = this.plugin.getAdapterConfig("mastodon") || {};
+          const freshAccounts = this.plugin.getMastodonAccounts();
+          const updated = [...freshAccounts, newAcct];
+          await this.plugin.setAdapterConfig("mastodon", { ...freshConfig, accounts: updated });
+          this.display();
+        }));
+      }
+      _renderMastodonAccountCard(containerEl, acct, index) {
+        const mstdConfig = this.plugin.getAdapterConfig("mastodon") || {};
+        const accounts = this.plugin.getMastodonAccounts();
+        const cardEl = containerEl.createDiv({ cls: "js-bridge-mstd-card" });
+        const headerEl = cardEl.createDiv({ cls: "js-bridge-mstd-card-header" });
+        const titleText = acct.label || acct.serverUrl || `\u8D26\u53F7 ${index + 1}`;
+        headerEl.createEl("span", { text: titleText, cls: "js-bridge-mstd-card-title" });
+        headerEl.createEl("span", { text: acct.serverUrl || "\u672A\u914D\u7F6E", cls: "js-bridge-mstd-card-url" });
+        const deleteBtn = headerEl.createEl("button", {
+          type: "button",
+          text: "\u5220\u9664",
+          cls: "js-bridge-mstd-card-delete"
         });
-        new Setting(containerEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("unlisted", "\u4E0D\u5217\u51FA").addOption("private", "\u4EC5\u5173\u6CE8\u8005").setValue(config.visibility || "public").onChange(async (value) => this.plugin.setAdapterConfig("mastodon", { ...config, visibility: value })));
+        deleteBtn.addEventListener("click", async () => {
+          if (!confirm(`\u786E\u5B9A\u5220\u9664\u8D26\u53F7\u300C${titleText}\u300D\uFF1F`)) return;
+          const freshConfig = this.plugin.getAdapterConfig("mastodon") || {};
+          const freshAccounts = this.plugin.getMastodonAccounts();
+          const updated = freshAccounts.filter((a) => a.id !== acct.id);
+          await this.plugin.setAdapterConfig("mastodon", { ...freshConfig, accounts: updated });
+          this._cleanupMastodonPresets(acct.id);
+          this.display();
+        });
+        new Setting(cardEl).setName("\u663E\u793A\u540D\u79F0").setDesc("\u5728\u53D1\u9001\u9762\u677F\u4E2D\u663E\u793A\u7684\u6587\u5B57\uFF0C\u5982\u300C\u4E3B\u8D26\u53F7\u300D\u300C\u957F\u6BDB\u8C61\u300D").addText((text) => text.setPlaceholder("\u4E3B\u8D26\u53F7").setValue(acct.label || "").onChange(async (value) => {
+          this._updateMastodonAccount(acct.id, { label: value.trim() });
+        }));
+        new Setting(cardEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://mastodon.social").addText((text) => text.setPlaceholder("https://mastodon.social").setValue(acct.serverUrl || "").onChange(async (value) => {
+          this._updateMastodonAccount(acct.id, { serverUrl: value.trim() });
+        }));
+        new Setting(cardEl).setName("Access Token").addText((text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("\u4F60\u7684 Mastodon Access Token").setValue(acct.accessToken || "").onChange(async (value) => {
+            this._updateMastodonAccount(acct.id, { accessToken: value.trim() });
+          });
+        });
+        new Setting(cardEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("unlisted", "\u4E0D\u5217\u51FA").addOption("private", "\u4EC5\u5173\u6CE8\u8005").addOption("direct", "\u79C1\u4FE1").setValue(acct.visibility || "public").onChange(async (value) => {
+          this._updateMastodonAccount(acct.id, { visibility: value });
+        }));
+      }
+      async _updateMastodonAccount(accountId, patch) {
+        const mstdConfig = this.plugin.getAdapterConfig("mastodon") || {};
+        const accounts = this.plugin.getMastodonAccounts();
+        const updated = accounts.map((a) => a.id === accountId ? { ...a, ...patch } : a);
+        await this.plugin.setAdapterConfig("mastodon", { ...mstdConfig, accounts: updated });
+      }
+      /**
+       * 删除账号后清理预设中残留的 mastodon-account:<accountId> 引用，
+       * 避免 data.json 无限累积已删除账号的条目。
+       */
+      _cleanupMastodonPresets(accountId) {
+        const presets = this.plugin.settings.publishPresets;
+        if (!Array.isArray(presets) || presets.length === 0) return;
+        const staleKey = `mastodon-account:${accountId}`;
+        let changed = false;
+        for (const preset of presets) {
+          if (!Array.isArray(preset.items)) continue;
+          const before = preset.items.length;
+          preset.items = preset.items.filter((item) => item.id !== staleKey);
+          if (preset.items.length !== before) changed = true;
+        }
+        if (changed) {
+          this.plugin.settings.publishPresets = presets;
+          this.plugin.saveSettings();
+        }
       }
       _renderMisskey(containerEl) {
         this._addEnabledToggle(containerEl, "missky", "Misskey");
@@ -1952,6 +2127,9 @@ __export(telegram_exports, {
   runAction: () => runAction,
   validate: () => validate2
 });
+function escapeTelegramMarkdownWikilinks(text) {
+  return String(text || "").replace(/\[\[([^\]]+)\]\]/g, "\\[$1\\]");
+}
 async function tgApi(botToken, method, body, requestUrlFn) {
   const url = `${TG_API_BASE}/bot${botToken}/${method}`;
   const response = await requestUrlFn({
@@ -2028,7 +2206,7 @@ async function sendSingleTextMessage(botToken, chatId, text, options, requestUrl
   if (!text || !text.trim()) return { success: true };
   const body = {
     chat_id: chatId,
-    text,
+    text: escapeTelegramMarkdownWikilinks(text),
     parse_mode: "Markdown",
     link_preview_options: { is_disabled: !(options == null ? void 0 : options.showLinkPreview) }
   };
@@ -2108,11 +2286,12 @@ Content-Type: ${mime}\r
   parts.push(new Uint8Array(arrayBuffer));
   parts.push(encoder.encode("\r\n"));
   if (caption && caption.trim()) {
+    const safeCaption = escapeTelegramMarkdownWikilinks(caption.trim());
     parts.push(encoder.encode(
       `--${boundary}\r
 Content-Disposition: form-data; name="caption"\r
 \r
-${caption.trim()}\r
+${safeCaption}\r
 `
     ));
     parts.push(encoder.encode(
@@ -2161,7 +2340,7 @@ ${chatId}\r
   const mediaList = imageItems.map((item, idx) => {
     const entry = { type: "photo", media: `attach://photo${idx}` };
     if (idx === 0 && caption && caption.trim()) {
-      entry.caption = caption.trim();
+      entry.caption = escapeTelegramMarkdownWikilinks(caption.trim());
       entry.parse_mode = "Markdown";
     }
     return entry;
@@ -3831,7 +4010,7 @@ var DEFAULT_SETTINGS = {
       telegraphAuthorName: "",
       telegraphTitleLevel: 1
     },
-    mastodon: { visibility: "public" },
+    mastodon: { accounts: [] },
     missky: { visibility: "public" },
     notion: {
       targetType: "page",
@@ -3849,6 +4028,7 @@ var JournalSyncPlugin = class extends Plugin {
   async onload() {
     const loadedData = await this.loadData() || {};
     this.settings = deepMergeSettings(loadedData, DEFAULT_SETTINGS);
+    this._migrateMastodonAccounts();
     await this.saveSettings();
     this.adapterRegistry = new AdapterRegistry();
     this.adapterRegistry.register(flomoAdapter);
@@ -3891,6 +4071,45 @@ var JournalSyncPlugin = class extends Plugin {
     if (!this.settings.adaptersConfig) this.settings.adaptersConfig = {};
     this.settings.adaptersConfig[id] = config;
     await this.saveSettings();
+  }
+  // ┌──────────────────────────────────────────────────────────────────┐
+  // │ TEMPORARY MIGRATION CODE — Mastodon 单账号 → 多账号格式迁移       │
+  // │ 计划在 5–6 个版本后删除此方法及其调用。                           │
+  // │ 如果届时所有用户已完成迁移，可安全移除。                           │
+  // └──────────────────────────────────────────────────────────────────┘
+  /**
+   * 迁移 Mastodon 单账号旧格式 { serverUrl, accessToken, visibility } → accounts 数组。
+   * deepMergeSettings 会先用 DEFAULT_SETTINGS 注入 accounts:[]，所以不能靠
+   * Array.isArray(mstd.accounts) 判断是否需要迁移——那样守卫永远命中、迁移被跳过。
+   * 改为检测旧字段是否存在：只要旧字段还在且 accounts 为空，就执行迁移。
+   */
+  _migrateMastodonAccounts() {
+    var _a;
+    const mstd = (_a = this.settings.adaptersConfig) == null ? void 0 : _a.mastodon;
+    if (!mstd) return;
+    if ((mstd.serverUrl || mstd.accessToken) && (!Array.isArray(mstd.accounts) || mstd.accounts.length === 0)) {
+      const { serverUrl, accessToken, visibility } = mstd;
+      const label = serverUrl ? serverUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "") : "Mastodon";
+      mstd.accounts = [{
+        id: `mstd-${Date.now()}-migrate`,
+        label,
+        serverUrl: serverUrl || "",
+        accessToken: accessToken || "",
+        visibility: visibility || "public"
+      }];
+      delete mstd.serverUrl;
+      delete mstd.accessToken;
+      delete mstd.visibility;
+    }
+    if (!Array.isArray(mstd.accounts)) mstd.accounts = [];
+  }
+  getMastodonAccounts() {
+    var _a;
+    const mstd = (_a = this.settings.adaptersConfig) == null ? void 0 : _a.mastodon;
+    return Array.isArray(mstd == null ? void 0 : mstd.accounts) ? mstd.accounts : [];
+  }
+  getMastodonAccount(accountId) {
+    return this.getMastodonAccounts().find((a) => a.id === accountId) || null;
   }
   // ── Obsidian Vault 工具 ──────────────────────
   getVaultBasePath() {

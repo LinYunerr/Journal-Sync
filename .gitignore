@@ -8,3 +8,8 @@ npm-debug.log*
 
 # Local release archives; release contents remain tracked separately.
 *.zip
+
+# Local AI notes and internal review/planning docs.
+AI-TECHNICAL-NOTES.md
+docs/refactor-plan.md
+docs/review-*.md
