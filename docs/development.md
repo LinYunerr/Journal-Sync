@@ -18,10 +18,10 @@ This document contains the implementation, build, and release information that i
 | --- | --- |
 | Plugin lifecycle, commands, journal creation, content extraction, dispatch, and vault image resolution | `src/main.js` |
 | Publishing dialog, target presets, and Telegram channel selection | `src/ui/send-modal.js` |
-| Obsidian settings UI and persistence | `src/ui/settings-tab.js` |
+| Settings page shell: adapter tabs, enable toggles, manifest-driven generic rendering, debounced persistence | `src/ui/settings-tab.js` |
 | Adapter registration | `src/core/adapter-registry.js` |
 | Rich content and Telegram segment rendering | `src/core/content-renderer.js` |
-| Platform requests and validation | `src/adapters/` |
+| Platform manifests, settings schema or custom panels, requests, and validation | `src/adapters/` |
 | Plugin metadata and compatibility | `manifest.json` |
 | Plugin styles | `styles.css` |
 | Build configuration | `esbuild.config.mjs`, `package.json` |
@@ -58,17 +58,77 @@ npm run dev
 
 The production build writes `main.js` and removes `console` and `debugger` calls. Source, styles, manifest, dependency, or build-configuration changes require a production build before delivery. Markdown-only documentation changes do not.
 
-There are currently no automated test or lint scripts. Verify the affected flow in Obsidian when practical. At minimum, exercise the command or platform path that changed and inspect the resulting notice or published content.
+There is currently no lint script. `npm run test:bluesky` runs the Bluesky adapter unit tests (`tests/bluesky.test.js` against the pure helpers in `src/adapters/bluesky-core.js`). Verify the affected flow in Obsidian when practical. At minimum, exercise the command or platform path that changed and inspect the resulting notice or published content.
+
+## Settings system
+
+The settings page is registry-driven. `src/ui/settings-tab.js` owns the shell — main settings, adapter tabs, enable toggles, and persistence — while each adapter owns its own configuration surface.
+
+### Adapter tabs and enable toggles
+
+- Tabs are generated from `adapterRegistry.getAll()`, sorted by `manifest.displayOrder` ascending (missing values sort last; ties keep registration order). The tab label is `manifest.name`.
+- The settings page renders a single `启用 <name>` enable toggle per adapter. Custom panels must not render their own toggle, and nothing beyond the toggle is shown while the adapter is disabled.
+
+### Dispatch
+
+For the active adapter, the settings page calls `renderSettings(containerEl, ctx)` when the adapter exports it (custom panel); otherwise `_renderGenericAdapterSettings` generates the UI from `manifest.settings.fields`. A rendering error is caught and surfaced as a Notice instead of breaking the page.
+
+### Generic field types
+
+| Type | Behavior |
+| --- | --- |
+| `text` | Text input. Supports `placeholder` and `desc` (or `description`). Saves through `ctx.scheduleConfigSave` (400 ms debounce, merged), with whitespace trimmed. |
+| `password` | Same as `text` with a masked input. |
+| `toggle` | Boolean switch saved immediately through `ctx.saveConfig`. |
+| `select` | Dropdown built from `field.options` as `[{ value, label }]`; saved immediately. |
+| `action` | Button that calls `adapter.runAction(field.action, config, ctx.requestUrl)`. On success it shows a Notice with `result.message` (falling back to `field.successMessage`) and re-renders the settings page; on failure it shows an error Notice. Rendered only when the adapter also exports `runAction`. |
+| `info` | Static explanatory row (`label` plus `desc`). |
+
+Fields with unknown `type` values are skipped, so structured configuration values are never overwritten by free text.
+
+### Panel context (`ctx`)
+
+Custom panels receive `ctx = { plugin, containerEl, scheduleConfigSave(patch), saveConfig(patch), refresh(), requestUrl }`:
+
+- `scheduleConfigSave(patch)` merges `patch` into the adapter config in memory and persists it with a 400 ms debounce. Use it for per-keystroke text input.
+- `saveConfig(patch)` merges and saves immediately; it is async. Use it for toggles, selects, and async results such as channel discovery.
+- `refresh()` flushes pending debounced saves and re-renders the settings page.
+- `requestUrl` is the plugin-bound Obsidian `requestUrl`, so actions and panels keep networking inside the adapter.
+- `plugin` provides read access to shared state, e.g. `plugin.getAdapterConfig(id)` and `plugin.settings.sendScope`.
+
+### Default value derivation
+
+`buildDefaultSettings` in `src/main.js` derives per-adapter defaults from the registry. The registry is built before settings are merged in `onload`:
+
+- `adaptersEnabled[id] = manifest.enabledByDefault === true`.
+- `adaptersConfig[id]` starts from every `manifest.settings.fields[*].default` and is then overridden by the adapter's exported `defaultConfig` (adapter wins).
+- The result is deep-merged into the loaded `data.json` via `deepMergeSettings`, which never overwrites existing non-empty values. Upgrades therefore do not reset user configuration.
+
+### Custom panels
+
+Adapters whose configuration is too interactive for the schema export `renderSettings(containerEl, ctx)`:
+
+- `telegram` — channel discovery and selection, Telegraph account management.
+- `mastodon` — multi-account cards; removing an account also removes its references from `publishPresets`.
+- `weibo` — OAuth authorization flow.
+- `notion` — sections that expand conditionally on `targetType` and `pageWriteMode`.
+
+For a worked example, see the Telegram panel in `src/adapters/telegram.js`: it reads `ctx.plugin.getAdapterConfig('telegram')`, saves text input with `ctx.scheduleConfigSave`, runs channel discovery through `runAction('discoverChannels', ...)` and persists the result with `ctx.saveConfig`, then calls `ctx.refresh()`.
+
+Known coupling: Telegraph heading levels are capped by the global send scope. The clamp lives in the send-scope `onChange` inside `_renderMainSettings` (comment-marked), and the Telegram panel computes its title-level options from `plugin.settings.sendScope`. This is the only documented cross-adapter settings coupling.
 
 ## Adding a destination
 
-1. Add an adapter under `src/adapters/`. Export its `manifest` and `execute()` implementation, following an existing adapter with similar capabilities.
-2. Require and register the adapter in `src/main.js`.
-3. Add its settings to `src/ui/settings-tab.js`.
-4. Add target selection behavior to `src/ui/send-modal.js` only when the generic target flow is insufficient.
-5. Keep shared rendering or upload behavior in `src/core/`; do not duplicate it inside adapters.
-6. Update both user READMEs and run `npm run build`.
-7. Manually exercise configuration, selection, request validation, success, and failure behavior in Obsidian.
+1. Create `src/adapters/<id>.js`. Export a `manifest` with `id`, `name`, `description`, `displayOrder`, `enabledByDefault`, `capabilities`, and `settings.fields`, plus `execute()` and `validate()` implementations, following an existing adapter with similar capabilities. Add `runAction` when a schema `action` field needs a backend call (for example `testConnection`).
+2. Simple platforms stop here: the settings UI is generated from `manifest.settings.fields` (see [Settings system](#settings-system)).
+3. For interactive configuration, also export `renderSettings(containerEl, ctx)` and, when defaults are needed beyond `field.default` values (for example account arrays), a `defaultConfig`.
+4. Register the adapter by adding one `require('./adapters/<id>')` line to the `ADAPTER_MODULES` array in `src/main.js`. No changes to `src/ui/settings-tab.js` or `DEFAULT_SETTINGS` are required.
+5. Add target selection behavior to `src/ui/send-modal.js` only when the generic target flow is insufficient, as telegram (channel picker) and mastodon (multi-account picker) do today.
+6. Keep shared rendering or upload behavior in `src/core/`; do not duplicate it inside adapters.
+7. Update both user READMEs and run `npm run build`.
+8. Manually exercise configuration, enable/disable, selection, request validation, success, and failure behavior in Obsidian.
+
+Work in progress: `src/adapters/threads.js` already exists (manifest schema and `runAction` design) but is not yet registered in `ADAPTER_MODULES`. Under the current architecture, registering it only requires adding one `require` line and a `displayOrder`.
 
 ## Settings and security
 

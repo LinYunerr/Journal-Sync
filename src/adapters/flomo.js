@@ -12,6 +12,7 @@ export const manifest = {
     name: 'Flomo',
     description: '同步内容到 flomo',
     enabledByDefault: true,
+    displayOrder: 10,
     capabilities: {
         text: true,
         attachments: false,
@@ -27,6 +28,7 @@ export const manifest = {
                 key: 'apiUrl',
                 type: 'password',
                 label: 'Flomo API Webhook',
+                desc: '在 flomo 网页版“API”页面获取',
                 required: true,
                 placeholder: 'https://flomoapp.com/iwh/...'
             }

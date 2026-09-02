@@ -9,6 +9,7 @@ export const manifest = {
     name: 'Misskey',
     description: '发布内容到 Misskey / Calckey / Firefish 实例',
     enabledByDefault: false,
+    displayOrder: 40,
     capabilities: {
         text: true,
         attachments: true,

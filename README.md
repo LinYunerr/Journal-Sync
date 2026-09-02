@@ -4,7 +4,7 @@
 
 **Write in Obsidian. Publish wherever your notes live.**
 
-Journal Sync sends selected text, the current heading section, or an entire note from Obsidian to **flomo, Telegram, Mastodon, Misskey, and Notion**. Everything runs inside Obsidian—no Node.js, Python, or separate backend service required.
+Journal Sync sends selected text, the current heading section, or an entire note from Obsidian to **flomo, Telegram, Mastodon, Misskey, Bluesky, and Notion**. Everything runs inside Obsidian—no Node.js, Python, or separate backend service required.
 
 ![Journal Sync publishing dialog with content preview and destination selection](docs/assets/send-dialog.png)
 
@@ -13,7 +13,9 @@ Journal Sync sends selected text, the current heading section, or an entire note
 1. Run **JournalSync-New** to open today's journal and add a timestamped heading.
 2. Write naturally, including images stored in your vault.
 3. Select a passage—or leave the cursor in the section you want—and run **JournalSync-Send**.
-4. Review the content, choose one or more destinations, and publish.
+4. Review the content, choose one or more destinations, and publish—or press <kbd>Ctrl/Cmd+Enter</kbd> to send directly.
+
+Both commands run from the command palette: press <kbd>Ctrl/Cmd+P</kbd>, type part of the name—typing `send` finds **JournalSync-Send**—and press <kbd>Enter</kbd>. Recently used commands stay near the top, so day-to-day publishing is three steps: open the palette, run Send, click Publish.
 
 The publishing dialog remembers target presets, supports multiple Telegram channels, and sends in the background so you can keep working.
 
@@ -52,12 +54,14 @@ Open **Settings → Journal Sync** after enabling the plugin.
 
 ## Using Journal Sync
 
+Both commands run from the Obsidian command palette (<kbd>Ctrl/Cmd+P</kbd>); you can also bind them to hotkeys under **Settings → Hotkeys**.
+
 | Command | What happens |
 | --- | --- |
 | `JournalSync-New` | Creates or opens today's journal, appends a timestamped heading, and places the cursor below it. Also available from the pencil ribbon icon. |
 | `JournalSync-Send` | Opens the publishing dialog for the selected text or the configured scope around the cursor. |
 
-A text selection always takes priority. With no selection, Journal Sync uses the send scope configured in settings: a heading level from `#` through `######`, or the complete page.
+A text selection always takes priority. With no selection, Journal Sync uses the send scope configured in settings: a heading level from `#` through `######`, or the complete page. A heading section is the content below the nearest heading of that level, up to the next heading of the same or higher level; the heading line itself is not sent—when the destination is Notion, that heading's text becomes the page title instead. If the cursor is not below a heading of the configured level, or that section is empty, nothing is sent and a notice explains why. The default scope is `##`, matching the default timestamp heading level.
 
 ### Images in the publishing dialog
 
@@ -71,6 +75,7 @@ Local image references appear as tokens such as `@图片1`, with thumbnails belo
 | Telegram | ✓ | ✓ | Supports multiple channels, standard sending, and rich publishing that preserves image position and supported Markdown. |
 | Mastodon | ✓ | — | Supports a custom instance and visibility setting. |
 | Misskey | ✓ | — | Supports a custom instance and visibility setting. |
+| Bluesky | ✓ | ✓ | Signs in with an App Password created in Bluesky → Privacy & security → App passwords. Text is limited to 300 graphemes and 3,000 UTF-8 bytes per post, with up to 4 images (JPEG/PNG/WebP/GIF, 2 MB each). |
 | Notion | ✓ | ✓ | Creates pages or database records and uploads referenced local images. |
 
 Platform limits still apply. Long Telegram messages are split automatically; media count and caption limits follow the Telegram Bot API.

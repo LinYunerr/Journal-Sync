@@ -4,7 +4,7 @@
 
 **写在 Obsidian，发布到你常用的平台。**
 
-Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇笔记发送到 **flomo、Telegram、Mastodon、Misskey 和 Notion**。插件完全运行在 Obsidian 内，无需安装 Node.js、Python，也不需要单独部署后端服务。
+Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇笔记发送到 **flomo、Telegram、Mastodon、Misskey、Bluesky 和 Notion**。插件完全运行在 Obsidian 内，无需安装 Node.js、Python，也不需要单独部署后端服务。
 
 ![Journal Sync 发送面板：编辑内容并选择发布目标](docs/assets/send-dialog.png)
 
@@ -13,7 +13,9 @@ Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇
 1. 执行 **JournalSync-New**，打开今天的日记并插入一个时间标题。
 2. 像平常一样记录，也可以直接引用 Vault 中的图片。
 3. 选中想发布的文字，或把光标放在对应标题片段中，然后执行 **JournalSync-Send**。
-4. 在发送面板中确认内容、选择一个或多个目标，再点击发布。
+4. 在发送面板中确认内容、选择一个或多个目标，点击发布或按 <kbd>Ctrl/Cmd+Enter</kbd> 快捷发送。
+
+命令都通过命令面板运行：按 <kbd>Ctrl/Cmd+P</kbd>，输入部分名称（比如 `send`）回车即可找到 **JournalSync-Send**。最近使用过的命令会自动排在前面，日常发布就是三步：打开面板、执行 Send、点击发布。
 
 发送面板会记住不同场景的目标预设，支持同时选择多个 Telegram 频道；发布提交后在后台继续，不会挡住当前的记录工作。
 
@@ -52,12 +54,14 @@ Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇
 
 ## 使用 Journal Sync
 
+两个命令都可以在命令面板（<kbd>Ctrl/Cmd+P</kbd>）中运行，也可以在 **设置 → 快捷键** 中绑定快捷键。
+
 | 命令 | 作用 |
 | --- | --- |
 | `JournalSync-New` | 创建或打开今日日记，追加时间标题，并把光标放到标题下。也可以点击左侧 Ribbon 的铅笔图标。 |
 | `JournalSync-Send` | 根据选中文字或光标位置打开发送面板。 |
 
-如果已经选中文字，插件始终优先发送选中内容。没有选中文字时，则按照设置中的发送范围，发送当前 `#` 到 `######` 标题片段，或整篇笔记。
+如果已经选中文字，插件始终优先发送选中内容。没有选中文字时，则按照设置中的发送范围，发送光标上方最近的 `#` 到 `######` 标题片段或整篇笔记。标题片段指该标题行到下一个同级或更高级标题之间的内容，标题行本身不会包含在发送的正文中；发送到 Notion 时，这个标题的文字会用作页面标题。如果光标不在所选级别的标题之下，或该片段为空，插件会给出提示而不发送。发送范围默认为 `##`，与默认的时间标题级别一致。
 
 ### 发送面板中的图片
 
@@ -71,6 +75,7 @@ Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇
 | Telegram | ✓ | ✓ | 支持多个频道、普通发送，以及保留图片位置和受支持 Markdown 的富文本发送。 |
 | Mastodon | ✓ | — | 可配置实例地址和可见性。 |
 | Misskey | ✓ | — | 可配置实例地址和可见性。 |
+| Bluesky | ✓ | ✓ | 使用 App Password 登录（在 Bluesky 设置 → Privacy & security → App passwords 生成）。单帖上限 300 个可见字符且不超过 3,000 个 UTF-8 字节，最多 4 张图片（JPEG/PNG/WebP/GIF，每张 2 MB）。 |
 | Notion | ✓ | ✓ | 可以创建页面或数据库记录，并上传正文引用的本地图片。 |
 
 各平台自身的限制仍然适用。较长的 Telegram 消息会自动分段，媒体数量和 caption 长度遵循 Telegram Bot API 的限制。

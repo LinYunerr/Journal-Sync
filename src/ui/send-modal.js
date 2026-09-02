@@ -52,6 +52,8 @@ class JournalSyncSendModal extends Modal {
         this._warningConfirmActive = false;
         this._warningKey = '';
         this._warningTimer = null;
+        this._sendKeyHandler = null;
+        this._sendInFlight = false;
         this.initContentAndImages();
 
         this.loadActivePresetSelection();
@@ -223,6 +225,17 @@ class JournalSyncSendModal extends Modal {
             cls: 'primary-btn simple-send-btn mod-cta'
         });
         this.sendBtn.addEventListener('click', () => this.doSend());
+        this.sendBtn.title = '发布（Ctrl/Cmd+Enter）';
+
+        // Ctrl/Cmd+Enter 快捷发送；注册在冒泡阶段，让输入框自身的 Enter 保存逻辑先执行。
+        this._sendKeyHandler = (e) => {
+            if (e.key !== 'Enter' || e.repeat) return;
+            if (!(e.ctrlKey || e.metaKey)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.doSend();
+        };
+        modalEl.addEventListener('keydown', this._sendKeyHandler);
 
         // Lightbox Modal
         this.previewModalEl = contentEl.createDiv({ cls: 'media-preview-modal' });
@@ -1073,8 +1086,19 @@ class JournalSyncSendModal extends Modal {
 
     /**
      * 执行发送（即时关窗 + 后台无阻塞异步发送）
+     * 外层防重入：预检 await 期间连按 Ctrl+Enter 或双击按钮不会重复提交。
      */
     async doSend() {
+        if (this._sendInFlight) return;
+        this._sendInFlight = true;
+        try {
+            await this._doSendInternal();
+        } finally {
+            this._sendInFlight = false;
+        }
+    }
+
+    async _doSendInternal() {
         const plugin = this.plugin;
         // 二次校验：设置可能在弹窗打开后被停用，停用适配器不得发送。
         const targetAdapters = Array.from(this.selectedTargets).filter(adapterId =>
@@ -1287,6 +1311,12 @@ class JournalSyncSendModal extends Modal {
 
     onClose() {
         this._clearAttachmentWarningState();
+        if (this._sendKeyHandler) {
+            this.modalEl.removeEventListener('keydown', this._sendKeyHandler);
+            this._sendKeyHandler = null;
+        }
+        // 快捷发送可能绕过预览浮层的点击关闭路径，关窗时统一释放其 Esc 监听。
+        this.hideImagePreview();
         this._imageGridRenderId += 1;
         // 释放所有缩略图预览 URL，避免内存泄漏。
         for (const url of this._objectUrls) URL.revokeObjectURL(url);

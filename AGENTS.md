@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository is the source for **Journal Sync**, an Obsidian plugin (`journal-sync-bridge`). It lets users create timestamped daily-journal entries in their vault and publish selected text, a `##` heading block, or a full note to flomo, Telegram, Mastodon, Misskey, and Notion.
+This repository is the source for **Journal Sync**, an Obsidian plugin (`journal-sync-bridge`). It lets users create timestamped daily-journal entries in their vault and publish selected text, a `##` heading block, or a full note to flomo, Telegram, Mastodon, Misskey, Bluesky, Weibo, and Notion.
 
 The plugin runs entirely in Obsidian. It must not require a separate backend service. Images referenced from the vault can be sent with content; Telegram uploads them directly through the Bot API.
 
@@ -24,10 +24,10 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
 | --- | --- |
 | Plugin lifecycle, commands, journal creation, content extraction, adapter dispatch, vault image resolution | `src/main.js` |
 | Send dialog and send-target selection | `src/ui/send-modal.js` |
-| Obsidian settings UI and persisted settings changes | `src/ui/settings-tab.js` |
+| Settings page shell, enable toggles, manifest-driven generic rendering, debounced persistence | `src/ui/settings-tab.js` |
 | Platform adapter registry | `src/core/adapter-registry.js` |
 | Rich text, image ordering, Telegram segments | `src/core/content-renderer.js` |
-| Individual platform HTTP requests and validation | `src/adapters/flomo.js`, `telegram.js`, `mastodon.js`, `missky.js`, `notion.js` |
+| Per-platform manifests, settings schema or custom panels, HTTP requests and validation | `src/adapters/flomo.js`, `telegram.js`, `mastodon.js`, `missky.js`, `notion.js`, `bluesky.js`, `weibo.js` |
 | Plugin metadata | `manifest.json` |
 | Plugin styling | `styles.css` |
 | Build configuration | `esbuild.config.mjs`, `package.json` |
@@ -35,12 +35,42 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
 ## Architecture
 
 - `src/main.js` is the CommonJS plugin entry point. It registers the two commands: `journal-sync-new` and `journal-sync-send`.
-- `src/adapters/` contains isolated adapters. Each adapter exposes a `manifest` with an `id` and an `execute()` implementation, then is registered in `src/main.js`.
+- `src/adapters/` contains isolated adapters. Each adapter exposes a `manifest` (including its settings schema) and an `execute()` implementation, then is registered in `src/main.js`; the full export contract is described in Settings Architecture below.
 - `src/core/` contains reusable, platform-independent logic.
 - `src/ui/` contains Obsidian UI components and receives the plugin instance for settings and adapter execution.
 - `main.js` in this directory is generated code. Do not edit it manually; edit `src/` and rebuild.
 - Obsidian loads only `main.js`, `manifest.json`, and `styles.css` from its installed plugin directory.
 - Runtime settings are saved by Obsidian in `data.json`. This file can contain credentials and must never be treated as safe to expose, log, copy, or commit.
+
+## Settings Architecture
+
+The settings page is registry-driven. `src/ui/settings-tab.js` renders one tab per adapter from `adapterRegistry.getAll()`, sorted by `manifest.displayOrder` ascending (missing values last, ties keep registration order); the tab label is `manifest.name`. The main settings area is unchanged. The enable toggle (`启用 <name>`) is rendered once by the settings page; adapter panels must not render their own toggle.
+
+- Dispatch: an adapter that exports `renderSettings(containerEl, ctx)` gets a custom panel; otherwise the UI is generated from `manifest.settings.fields`.
+- Generic field types (`_renderGenericAdapterSettings`): `text` / `password` (placeholder, desc, 400 ms debounced merged save, trimmed), `toggle` (immediate save), `select` (`options` as `[{value, label}]`, immediate save), `action` (button calling `adapter.runAction(field.action, config, ctx.requestUrl)`; success Notices `result.message` and re-renders, failure Notices the error), `info` (static row). Unrecognized types are skipped.
+- Panel context: `ctx = { plugin, containerEl, scheduleConfigSave(patch), saveConfig(patch), refresh(), requestUrl }`. `scheduleConfigSave` merges into memory and persists with a 400 ms debounce; `saveConfig` is an async immediate merge-and-save; `refresh()` flushes pending saves and re-renders the settings page.
+- Default values are derived in `main.js buildDefaultSettings` (the registry is built before settings merge): `adaptersEnabled[id] = manifest.enabledByDefault === true`; `adaptersConfig[id]` starts from each `manifest.settings.fields[*].default` and is overridden by an exported `defaultConfig`. `deepMergeSettings` keeps existing `data.json` values, so upgrades never reset user configuration.
+- Adapter export contract: `manifest` (`id` / `name` / `displayOrder` / `enabledByDefault` / `capabilities` / `settings.fields`), `execute`, `validate`, optional `runAction`, optional `renderSettings` (custom panel), optional `defaultConfig`.
+
+Registered adapters:
+
+| Adapter | `displayOrder` | Settings panel |
+| --- | --- | --- |
+| flomo | 10 | manifest schema |
+| telegram | 20 | custom (channel discovery/selection, Telegraph account management) |
+| mastodon | 30 | custom (multi-account cards; removing an account cleans up `publishPresets` references) |
+| missky | 40 | manifest schema (its `specified` visibility option was never shown by the old hand-written UI and is now rendered — an expected fix) |
+| bluesky | 50 | manifest schema including a `testConnection` action field; pure helpers live in `src/adapters/bluesky-core.js`, covered by `npm run test:bluesky` |
+| weibo | 60 | custom (OAuth authorization flow) |
+| notion | 70 | custom (sections expand conditionally on `targetType` / `pageWriteMode`) |
+
+`src/adapters/threads.js` exists (manifest schema and `runAction`) but is not yet registered in `ADAPTER_MODULES`; registering it needs one `require` line plus a `displayOrder`.
+
+Documented special cases:
+
+- Telegraph heading levels are capped by the global send scope. The clamp lives in `_renderMainSettings`' send-scope `onChange` (comment-marked), and the telegram panel's title-level dropdown computes its options from `sendScope`. This is the only cross-adapter settings coupling in the plugin.
+- The send modal (`src/ui/send-modal.js`) still special-cases telegram (channel picker) and mastodon (multi-account picker) target rendering, and hard-excludes both ids from the generic adapter target list. The settings refactor did not touch the send modal.
+- `main.js` keeps the one-time Mastodon single-account to multi-account migration (comment-marked for removal after a few versions).
 
 ## Build And Verification
 
@@ -50,7 +80,7 @@ Run the production build after changes that can affect the plugin or its output,
 npm run build
 ```
 
-Do not rebuild for Markdown-only changes such as plans, notes, `README.md`, or `AGENTS.md`. This production build writes `main.js` and removes `console` and `debugger` calls. There are currently no `test` or `lint` scripts. For source changes, also inspect the relevant changed code and build output; test the affected flow manually in Obsidian when practical.
+Do not rebuild for Markdown-only changes such as plans, notes, `README.md`, or `AGENTS.md`. This production build writes `main.js` and removes `console` and `debugger` calls. There is currently no `lint` script; `npm run test:bluesky` runs the Bluesky adapter unit tests (`tests/bluesky.test.js` over the pure helpers in `src/adapters/bluesky-core.js`). For source changes, also inspect the relevant changed code and build output; test the affected flow manually in Obsidian when practical.
 
 ### After-Build Report
 
@@ -76,7 +106,7 @@ For iterative local development, use `npm run dev`. Do not leave the watch proce
 
 - Make the smallest compatible change.
 - Keep platform-specific networking inside its adapter and shared formatting/upload logic in `src/core/`.
-- When adding a platform, add its adapter, register it in `src/main.js`, add settings UI, and rebuild.
+- When adding a platform, create `src/adapters/<id>.js` with a `manifest` (including `settings.fields`) plus `execute`/`validate` and optional `runAction`; export `renderSettings` and `defaultConfig` only for panels the schema cannot express. Then add one `require` line to `ADAPTER_MODULES` in `src/main.js` and rebuild. No changes to `settings-tab.js` or `DEFAULT_SETTINGS` are needed.
 - Keep `package.json`, `manifest.json`, and `versions.json` aligned when releasing. The release tag must exactly match `manifest.json.version` and must not use a `v` prefix.
 - Do not manually alter generated `main.js`; verify it changes only as a result of `npm run build`.
 - `.github/workflows/release.yml` builds tagged versions and attaches only `main.js`, `manifest.json`, and `styles.css` to the GitHub Release.

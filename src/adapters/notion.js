@@ -3,6 +3,7 @@
  * Uses the official Notion API directly through Obsidian requestUrl.
  * 图片压缩、标题来源选择等逻辑已内化到适配器内部。
  */
+import { Setting, Notice } from 'obsidian';
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2026-03-11';
@@ -15,6 +16,7 @@ export const manifest = {
     name: 'Notion',
     description: '发送内容到 Notion 页面或 Data Source',
     enabledByDefault: false,
+    displayOrder: 70,
     capabilities: {
         text: true,
         attachments: true,
@@ -26,6 +28,16 @@ export const manifest = {
     }
 };
 const MAX_NOTION_ATTACHMENT_SIZE = manifest.capabilities.maxAttachmentSize;
+
+/**
+ * 适配器默认配置（设置系统初始值，优先于 manifest.settings.fields 的 default）
+ */
+export const defaultConfig = {
+    targetType: 'page',
+    pageWriteMode: 'new_page',
+    titleSource: 'scope',
+    autoCompressLargeImages: false
+};
 
 function getResponseError(response) {
     const json = response?.json || {};
@@ -554,4 +566,122 @@ export async function retrieveDataSource({ config = {}, requestUrl }) {
     return { titles, properties };
 }
 
-export default { manifest, execute, validate, retrieveDataSource };
+/**
+ * Notion 自定义设置面板（设置页在「启用 Notion」后调用，启用开关由设置页渲染）
+ * @param {HTMLElement} containerEl
+ * @param {object} ctx - { plugin, containerEl, scheduleConfigSave(patch), saveConfig(patch), refresh(), requestUrl }
+ */
+export function renderSettings(containerEl, ctx) {
+    const config = ctx.plugin.getAdapterConfig('notion') || {};
+
+    new Setting(containerEl)
+        .setName('Notion Token')
+        .setDesc('使用 Notion Personal Access Token，仅保存在 Obsidian 插件设置中。')
+        .addText(text => {
+            text.inputEl.type = 'password';
+            text.setPlaceholder('ntn_...').setValue(config.token || '').onChange(value => {
+                ctx.scheduleConfigSave({ token: value.trim() });
+            });
+        });
+
+    new Setting(containerEl)
+        .setName('保存目标')
+        .setDesc('选择每次发送创建 Notion 页面，或在 Data Source 中创建一条记录页面。')
+        .addDropdown(dropdown => dropdown
+            .addOption('page', '保存为页面')
+            .addOption('database', '保存到数据库')
+            .setValue(config.targetType || 'page')
+            .onChange(async value => {
+                await ctx.saveConfig({ targetType: value });
+                ctx.refresh();
+            }));
+
+    if ((config.targetType || 'page') === 'page') {
+        new Setting(containerEl)
+            .setName('日记父页面 Page ID')
+            .setDesc('创建子页面或每日页面的 Notion 父页面 ID。请先将该页面连接到你的 Notion Integration。')
+            .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.pageId || '').onChange(value => {
+                ctx.scheduleConfigSave({ pageId: value.trim() });
+            }));
+        new Setting(containerEl)
+            .setName('页面写入方式')
+            .setDesc('新建子页面会为每次发送创建一个页面；每日追加会查找或创建当天 YYYY-MM-DD 页面并持续追加内容。')
+            .addDropdown(dropdown => dropdown
+                .addOption('new_page', '每次新建子页面')
+                .addOption('daily_append', '追加到每日日记页面')
+                .setValue(config.pageWriteMode || 'new_page')
+                .onChange(async value => {
+                    await ctx.saveConfig({ pageWriteMode: value });
+                    ctx.refresh();
+                }));
+        if ((config.pageWriteMode || 'new_page') === 'new_page') {
+            new Setting(containerEl)
+                .setName('页面标题来源')
+                .setDesc('按发送范围标题：标题块用该标题，整页用文件名，选中文本允许无标题。正文首标题：从正文第一个 Markdown 标题取名。无标题：不设置标题。')
+                .addDropdown(dropdown => dropdown
+                    .addOption('scope', '按发送范围标题')
+                    .addOption('first_heading', '按正文第一个标题')
+                    .addOption('none', '无标题')
+                    .setValue(config.titleSource || 'scope')
+                    .onChange(async value => ctx.saveConfig({ titleSource: value })));
+        }
+    } else {
+        new Setting(containerEl)
+            .setName('Data Source ID')
+            .setDesc('目标 Notion Data Source 的 ID，而不是旧版教程中的 database ID。')
+            .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.dataSourceId || '').onChange(value => {
+                ctx.scheduleConfigSave({ dataSourceId: value.trim() });
+            }));
+        new Setting(containerEl)
+            .setName('读取标题字段')
+            .setDesc(config.titleProperty ? `当前标题字段：${config.titleProperty}` : '读取 Data Source 后选择 title 类型字段。')
+            .addButton(button => button.setButtonText('读取字段').onClick(async () => {
+                try {
+                    button.setButtonText('读取中...');
+                    button.disabled = true;
+                    const result = await retrieveDataSource({ config: ctx.plugin.getAdapterConfig('notion'), requestUrl: ctx.requestUrl });
+                    if (result.titles.length === 0) throw new Error('该 Data Source 没有 title 类型字段');
+                    const activeConfig = ctx.plugin.getAdapterConfig('notion');
+                    const selected = result.titles.includes(activeConfig.titleProperty) ? activeConfig.titleProperty : result.titles[0];
+                    await ctx.saveConfig({ titleProperty: selected, titleProperties: result.titles });
+                    new Notice(`已读取 ${result.titles.length} 个标题字段`);
+                    ctx.refresh();
+                } catch (error) {
+                    new Notice(`读取 Notion 字段失败：${error.message}`);
+                } finally {
+                    button.setButtonText('读取字段');
+                    button.disabled = false;
+                }
+            }));
+        const titleProperties = Array.isArray(config.titleProperties) ? config.titleProperties : [];
+        if (titleProperties.length > 0) {
+            new Setting(containerEl)
+                .setName('数据库标题字段')
+                .setDesc('每条数据库记录均会创建一个完整页面，正文和图片写入该页面的 blocks。')
+                .addDropdown(dropdown => {
+                    for (const property of titleProperties) dropdown.addOption(property, property);
+                    dropdown.setValue(config.titleProperty || titleProperties[0]).onChange(async value => {
+                        await ctx.saveConfig({ titleProperty: value });
+                    });
+                });
+        }
+        new Setting(containerEl)
+            .setName('页面标题来源')
+            .setDesc('标题块使用该标题，整页使用文件名，选中文本允许无标题。')
+            .addDropdown(dropdown => dropdown
+                .addOption('scope', '按发送范围标题')
+                .addOption('first_heading', '按正文第一个标题')
+                .addOption('none', '无标题')
+                .setValue(config.titleSource || 'scope')
+                .onChange(async value => ctx.saveConfig({ titleSource: value })));
+    }
+
+    new Setting(containerEl)
+        .setName('超过 5 MB 时自动压缩图片')
+        .setDesc('发送前在内存中将可处理的 JPEG、PNG、WebP 压缩为 WebP，不会修改 Vault 原文件。GIF 和 SVG 不压缩。')
+        .addToggle(toggle => toggle.setValue(Boolean(config.autoCompressLargeImages)).onChange(async value => {
+            await ctx.saveConfig({ autoCompressLargeImages: value });
+        }));
+}
+
+export default { manifest, execute, validate, retrieveDataSource, renderSettings, defaultConfig };

@@ -4,8 +4,8 @@
  * 架构说明：
  * - src/main.js         本文件：插件主类，负责生命周期与命令注册
  * - src/core/           核心模块（内容渲染、适配器注册表）
- * - src/adapters/       各平台发送适配器（flomo / telegram / mastodon / missky）
- * - src/ui/             UI 组件（Send Modal、Settings Tab）
+ * - src/adapters/       各平台发送适配器（flomo / telegram / mastodon / missky / notion / bluesky / weibo）
+ * - src/ui/             UI 组件（Send Modal、Settings Tab）；设置页为 manifest 驱动（通用 schema 渲染 + 适配器可选 renderSettings 自定义面板）
  *
  * 构建方式：npm run build → 打包为 main.js
  */
@@ -21,12 +21,16 @@ const AdapterRegistry     = require('./core/adapter-registry');
 const JournalSyncSendModal = require('./ui/send-modal');
 const JournalSyncSettingTab = require('./ui/settings-tab');
 
-// 适配器（各自独立，按需 require）
-const flomoAdapter    = require('./adapters/flomo');
-const telegramAdapter = require('./adapters/telegram');
-const mastodonAdapter = require('./adapters/mastodon');
-const misskeyAdapter  = require('./adapters/missky');
-const notionAdapter   = require('./adapters/notion');
+// 适配器（各自独立，按需 require）；数组顺序即注册顺序：flomo、telegram、mastodon、missky、notion、bluesky、weibo
+const ADAPTER_MODULES = [
+  require('./adapters/flomo'),
+  require('./adapters/telegram'),
+  require('./adapters/mastodon'),
+  require('./adapters/missky'),
+  require('./adapters/notion'),
+  require('./adapters/bluesky'),
+  require('./adapters/weibo')
+];
 
 // ──────────────────────────────────────────────
 // 工具函数（沿用原插件，无外部依赖）
@@ -271,38 +275,41 @@ const DEFAULT_SETTINGS = {
   // 新建日记标题设置
   diaryTimestampLevel: 2,       // 新建标题级别（1-6）
   diaryHeadingRule: 'HH:MM:SS', // 新建标题格式（H=时、M=分、S=秒 占位符）
-  // 各适配器启用状态
-  adaptersEnabled: {
-    flomo: true,
-    telegram: true,
-    mastodon: true,
-    missky: true,
-    notion: false
-  },
-  // 各适配器配置（连接信息）
-  adaptersConfig: {
-    flomo: {},
-    telegram: {
-      showLinkPreview: false,
-      richTextEnabled: true,
-      telegraphAccessToken: '',
-      telegraphAuthorName: '',
-      telegraphTitleLevel: 1
-    },
-    mastodon: { accounts: [] },
-    missky: { visibility: 'public' },
-    notion: {
-      targetType: 'page',
-      pageWriteMode: 'new_page',
-      titleSource: 'scope',
-      autoCompressLargeImages: false
-    }
-  },
   // 发布预设分组：不内置任何用户特定数据（频道 ID 等均存于 data.json），
   // 首次使用时由发送面板根据用户选择自动创建
   publishPresets: [],
   activePresetId: ''
 };
+
+/**
+ * 由适配器注册表派生各平台默认设置，并与 DEFAULT_SETTINGS 组成完整默认值：
+ * - adaptersEnabled[id] = manifest.enabledByDefault === true
+ * - adaptersConfig[id]  = manifest.settings.fields 中所有带 default 字段的默认值，
+ *                         再被 adapter.defaultConfig 覆盖（适配器导出的 defaultConfig 优先）。
+ * 注意：必须在适配器注册完成后调用（onload 中先建 registry 再合并设置）。
+ */
+function buildDefaultSettings(registry) {
+  const adaptersEnabled = {};
+  const adaptersConfig = {};
+  for (const adapter of registry.getAll()) {
+    const id = adapter?.manifest?.id;
+    if (!id) continue;
+    adaptersEnabled[id] = adapter.manifest.enabledByDefault === true;
+
+    const fieldDefaults = {};
+    const fields = Array.isArray(adapter.manifest?.settings?.fields)
+      ? adapter.manifest.settings.fields
+      : [];
+    for (const field of fields) {
+      if (field && field.key && field.default !== undefined) {
+        fieldDefaults[field.key] = field.default;
+      }
+    }
+
+    adaptersConfig[id] = { ...fieldDefaults, ...(adapter.defaultConfig || {}) };
+  }
+  return { ...DEFAULT_SETTINGS, adaptersEnabled, adaptersConfig };
+}
 
 // ──────────────────────────────────────────────
 // 主插件类
@@ -310,20 +317,21 @@ const DEFAULT_SETTINGS = {
 
 class JournalSyncPlugin extends Plugin {
   async onload() {
-    // 加载并深度合并默认迁移设置
+    // 加载用户已保存的数据
     const loadedData = (await this.loadData()) || {};
-    this.settings = deepMergeSettings(loadedData, DEFAULT_SETTINGS);
+
+    // 初始化适配器注册表。必须先于默认设置合并：
+    // adaptersEnabled / adaptersConfig 的默认值要从各适配器 manifest 派生。
+    this.adapterRegistry = new AdapterRegistry();
+    for (const adapter of ADAPTER_MODULES) {
+      this.adapterRegistry.register(adapter);
+    }
+
+    // 深度合并默认迁移设置（老用户 data.json 的已有值不受影响）
+    this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
     // 迁移 Mastodon 单账号旧格式 → accounts 数组
     this._migrateMastodonAccounts();
     await this.saveSettings();
-
-    // 初始化适配器注册表
-    this.adapterRegistry = new AdapterRegistry();
-    this.adapterRegistry.register(flomoAdapter);
-    this.adapterRegistry.register(telegramAdapter);
-    this.adapterRegistry.register(mastodonAdapter);
-    this.adapterRegistry.register(misskeyAdapter);
-    this.adapterRegistry.register(notionAdapter);
 
     // Ribbon 按钮：新建日记
     this.addRibbonIcon('pencil', 'Journal Sync: 新建日记记录', () => this.createTodayDiaryEntry());

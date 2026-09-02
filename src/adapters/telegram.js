@@ -11,6 +11,8 @@
  * - rich:   富文本图文混排（sendRichMessage）
  * - telegraph: 创建 Telegraph 页面，将链接发送到频道
  */
+import { Setting, Notice } from 'obsidian';
+
 const TG_API_BASE = 'https://api.telegram.org';
 
 // 转义 Obsidian wikilink [[...]]，避免 Telegram Markdown 解析器将外层 [ ] 当作链接语法而静默剥离。
@@ -26,6 +28,7 @@ export const manifest = {
     version: '2.0.0',
     name: 'Telegram',
     description: '发送内容到 Telegram 频道',
+    displayOrder: 20,
     enabledByDefault: false,
     capabilities: {
         text: true,
@@ -62,12 +65,23 @@ export const manifest = {
                 type: 'boolean',
                 label: '普通发送时显示网址预览',
                 description: '关闭后，Telegram 普通文本消息不会展开网址预览。',
-                default: true
+                default: false
             }
         ]
     }
 };
 const MAX_TELEGRAM_IMAGES = manifest.capabilities.maxAttachments;
+
+/**
+ * 适配器默认配置，与旧版 DEFAULT_SETTINGS.adaptersConfig.telegram 完全一致
+ */
+export const defaultConfig = {
+    showLinkPreview: false,
+    richTextEnabled: true,
+    telegraphAccessToken: '',
+    telegraphAuthorName: '',
+    telegraphTitleLevel: 1
+};
 
 // ── Telegram Bot API ──────────────────────────
 
@@ -873,4 +887,185 @@ export async function runAction(actionId, config, requestUrlFn) {
     throw new Error(`未知操作: ${actionId}`);
 }
 
-export default { manifest, execute, validate, listChannels, runAction };
+// ── 设置面板（从 settings-tab 移入） ──────────
+
+/**
+ * 构建「频道列表」Setting 的描述文案
+ */
+function buildChannelDesc(tgConfig) {
+    const channels = Array.isArray(tgConfig?.channels) ? tgConfig.channels : [];
+    if (channels.length === 0) return '尚未获取频道列表，请点击右侧按钮获取';
+    return `已发现 ${channels.length} 个频道：${channels.map(channel => channel.title || channel.id).join('、')}`;
+}
+
+/**
+ * 渲染默认发送频道勾选组
+ */
+function renderChannelSelection(containerEl, tgConfig, ctx) {
+    const channels = Array.isArray(tgConfig.channels) ? tgConfig.channels : [];
+    if (channels.length === 0) return;
+    const groupEl = containerEl.createDiv({ cls: 'js-bridge-channel-group' });
+    groupEl.createEl('p', { text: '默认发送频道：', cls: 'js-bridge-channel-group-label' });
+    const homeChannels = Array.isArray(tgConfig.homeChannels) ? tgConfig.homeChannels.map(String) : [];
+    for (const channel of channels) {
+        const channelId = String(channel.id);
+        const row = groupEl.createDiv({ cls: 'js-bridge-channel-row' });
+        const checkbox = row.createEl('input', { type: 'checkbox', attr: { id: `tg-ch-${channelId}` } });
+        checkbox.checked = homeChannels.includes(channelId);
+        row.createEl('label', { text: `${channel.title || channelId}${channel.username ? ` (${channel.username})` : ''}`, attr: { for: `tg-ch-${channelId}` } });
+        checkbox.addEventListener('change', async () => {
+            const config = ctx.plugin.getAdapterConfig('telegram') || {};
+            const selected = Array.isArray(config.homeChannels) ? config.homeChannels.map(String) : [];
+            const index = selected.indexOf(channelId);
+            if (checkbox.checked && index < 0) selected.push(channelId);
+            if (!checkbox.checked && index >= 0) selected.splice(index, 1);
+            await ctx.saveConfig({ homeChannels: selected });
+        });
+    }
+}
+
+/**
+ * Telegram 自定义设置面板（启用开关由设置页统一渲染，不要在此重复添加）。
+ * @param {HTMLElement} containerEl
+ * @param {object} ctx - { plugin, scheduleConfigSave, saveConfig, refresh, requestUrl }
+ */
+export function renderSettings(containerEl, ctx) {
+    let telegraphTokenInput = null;
+    const tgConfig = ctx.plugin.getAdapterConfig('telegram') || {};
+
+    new Setting(containerEl).setName('Bot Token').setDesc('从 @BotFather 获取').addText(text => {
+        text.inputEl.type = 'password';
+        text.setPlaceholder('123456789:ABCdef...').setValue(tgConfig.botToken || '').onChange(value => {
+            ctx.scheduleConfigSave({ botToken: value.trim() });
+        });
+    });
+
+    new Setting(containerEl).setName('频道列表').setDesc(buildChannelDesc(tgConfig)).addButton(btn => btn
+        .setButtonText('获取频道列表').onClick(async () => {
+            try {
+                btn.setButtonText('获取中...');
+                btn.disabled = true;
+                const result = await ctx.plugin.adapterRegistry.get('telegram').runAction('discoverChannels', ctx.plugin.getAdapterConfig('telegram'), ctx.requestUrl);
+                const channels = result.data?.channels || [];
+                await ctx.saveConfig({ channels, homeChannels: channels.map(channel => String(channel.id)) });
+                new Notice(result.message || '获取成功');
+                ctx.refresh();
+            } catch (error) {
+                new Notice(`获取频道失败：${error.message}`);
+            } finally {
+                btn.setButtonText('获取频道列表');
+                btn.disabled = false;
+            }
+        }));
+
+    renderChannelSelection(containerEl, tgConfig, ctx);
+
+    new Setting(containerEl)
+        .setName('启用富文本发送')
+        .setDesc('开启后使用 Telegram 原生媒体上传发送图文混排内容。关闭后以普通附件方式发送图片。')
+        .addToggle(toggle => toggle.setValue(tgConfig.richTextEnabled !== false).onChange(async value => {
+            await ctx.saveConfig({ richTextEnabled: value });
+        }));
+
+    // ── Telegraph 设置 ──────────────────────
+    new Setting(containerEl)
+        .setName('Telegraph 作者名')
+        .setDesc('显示在 Telegraph 页面上的作者名称，可留空。')
+        .addText(text => {
+            text.setPlaceholder('Journal Sync').setValue(tgConfig.telegraphAuthorName || '').onChange(value => {
+                ctx.scheduleConfigSave({ telegraphAuthorName: value.trim() });
+            });
+        });
+
+    // 标题层级绑定全局发送层级 sendScope：整页(0)可用 1-6 级，其余上限为发送层级（登记在案的跨适配器特例）。
+    const sendScope = ctx.plugin.settings.sendScope || 2;
+    const maxTitleLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
+    const titleLevelDesc = maxTitleLevel === 1
+        ? '当前发送层级为 1，仅可使用一级标题作为 Telegraph 标题。'
+        : `选择哪一级标题作为 Telegraph 页面标题（1-${maxTitleLevel}）。正文中的标题会相应偏移。绑定发送层级（当前: ${sendScope === 0 ? '整页' : sendScope}）。`;
+
+    new Setting(containerEl)
+        .setName('Telegraph 标题层级')
+        .setDesc(titleLevelDesc)
+        .addDropdown(dropdown => {
+            const currentLevel = tgConfig.telegraphTitleLevel || 1;
+            for (let lv = 1; lv <= maxTitleLevel; lv++) {
+                dropdown.addOption(String(lv), `H${lv}`);
+            }
+            dropdown.setValue(String(Math.min(currentLevel, maxTitleLevel))).onChange(async value => {
+                await ctx.saveConfig({ telegraphTitleLevel: Number(value) });
+            });
+        });
+
+    new Setting(containerEl)
+        .setName('Telegraph 账号')
+        .setDesc(tgConfig.telegraphAccessToken
+            ? '已连接。可验证新 token、创建新账号或复制当前 token。'
+            : '输入已有 Telegraph token，或点击"创建新账号"获取。首次发送时也会自动创建。')
+        .addText(text => {
+            text.inputEl.type = 'password';
+            text.setPlaceholder('输入 Telegraph access_token');
+            text.setValue(tgConfig.telegraphAccessToken || '');
+            telegraphTokenInput = text.inputEl;
+        })
+        .addButton(btn => btn
+            .setButtonText('验证并保存')
+            .onClick(async () => {
+                const token = (telegraphTokenInput?.value || '').trim();
+                if (!token) {
+                    new Notice('请先输入 token');
+                    return;
+                }
+                try {
+                    btn.setButtonText('验证中...');
+                    btn.disabled = true;
+                    await telegraph.getAccountInfo(token, ctx.requestUrl);
+                    await ctx.saveConfig({ telegraphAccessToken: token });
+                    new Notice('Telegraph token 验证成功');
+                    ctx.refresh();
+                } catch (error) {
+                    new Notice(`Token 验证失败: ${error.message}`);
+                } finally {
+                    btn.setButtonText('验证并保存');
+                    btn.disabled = false;
+                }
+            }))
+        .addButton(btn => btn
+            .setButtonText('创建新账号')
+            .onClick(async () => {
+                if (tgConfig.telegraphAccessToken) {
+                    if (!confirm('已有账号连接，创建新账号后将无法用新 token 编辑旧页面。确定继续？')) return;
+                }
+                try {
+                    btn.setButtonText('创建中...');
+                    btn.disabled = true;
+                    const authorName = ctx.plugin.getAdapterConfig('telegram')?.telegraphAuthorName || '';
+                    const account = await telegraph.createAccount('JournalSync', authorName, ctx.requestUrl);
+                    await ctx.saveConfig({ telegraphAccessToken: account.access_token });
+                    new Notice('Telegraph 账号创建成功');
+                    ctx.refresh();
+                } catch (error) {
+                    new Notice(`Telegraph 账号创建失败: ${error.message}`);
+                } finally {
+                    btn.setButtonText('创建新账号');
+                    btn.disabled = false;
+                }
+            }))
+        .addButton(btn => btn
+            .setButtonText('复制 token')
+            .setDisabled(!tgConfig.telegraphAccessToken)
+            .onClick(() => {
+                const token = ctx.plugin.getAdapterConfig('telegram')?.telegraphAccessToken || '';
+                if (!token) {
+                    new Notice('暂无 token 可复制');
+                    return;
+                }
+                navigator.clipboard.writeText(token).then(() => {
+                    new Notice('Token 已复制到剪贴板');
+                }).catch(() => {
+                    new Notice('复制失败，请手动复制');
+                });
+            }));
+}
+
+export default { manifest, defaultConfig, renderSettings, execute, validate, listChannels, runAction };
