@@ -472,11 +472,27 @@ class JournalSyncPlugin extends Plugin {
     const uploadedByPath = new Map();
     const failed = [];
     const uploadedRefs = [];
+    const failedRefs = [];
 
     for (const ref of refs) {
       if (!isImagePath(ref.target) || isRemoteUrl(ref.target) || isDataUrl(ref.target)) continue;
-      const file = await this._resolveImageFile(ref.target, currentFile);
-      if (!file) continue;
+      let file = null;
+      try {
+        file = await this._resolveImageFile(ref.target, currentFile);
+      } catch (error) {
+        failed.push({
+          target: ref.target,
+          raw: ref.raw,
+          reason: error?.message || '读取失败'
+        });
+        failedRefs.push(ref);
+        continue;
+      }
+      if (!file) {
+        failed.push({ target: ref.target, raw: ref.raw, reason: 'Vault 中未找到该文件' });
+        failedRefs.push(ref);
+        continue;
+      }
 
       if (!uploadedByPath.has(file.path)) {
         // 保留 Vault 相对路径，避免同名图片在回读时被错误解析。
@@ -485,15 +501,19 @@ class JournalSyncPlugin extends Plugin {
       uploadedRefs.push(Object.assign({}, ref, uploadedByPath.get(file.path)));
     }
 
-    // 将 Markdown 中的图片引用按原文位置逐个替换为 @图片1、@图片2 等 Token。
+    // 将成功解析的图片引用替换为 @图片1、@图片2 等 Token，失败的引用移除。
     // 基于位置而非字符串匹配，同一张图出现多次时每一处都能正确替换。
-    const sortedRefs = uploadedRefs.slice().sort((a, b) => a.index - b.index);
+    const sortedRefs = [...uploadedRefs, ...failedRefs].sort((a, b) => a.index - b.index);
     let content = '';
     let cursor = 0;
-    sortedRefs.forEach((ref, idx) => {
+    let imageIndex = 0;
+    sortedRefs.forEach(ref => {
       if (ref.index < cursor) return;
       content += markdown.slice(cursor, ref.index);
-      content += `@图片${idx + 1}`;
+      if (uploadedRefs.includes(ref)) {
+        imageIndex += 1;
+        content += `@图片${imageIndex}`;
+      }
       cursor = ref.end;
     });
     content += markdown.slice(cursor);
@@ -621,7 +641,16 @@ class JournalSyncPlugin extends Plugin {
       }
 
       if (processResult.failed.length > 0) {
-        new Notice(`部分图片无法读取（${processResult.failed.length} 张），发送时将跳过。`);
+        const failedNames = [...new Set(processResult.failed.map(item => item.target).filter(Boolean))];
+        const suffix = failedNames.length > 0 ? `：${failedNames.slice(0, 3).join('、')}${failedNames.length > 3 ? ' 等' : ''}` : '';
+        new Notice(`部分图片无法读取（${processResult.failed.length} 处），本次发送将跳过${suffix}`, 10000);
+      }
+
+      const preparedContent = processResult.content ?? current.content;
+      const preparedImages = processResult.richDraft?.images || [];
+      if (!preparedContent.trim() && preparedImages.length === 0) {
+        new Notice('图片读取失败后没有剩余可发送内容。');
+        return;
       }
 
       // 打开 Send Modal
@@ -629,7 +658,7 @@ class JournalSyncPlugin extends Plugin {
 
       const noteTitle = current.heading || this.getNoteTitle(currentFile, current.source);
       new JournalSyncSendModal(this.app, this, {
-        content: processResult.content || current.content,
+        content: preparedContent,
         richDraft: processResult.richDraft,
         readImageFile,
         notionTitle: noteTitle

@@ -17,6 +17,10 @@
 const { Modal, Notice } = require('obsidian');
 const { buildPayload } = require('../core/payload');
 
+function hasRemoteImageReference(content) {
+    return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ''));
+}
+
 
 class JournalSyncSendModal extends Modal {
     /**
@@ -491,15 +495,30 @@ class JournalSyncSendModal extends Modal {
      * 将粘贴的图片文件加入图片列表，在光标处插入 token chip，刷新缩略图网格。
      * 图片仅存于内存 Blob，不写入 vault；预览 URL 在渲染时创建，关闭窗口时释放。
      */
+    getNextImageToken() {
+        const usedNumbers = new Set();
+        const collect = (value) => {
+            const match = String(value || '').match(/^@图片(\d+)$/);
+            if (match) usedNumbers.add(Number(match[1]));
+        };
+
+        for (const image of this.images) collect(image.token);
+        for (const token of String(this.content || '').match(/@图片\d+/g) || []) collect(token);
+
+        let next = 1;
+        while (usedNumbers.has(next)) next += 1;
+        return `@图片${next}`;
+    }
+
     addPastedImage(file, richDiv) {
         const ext = (file.type && file.type.split('/')[1]) || 'png';
         const filename = `clipboard_${Date.now()}.${ext}`;
-        const token = `@图片${this.images.length + 1}`;
+        const token = this.getNextImageToken();
 
         const imageEntry = {
             filename,
             vaultPath: filename,
-            id: `paste_${Date.now()}`,
+            id: `paste_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             token,
             blob: file,
             blobUrl: ''
@@ -1104,6 +1123,19 @@ class JournalSyncSendModal extends Modal {
             title: this.notionTitle || '',
             readAttachment
         });
+
+        // 统一检查最终要发送的内容，避免用户在弹窗中删空后仍创建空页面，
+        // 或者仅剩未知的 @图片N token 时被误判为发送成功。
+        const hasSendableContent = Boolean(
+            payload.plainText.trim()
+            || payload.attachments.length > 0
+            || hasRemoteImageReference(payload.content)
+        );
+        if (!hasSendableContent) {
+            new Notice('没有可发送的内容，请保留文字或有效图片。');
+            return;
+        }
+
         const targetConfigOverrides = {};
         if (tgChannels.length > 0) {
             targetConfigOverrides.telegram = {

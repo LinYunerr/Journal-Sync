@@ -6,9 +6,13 @@ class JournalSyncSettingTab extends PluginSettingTab {
         this.plugin = plugin;
         this.activeSection = 'main';
         this.activePlugin = 'flomo';
+        this._saveTimer = null;
+        this._savePending = false;
+        this._savePromise = null;
     }
 
     async display() {
+        await this._flushPendingSaves();
         const { containerEl } = this;
         containerEl.empty();
         containerEl.addClass('js-bridge-settings');
@@ -44,6 +48,49 @@ class JournalSyncSettingTab extends PluginSettingTab {
         });
     }
 
+    /**
+     * 文本框的 onChange 会在输入每个字符时触发。统一延迟保存，
+     * 并在切换设置页面前先 flush，避免高频写 data.json 或丢失最后一次输入。
+     */
+    _scheduleSettingsSave(update) {
+        update();
+        this._savePending = true;
+        if (this._saveTimer) window.clearTimeout(this._saveTimer);
+        this._saveTimer = window.setTimeout(() => {
+            this._saveTimer = null;
+            void this._flushPendingSaves();
+        }, 400);
+    }
+
+    async _flushPendingSaves() {
+        if (this._saveTimer) {
+            window.clearTimeout(this._saveTimer);
+            this._saveTimer = null;
+        }
+        if (this._savePromise) await this._savePromise;
+        if (!this._savePending) return;
+
+        this._savePending = false;
+        this._savePromise = this.plugin.saveSettings().catch(error => {
+            new Notice(`设置保存失败：${error.message || String(error)}`);
+        });
+        await this._savePromise;
+        this._savePromise = null;
+
+        // 保存期间如果又有输入，立即再保存一次最新状态。
+        if (this._savePending) await this._flushPendingSaves();
+    }
+
+    _scheduleAdapterConfigSave(id, patch) {
+        this._scheduleSettingsSave(() => {
+            if (!this.plugin.settings.adaptersConfig) this.plugin.settings.adaptersConfig = {};
+            this.plugin.settings.adaptersConfig[id] = {
+                ...this.plugin.getAdapterConfig(id),
+                ...patch
+            };
+        });
+    }
+
     _renderMainSettings(containerEl) {
         containerEl.createEl('h3', { text: '主设置', cls: 'js-bridge-section-heading' });
         containerEl.createEl('p', {
@@ -54,17 +101,19 @@ class JournalSyncSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('日记存放路径')
             .setDesc('Obsidian Vault 内的相对路径（如 日记/2024）')
-            .addText(text => text.setPlaceholder('日记').setValue(this.plugin.settings.diaryPath || '').onChange(async value => {
-                this.plugin.settings.diaryPath = value.trim();
-                await this.plugin.saveSettings();
+            .addText(text => text.setPlaceholder('日记').setValue(this.plugin.settings.diaryPath || '').onChange(value => {
+                this._scheduleSettingsSave(() => {
+                    this.plugin.settings.diaryPath = value.trim();
+                });
             }));
 
         new Setting(containerEl)
             .setName('日记文件名规则')
             .setDesc('支持 YYYY MM DD 占位符，例如 YYYY-MM-DD 日记')
-            .addText(text => text.setPlaceholder('YYYY-MM-DD 日记').setValue(this.plugin.settings.filenameRule || 'YYYY-MM-DD 日记').onChange(async value => {
-                this.plugin.settings.filenameRule = value.trim() || 'YYYY-MM-DD 日记';
-                await this.plugin.saveSettings();
+            .addText(text => text.setPlaceholder('YYYY-MM-DD 日记').setValue(this.plugin.settings.filenameRule || 'YYYY-MM-DD 日记').onChange(value => {
+                this._scheduleSettingsSave(() => {
+                    this.plugin.settings.filenameRule = value.trim() || 'YYYY-MM-DD 日记';
+                });
             }));
 
         new Setting(containerEl)
@@ -111,9 +160,10 @@ class JournalSyncSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('新建标题格式')
             .setDesc('支持 H M S 占位符（H=时、M=分、S=秒），例如 HH:MM:SS 或 HH:MM')
-            .addText(text => text.setPlaceholder('HH:MM:SS').setValue(this.plugin.settings.diaryHeadingRule || 'HH:MM:SS').onChange(async value => {
-                this.plugin.settings.diaryHeadingRule = value.trim() || 'HH:MM:SS';
-                await this.plugin.saveSettings();
+            .addText(text => text.setPlaceholder('HH:MM:SS').setValue(this.plugin.settings.diaryHeadingRule || 'HH:MM:SS').onChange(value => {
+                this._scheduleSettingsSave(() => {
+                    this.plugin.settings.diaryHeadingRule = value.trim() || 'HH:MM:SS';
+                });
             }));
     }
 
@@ -163,8 +213,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
         if (!this.plugin.isAdapterEnabled('flomo')) return;
         new Setting(containerEl).setName('Flomo API Webhook').setDesc('在 flomo 网页版“API”页面获取').addText(text => {
             text.inputEl.type = 'password';
-            text.setPlaceholder('https://flomoapp.com/iwh/...').setValue(this.plugin.getAdapterConfig('flomo')?.apiUrl || '').onChange(async value => {
-                await this.plugin.setAdapterConfig('flomo', { apiUrl: value.trim() });
+            text.setPlaceholder('https://flomoapp.com/iwh/...').setValue(this.plugin.getAdapterConfig('flomo')?.apiUrl || '').onChange(value => {
+                this._scheduleAdapterConfigSave('flomo', { apiUrl: value.trim() });
             });
         });
     }
@@ -175,8 +225,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
         const tgConfig = this.plugin.getAdapterConfig('telegram') || {};
         new Setting(containerEl).setName('Bot Token').setDesc('从 @BotFather 获取').addText(text => {
             text.inputEl.type = 'password';
-            text.setPlaceholder('123456789:ABCdef...').setValue(tgConfig.botToken || '').onChange(async value => {
-                await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), botToken: value.trim() });
+            text.setPlaceholder('123456789:ABCdef...').setValue(tgConfig.botToken || '').onChange(value => {
+                this._scheduleAdapterConfigSave('telegram', { botToken: value.trim() });
             });
         });
 
@@ -214,8 +264,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
             .setName('Telegraph 作者名')
             .setDesc('显示在 Telegraph 页面上的作者名称，可留空。')
             .addText(text => {
-                text.setPlaceholder('Journal Sync').setValue(tgConfig.telegraphAuthorName || '').onChange(async value => {
-                    await this.plugin.setAdapterConfig('telegram', { ...this.plugin.getAdapterConfig('telegram'), telegraphAuthorName: value.trim() });
+                text.setPlaceholder('Journal Sync').setValue(tgConfig.telegraphAuthorName || '').onChange(value => {
+                    this._scheduleAdapterConfigSave('telegram', { telegraphAuthorName: value.trim() });
                 });
             });
 
@@ -402,7 +452,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
             .addText(text => text
                 .setPlaceholder('主账号')
                 .setValue(acct.label || '')
-                .onChange(async value => {
+                .onChange(value => {
                     this._updateMastodonAccount(acct.id, { label: value.trim() });
                 }));
 
@@ -413,7 +463,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
             .addText(text => text
                 .setPlaceholder('https://mastodon.social')
                 .setValue(acct.serverUrl || '')
-                .onChange(async value => {
+                .onChange(value => {
                     this._updateMastodonAccount(acct.id, { serverUrl: value.trim() });
                 }));
 
@@ -424,7 +474,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
                 text.inputEl.type = 'password';
                 text.setPlaceholder('你的 Mastodon Access Token')
                     .setValue(acct.accessToken || '')
-                    .onChange(async value => {
+                    .onChange(value => {
                         this._updateMastodonAccount(acct.id, { accessToken: value.trim() });
                     });
             });
@@ -438,16 +488,19 @@ class JournalSyncSettingTab extends PluginSettingTab {
                 .addOption('private', '仅关注者')
                 .addOption('direct', '私信')
                 .setValue(acct.visibility || 'public')
-                .onChange(async value => {
+                .onChange(value => {
                     this._updateMastodonAccount(acct.id, { visibility: value });
                 }));
     }
 
-    async _updateMastodonAccount(accountId, patch) {
-        const mstdConfig = this.plugin.getAdapterConfig('mastodon') || {};
-        const accounts = this.plugin.getMastodonAccounts();
-        const updated = accounts.map(a => a.id === accountId ? { ...a, ...patch } : a);
-        await this.plugin.setAdapterConfig('mastodon', { ...mstdConfig, accounts: updated });
+    _updateMastodonAccount(accountId, patch) {
+        this._scheduleSettingsSave(() => {
+            const mstdConfig = this.plugin.getAdapterConfig('mastodon') || {};
+            const accounts = this.plugin.getMastodonAccounts();
+            const updated = accounts.map(a => a.id === accountId ? { ...a, ...patch } : a);
+            if (!this.plugin.settings.adaptersConfig) this.plugin.settings.adaptersConfig = {};
+            this.plugin.settings.adaptersConfig.mastodon = { ...mstdConfig, accounts: updated };
+        });
     }
 
     /**
@@ -475,9 +528,9 @@ class JournalSyncSettingTab extends PluginSettingTab {
         this._addEnabledToggle(containerEl, 'missky', 'Misskey');
         if (!this.plugin.isAdapterEnabled('missky')) return;
         const config = this.plugin.getAdapterConfig('missky') || {};
-        new Setting(containerEl).setName('实例地址').setDesc('例如 https://misskey.io').addText(text => text.setPlaceholder('https://misskey.io').setValue(config.serverUrl || '').onChange(async value => this.plugin.setAdapterConfig('missky', { ...config, serverUrl: value.trim() })));
-        new Setting(containerEl).setName('API Token').addText(text => { text.inputEl.type = 'password'; text.setPlaceholder('你的 Misskey API Token').setValue(config.apiToken || '').onChange(async value => this.plugin.setAdapterConfig('missky', { ...config, apiToken: value.trim() })); });
-        new Setting(containerEl).setName('可见性').addDropdown(dropdown => dropdown.addOption('public', '公开').addOption('home', '主页').addOption('followers', '仅关注者').setValue(config.visibility || 'public').onChange(async value => this.plugin.setAdapterConfig('missky', { ...config, visibility: value })));
+        new Setting(containerEl).setName('实例地址').setDesc('例如 https://misskey.io').addText(text => text.setPlaceholder('https://misskey.io').setValue(config.serverUrl || '').onChange(value => this._scheduleAdapterConfigSave('missky', { serverUrl: value.trim() })));
+        new Setting(containerEl).setName('API Token').addText(text => { text.inputEl.type = 'password'; text.setPlaceholder('你的 Misskey API Token').setValue(config.apiToken || '').onChange(value => this._scheduleAdapterConfigSave('missky', { apiToken: value.trim() })); });
+        new Setting(containerEl).setName('可见性').addDropdown(dropdown => dropdown.addOption('public', '公开').addOption('home', '主页').addOption('followers', '仅关注者').setValue(config.visibility || 'public').onChange(value => this._scheduleAdapterConfigSave('missky', { visibility: value })));
     }
 
     _renderNotion(containerEl) {
@@ -490,8 +543,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
             .setDesc('使用 Notion Personal Access Token，仅保存在 Obsidian 插件设置中。')
             .addText(text => {
                 text.inputEl.type = 'password';
-                text.setPlaceholder('ntn_...').setValue(config.token || '').onChange(async value => {
-                    await this.plugin.setAdapterConfig('notion', { ...this.plugin.getAdapterConfig('notion'), token: value.trim() });
+                text.setPlaceholder('ntn_...').setValue(config.token || '').onChange(value => {
+                    this._scheduleAdapterConfigSave('notion', { token: value.trim() });
                 });
             });
 
@@ -511,8 +564,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
             new Setting(containerEl)
                 .setName('日记父页面 Page ID')
                 .setDesc('创建子页面或每日页面的 Notion 父页面 ID。请先将该页面连接到你的 Notion Integration。')
-                .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.pageId || '').onChange(async value => {
-                    await this.plugin.setAdapterConfig('notion', { ...this.plugin.getAdapterConfig('notion'), pageId: value.trim() });
+                .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.pageId || '').onChange(value => {
+                    this._scheduleAdapterConfigSave('notion', { pageId: value.trim() });
                 }));
             new Setting(containerEl)
                 .setName('页面写入方式')
@@ -540,8 +593,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
             new Setting(containerEl)
                 .setName('Data Source ID')
                 .setDesc('目标 Notion Data Source 的 ID，而不是旧版教程中的 database ID。')
-                .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.dataSourceId || '').onChange(async value => {
-                    await this.plugin.setAdapterConfig('notion', { ...this.plugin.getAdapterConfig('notion'), dataSourceId: value.trim() });
+                .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.dataSourceId || '').onChange(value => {
+                    this._scheduleAdapterConfigSave('notion', { dataSourceId: value.trim() });
                 }));
             new Setting(containerEl)
                 .setName('读取标题字段')

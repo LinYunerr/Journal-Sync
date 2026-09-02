@@ -208,6 +208,9 @@ var require_send_modal = __commonJS({
   "src/ui/send-modal.js"(exports2, module2) {
     var { Modal, Notice: Notice2 } = require("obsidian");
     var { buildPayload } = require_payload();
+    function hasRemoteImageReference(content) {
+      return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ""));
+    }
     var JournalSyncSendModal2 = class extends Modal {
       /**
        * @param {App} app
@@ -602,14 +605,26 @@ ${tokenStr}` : tokenStr;
        * 将粘贴的图片文件加入图片列表，在光标处插入 token chip，刷新缩略图网格。
        * 图片仅存于内存 Blob，不写入 vault；预览 URL 在渲染时创建，关闭窗口时释放。
        */
+      getNextImageToken() {
+        const usedNumbers = /* @__PURE__ */ new Set();
+        const collect = (value) => {
+          const match = String(value || "").match(/^@图片(\d+)$/);
+          if (match) usedNumbers.add(Number(match[1]));
+        };
+        for (const image of this.images) collect(image.token);
+        for (const token of String(this.content || "").match(/@图片\d+/g) || []) collect(token);
+        let next = 1;
+        while (usedNumbers.has(next)) next += 1;
+        return `@\u56FE\u7247${next}`;
+      }
       addPastedImage(file, richDiv) {
         const ext = file.type && file.type.split("/")[1] || "png";
         const filename = `clipboard_${Date.now()}.${ext}`;
-        const token = `@\u56FE\u7247${this.images.length + 1}`;
+        const token = this.getNextImageToken();
         const imageEntry = {
           filename,
           vaultPath: filename,
-          id: `paste_${Date.now()}`,
+          id: `paste_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           token,
           blob: file,
           blobUrl: ""
@@ -1109,6 +1124,13 @@ ${tokenStr}` : tokenStr;
           title: this.notionTitle || "",
           readAttachment
         });
+        const hasSendableContent = Boolean(
+          payload.plainText.trim() || payload.attachments.length > 0 || hasRemoteImageReference(payload.content)
+        );
+        if (!hasSendableContent) {
+          new Notice2("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
+          return;
+        }
         const targetConfigOverrides = {};
         if (tgChannels.length > 0) {
           targetConfigOverrides.telegram = {
@@ -1569,8 +1591,12 @@ var require_settings_tab = __commonJS({
         this.plugin = plugin;
         this.activeSection = "main";
         this.activePlugin = "flomo";
+        this._saveTimer = null;
+        this._savePending = false;
+        this._savePromise = null;
       }
       async display() {
+        await this._flushPendingSaves();
         const { containerEl } = this;
         containerEl.empty();
         containerEl.addClass("js-bridge-settings");
@@ -1601,19 +1627,58 @@ var require_settings_tab = __commonJS({
           this.display();
         });
       }
+      /**
+       * 文本框的 onChange 会在输入每个字符时触发。统一延迟保存，
+       * 并在切换设置页面前先 flush，避免高频写 data.json 或丢失最后一次输入。
+       */
+      _scheduleSettingsSave(update) {
+        update();
+        this._savePending = true;
+        if (this._saveTimer) window.clearTimeout(this._saveTimer);
+        this._saveTimer = window.setTimeout(() => {
+          this._saveTimer = null;
+          void this._flushPendingSaves();
+        }, 400);
+      }
+      async _flushPendingSaves() {
+        if (this._saveTimer) {
+          window.clearTimeout(this._saveTimer);
+          this._saveTimer = null;
+        }
+        if (this._savePromise) await this._savePromise;
+        if (!this._savePending) return;
+        this._savePending = false;
+        this._savePromise = this.plugin.saveSettings().catch((error) => {
+          new Notice2(`\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A${error.message || String(error)}`);
+        });
+        await this._savePromise;
+        this._savePromise = null;
+        if (this._savePending) await this._flushPendingSaves();
+      }
+      _scheduleAdapterConfigSave(id, patch) {
+        this._scheduleSettingsSave(() => {
+          if (!this.plugin.settings.adaptersConfig) this.plugin.settings.adaptersConfig = {};
+          this.plugin.settings.adaptersConfig[id] = {
+            ...this.plugin.getAdapterConfig(id),
+            ...patch
+          };
+        });
+      }
       _renderMainSettings(containerEl) {
         containerEl.createEl("h3", { text: "\u4E3B\u8BBE\u7F6E", cls: "js-bridge-section-heading" });
         containerEl.createEl("p", {
           text: "\u7BA1\u7406\u65E5\u8BB0\u521B\u5EFA\u548C\u53D1\u9001\u65F6\u901A\u7528\u7684\u884C\u4E3A\u3002",
           cls: "js-bridge-settings-section-desc"
         });
-        new Setting(containerEl).setName("\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84").setDesc("Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09").addText((text) => text.setPlaceholder("\u65E5\u8BB0").setValue(this.plugin.settings.diaryPath || "").onChange(async (value) => {
-          this.plugin.settings.diaryPath = value.trim();
-          await this.plugin.saveSettings();
+        new Setting(containerEl).setName("\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84").setDesc("Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09").addText((text) => text.setPlaceholder("\u65E5\u8BB0").setValue(this.plugin.settings.diaryPath || "").onChange((value) => {
+          this._scheduleSettingsSave(() => {
+            this.plugin.settings.diaryPath = value.trim();
+          });
         }));
-        new Setting(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219").setDesc("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0").addText((text) => text.setPlaceholder("YYYY-MM-DD \u65E5\u8BB0").setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange(async (value) => {
-          this.plugin.settings.filenameRule = value.trim() || "YYYY-MM-DD \u65E5\u8BB0";
-          await this.plugin.saveSettings();
+        new Setting(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219").setDesc("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0").addText((text) => text.setPlaceholder("YYYY-MM-DD \u65E5\u8BB0").setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange((value) => {
+          this._scheduleSettingsSave(() => {
+            this.plugin.settings.filenameRule = value.trim() || "YYYY-MM-DD \u65E5\u8BB0";
+          });
         }));
         new Setting(containerEl).setName("\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247").setDesc("\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async (value) => {
           this.plugin.settings.autoUploadImages = value;
@@ -1644,9 +1709,10 @@ var require_settings_tab = __commonJS({
             await this.plugin.saveSettings();
           });
         });
-        new Setting(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u683C\u5F0F").setDesc("\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM").addText((text) => text.setPlaceholder("HH:MM:SS").setValue(this.plugin.settings.diaryHeadingRule || "HH:MM:SS").onChange(async (value) => {
-          this.plugin.settings.diaryHeadingRule = value.trim() || "HH:MM:SS";
-          await this.plugin.saveSettings();
+        new Setting(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u683C\u5F0F").setDesc("\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM").addText((text) => text.setPlaceholder("HH:MM:SS").setValue(this.plugin.settings.diaryHeadingRule || "HH:MM:SS").onChange((value) => {
+          this._scheduleSettingsSave(() => {
+            this.plugin.settings.diaryHeadingRule = value.trim() || "HH:MM:SS";
+          });
         }));
       }
       _renderPluginSettings(containerEl) {
@@ -1690,8 +1756,8 @@ var require_settings_tab = __commonJS({
         new Setting(containerEl).setName("Flomo API Webhook").setDesc("\u5728 flomo \u7F51\u9875\u7248\u201CAPI\u201D\u9875\u9762\u83B7\u53D6").addText((text) => {
           var _a;
           text.inputEl.type = "password";
-          text.setPlaceholder("https://flomoapp.com/iwh/...").setValue(((_a = this.plugin.getAdapterConfig("flomo")) == null ? void 0 : _a.apiUrl) || "").onChange(async (value) => {
-            await this.plugin.setAdapterConfig("flomo", { apiUrl: value.trim() });
+          text.setPlaceholder("https://flomoapp.com/iwh/...").setValue(((_a = this.plugin.getAdapterConfig("flomo")) == null ? void 0 : _a.apiUrl) || "").onChange((value) => {
+            this._scheduleAdapterConfigSave("flomo", { apiUrl: value.trim() });
           });
         });
       }
@@ -1701,8 +1767,8 @@ var require_settings_tab = __commonJS({
         const tgConfig = this.plugin.getAdapterConfig("telegram") || {};
         new Setting(containerEl).setName("Bot Token").setDesc("\u4ECE @BotFather \u83B7\u53D6").addText((text) => {
           text.inputEl.type = "password";
-          text.setPlaceholder("123456789:ABCdef...").setValue(tgConfig.botToken || "").onChange(async (value) => {
-            await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), botToken: value.trim() });
+          text.setPlaceholder("123456789:ABCdef...").setValue(tgConfig.botToken || "").onChange((value) => {
+            this._scheduleAdapterConfigSave("telegram", { botToken: value.trim() });
           });
         });
         new Setting(containerEl).setName("\u9891\u9053\u5217\u8868").setDesc(this._buildChannelDesc(tgConfig)).addButton((btn) => btn.setButtonText("\u83B7\u53D6\u9891\u9053\u5217\u8868").onClick(async () => {
@@ -1729,8 +1795,8 @@ var require_settings_tab = __commonJS({
           await this.plugin.setAdapterConfig("telegram", { ...config, richTextEnabled: value });
         }));
         new Setting(containerEl).setName("Telegraph \u4F5C\u8005\u540D").setDesc("\u663E\u793A\u5728 Telegraph \u9875\u9762\u4E0A\u7684\u4F5C\u8005\u540D\u79F0\uFF0C\u53EF\u7559\u7A7A\u3002").addText((text) => {
-          text.setPlaceholder("Journal Sync").setValue(tgConfig.telegraphAuthorName || "").onChange(async (value) => {
-            await this.plugin.setAdapterConfig("telegram", { ...this.plugin.getAdapterConfig("telegram"), telegraphAuthorName: value.trim() });
+          text.setPlaceholder("Journal Sync").setValue(tgConfig.telegraphAuthorName || "").onChange((value) => {
+            this._scheduleAdapterConfigSave("telegram", { telegraphAuthorName: value.trim() });
           });
         });
         const sendScope = this.plugin.settings.sendScope || 2;
@@ -1872,27 +1938,30 @@ var require_settings_tab = __commonJS({
           this._cleanupMastodonPresets(acct.id);
           this.display();
         });
-        new Setting(cardEl).setName("\u663E\u793A\u540D\u79F0").setDesc("\u5728\u53D1\u9001\u9762\u677F\u4E2D\u663E\u793A\u7684\u6587\u5B57\uFF0C\u5982\u300C\u4E3B\u8D26\u53F7\u300D\u300C\u957F\u6BDB\u8C61\u300D").addText((text) => text.setPlaceholder("\u4E3B\u8D26\u53F7").setValue(acct.label || "").onChange(async (value) => {
+        new Setting(cardEl).setName("\u663E\u793A\u540D\u79F0").setDesc("\u5728\u53D1\u9001\u9762\u677F\u4E2D\u663E\u793A\u7684\u6587\u5B57\uFF0C\u5982\u300C\u4E3B\u8D26\u53F7\u300D\u300C\u957F\u6BDB\u8C61\u300D").addText((text) => text.setPlaceholder("\u4E3B\u8D26\u53F7").setValue(acct.label || "").onChange((value) => {
           this._updateMastodonAccount(acct.id, { label: value.trim() });
         }));
-        new Setting(cardEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://mastodon.social").addText((text) => text.setPlaceholder("https://mastodon.social").setValue(acct.serverUrl || "").onChange(async (value) => {
+        new Setting(cardEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://mastodon.social").addText((text) => text.setPlaceholder("https://mastodon.social").setValue(acct.serverUrl || "").onChange((value) => {
           this._updateMastodonAccount(acct.id, { serverUrl: value.trim() });
         }));
         new Setting(cardEl).setName("Access Token").addText((text) => {
           text.inputEl.type = "password";
-          text.setPlaceholder("\u4F60\u7684 Mastodon Access Token").setValue(acct.accessToken || "").onChange(async (value) => {
+          text.setPlaceholder("\u4F60\u7684 Mastodon Access Token").setValue(acct.accessToken || "").onChange((value) => {
             this._updateMastodonAccount(acct.id, { accessToken: value.trim() });
           });
         });
-        new Setting(cardEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("unlisted", "\u4E0D\u5217\u51FA").addOption("private", "\u4EC5\u5173\u6CE8\u8005").addOption("direct", "\u79C1\u4FE1").setValue(acct.visibility || "public").onChange(async (value) => {
+        new Setting(cardEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("unlisted", "\u4E0D\u5217\u51FA").addOption("private", "\u4EC5\u5173\u6CE8\u8005").addOption("direct", "\u79C1\u4FE1").setValue(acct.visibility || "public").onChange((value) => {
           this._updateMastodonAccount(acct.id, { visibility: value });
         }));
       }
-      async _updateMastodonAccount(accountId, patch) {
-        const mstdConfig = this.plugin.getAdapterConfig("mastodon") || {};
-        const accounts = this.plugin.getMastodonAccounts();
-        const updated = accounts.map((a) => a.id === accountId ? { ...a, ...patch } : a);
-        await this.plugin.setAdapterConfig("mastodon", { ...mstdConfig, accounts: updated });
+      _updateMastodonAccount(accountId, patch) {
+        this._scheduleSettingsSave(() => {
+          const mstdConfig = this.plugin.getAdapterConfig("mastodon") || {};
+          const accounts = this.plugin.getMastodonAccounts();
+          const updated = accounts.map((a) => a.id === accountId ? { ...a, ...patch } : a);
+          if (!this.plugin.settings.adaptersConfig) this.plugin.settings.adaptersConfig = {};
+          this.plugin.settings.adaptersConfig.mastodon = { ...mstdConfig, accounts: updated };
+        });
       }
       /**
        * 删除账号后清理预设中残留的 mastodon-account:<accountId> 引用，
@@ -1918,12 +1987,12 @@ var require_settings_tab = __commonJS({
         this._addEnabledToggle(containerEl, "missky", "Misskey");
         if (!this.plugin.isAdapterEnabled("missky")) return;
         const config = this.plugin.getAdapterConfig("missky") || {};
-        new Setting(containerEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://misskey.io").addText((text) => text.setPlaceholder("https://misskey.io").setValue(config.serverUrl || "").onChange(async (value) => this.plugin.setAdapterConfig("missky", { ...config, serverUrl: value.trim() })));
+        new Setting(containerEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://misskey.io").addText((text) => text.setPlaceholder("https://misskey.io").setValue(config.serverUrl || "").onChange((value) => this._scheduleAdapterConfigSave("missky", { serverUrl: value.trim() })));
         new Setting(containerEl).setName("API Token").addText((text) => {
           text.inputEl.type = "password";
-          text.setPlaceholder("\u4F60\u7684 Misskey API Token").setValue(config.apiToken || "").onChange(async (value) => this.plugin.setAdapterConfig("missky", { ...config, apiToken: value.trim() }));
+          text.setPlaceholder("\u4F60\u7684 Misskey API Token").setValue(config.apiToken || "").onChange((value) => this._scheduleAdapterConfigSave("missky", { apiToken: value.trim() }));
         });
-        new Setting(containerEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("home", "\u4E3B\u9875").addOption("followers", "\u4EC5\u5173\u6CE8\u8005").setValue(config.visibility || "public").onChange(async (value) => this.plugin.setAdapterConfig("missky", { ...config, visibility: value })));
+        new Setting(containerEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("home", "\u4E3B\u9875").addOption("followers", "\u4EC5\u5173\u6CE8\u8005").setValue(config.visibility || "public").onChange((value) => this._scheduleAdapterConfigSave("missky", { visibility: value })));
       }
       _renderNotion(containerEl) {
         this._addEnabledToggle(containerEl, "notion", "Notion");
@@ -1931,8 +2000,8 @@ var require_settings_tab = __commonJS({
         const config = this.plugin.getAdapterConfig("notion") || {};
         new Setting(containerEl).setName("Notion Token").setDesc("\u4F7F\u7528 Notion Personal Access Token\uFF0C\u4EC5\u4FDD\u5B58\u5728 Obsidian \u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u3002").addText((text) => {
           text.inputEl.type = "password";
-          text.setPlaceholder("ntn_...").setValue(config.token || "").onChange(async (value) => {
-            await this.plugin.setAdapterConfig("notion", { ...this.plugin.getAdapterConfig("notion"), token: value.trim() });
+          text.setPlaceholder("ntn_...").setValue(config.token || "").onChange((value) => {
+            this._scheduleAdapterConfigSave("notion", { token: value.trim() });
           });
         });
         new Setting(containerEl).setName("\u4FDD\u5B58\u76EE\u6807").setDesc("\u9009\u62E9\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA Notion \u9875\u9762\uFF0C\u6216\u5728 Data Source \u4E2D\u521B\u5EFA\u4E00\u6761\u8BB0\u5F55\u9875\u9762\u3002").addDropdown((dropdown) => dropdown.addOption("page", "\u4FDD\u5B58\u4E3A\u9875\u9762").addOption("database", "\u4FDD\u5B58\u5230\u6570\u636E\u5E93").setValue(config.targetType || "page").onChange(async (value) => {
@@ -1940,8 +2009,8 @@ var require_settings_tab = __commonJS({
           this.display();
         }));
         if ((config.targetType || "page") === "page") {
-          new Setting(containerEl).setName("\u65E5\u8BB0\u7236\u9875\u9762 Page ID").setDesc("\u521B\u5EFA\u5B50\u9875\u9762\u6216\u6BCF\u65E5\u9875\u9762\u7684 Notion \u7236\u9875\u9762 ID\u3002\u8BF7\u5148\u5C06\u8BE5\u9875\u9762\u8FDE\u63A5\u5230\u4F60\u7684 Notion Integration\u3002").addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.pageId || "").onChange(async (value) => {
-            await this.plugin.setAdapterConfig("notion", { ...this.plugin.getAdapterConfig("notion"), pageId: value.trim() });
+          new Setting(containerEl).setName("\u65E5\u8BB0\u7236\u9875\u9762 Page ID").setDesc("\u521B\u5EFA\u5B50\u9875\u9762\u6216\u6BCF\u65E5\u9875\u9762\u7684 Notion \u7236\u9875\u9762 ID\u3002\u8BF7\u5148\u5C06\u8BE5\u9875\u9762\u8FDE\u63A5\u5230\u4F60\u7684 Notion Integration\u3002").addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.pageId || "").onChange((value) => {
+            this._scheduleAdapterConfigSave("notion", { pageId: value.trim() });
           }));
           new Setting(containerEl).setName("\u9875\u9762\u5199\u5165\u65B9\u5F0F").setDesc("\u65B0\u5EFA\u5B50\u9875\u9762\u4F1A\u4E3A\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA\u4E00\u4E2A\u9875\u9762\uFF1B\u6BCF\u65E5\u8FFD\u52A0\u4F1A\u67E5\u627E\u6216\u521B\u5EFA\u5F53\u5929 YYYY-MM-DD \u9875\u9762\u5E76\u6301\u7EED\u8FFD\u52A0\u5185\u5BB9\u3002").addDropdown((dropdown) => dropdown.addOption("new_page", "\u6BCF\u6B21\u65B0\u5EFA\u5B50\u9875\u9762").addOption("daily_append", "\u8FFD\u52A0\u5230\u6BCF\u65E5\u65E5\u8BB0\u9875\u9762").setValue(config.pageWriteMode || "new_page").onChange(async (value) => {
             await this.plugin.setAdapterConfig("notion", { ...this.plugin.getAdapterConfig("notion"), pageWriteMode: value });
@@ -1951,8 +2020,8 @@ var require_settings_tab = __commonJS({
             new Setting(containerEl).setName("\u9875\u9762\u6807\u9898\u6765\u6E90").setDesc("\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898\uFF1A\u6807\u9898\u5757\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002\u6B63\u6587\u9996\u6807\u9898\uFF1A\u4ECE\u6B63\u6587\u7B2C\u4E00\u4E2A Markdown \u6807\u9898\u53D6\u540D\u3002\u65E0\u6807\u9898\uFF1A\u4E0D\u8BBE\u7F6E\u6807\u9898\u3002").addDropdown((dropdown) => dropdown.addOption("scope", "\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898").addOption("first_heading", "\u6309\u6B63\u6587\u7B2C\u4E00\u4E2A\u6807\u9898").addOption("none", "\u65E0\u6807\u9898").setValue(config.titleSource || "scope").onChange(async (value) => this.plugin.setAdapterConfig("notion", { ...this.plugin.getAdapterConfig("notion"), titleSource: value })));
           }
         } else {
-          new Setting(containerEl).setName("Data Source ID").setDesc("\u76EE\u6807 Notion Data Source \u7684 ID\uFF0C\u800C\u4E0D\u662F\u65E7\u7248\u6559\u7A0B\u4E2D\u7684 database ID\u3002").addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.dataSourceId || "").onChange(async (value) => {
-            await this.plugin.setAdapterConfig("notion", { ...this.plugin.getAdapterConfig("notion"), dataSourceId: value.trim() });
+          new Setting(containerEl).setName("Data Source ID").setDesc("\u76EE\u6807 Notion Data Source \u7684 ID\uFF0C\u800C\u4E0D\u662F\u65E7\u7248\u6559\u7A0B\u4E2D\u7684 database ID\u3002").addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.dataSourceId || "").onChange((value) => {
+            this._scheduleAdapterConfigSave("notion", { dataSourceId: value.trim() });
           }));
           new Setting(containerEl).setName("\u8BFB\u53D6\u6807\u9898\u5B57\u6BB5").setDesc(config.titleProperty ? `\u5F53\u524D\u6807\u9898\u5B57\u6BB5\uFF1A${config.titleProperty}` : "\u8BFB\u53D6 Data Source \u540E\u9009\u62E9 title \u7C7B\u578B\u5B57\u6BB5\u3002").addButton((button) => button.setButtonText("\u8BFB\u53D6\u5B57\u6BB5").onClick(async () => {
             try {
@@ -4163,22 +4232,42 @@ var JournalSyncPlugin = class extends Plugin {
     const uploadedByPath = /* @__PURE__ */ new Map();
     const failed = [];
     const uploadedRefs = [];
+    const failedRefs = [];
     for (const ref of refs) {
       if (!isImagePath(ref.target) || isRemoteUrl(ref.target) || isDataUrl(ref.target)) continue;
-      const file = await this._resolveImageFile(ref.target, currentFile);
-      if (!file) continue;
+      let file = null;
+      try {
+        file = await this._resolveImageFile(ref.target, currentFile);
+      } catch (error) {
+        failed.push({
+          target: ref.target,
+          raw: ref.raw,
+          reason: (error == null ? void 0 : error.message) || "\u8BFB\u53D6\u5931\u8D25"
+        });
+        failedRefs.push(ref);
+        continue;
+      }
+      if (!file) {
+        failed.push({ target: ref.target, raw: ref.raw, reason: "Vault \u4E2D\u672A\u627E\u5230\u8BE5\u6587\u4EF6" });
+        failedRefs.push(ref);
+        continue;
+      }
       if (!uploadedByPath.has(file.path)) {
         uploadedByPath.set(file.path, { filename: file.name, vaultPath: file.path });
       }
       uploadedRefs.push(Object.assign({}, ref, uploadedByPath.get(file.path)));
     }
-    const sortedRefs = uploadedRefs.slice().sort((a, b) => a.index - b.index);
+    const sortedRefs = [...uploadedRefs, ...failedRefs].sort((a, b) => a.index - b.index);
     let content = "";
     let cursor = 0;
-    sortedRefs.forEach((ref, idx) => {
+    let imageIndex = 0;
+    sortedRefs.forEach((ref) => {
       if (ref.index < cursor) return;
       content += markdown.slice(cursor, ref.index);
-      content += `@\u56FE\u7247${idx + 1}`;
+      if (uploadedRefs.includes(ref)) {
+        imageIndex += 1;
+        content += `@\u56FE\u7247${imageIndex}`;
+      }
       cursor = ref.end;
     });
     content += markdown.slice(cursor);
@@ -4262,6 +4351,7 @@ var JournalSyncPlugin = class extends Plugin {
    * 发送当前内容（触发 Send Modal）
    */
   async sendCurrentContent(editor, view) {
+    var _a, _b;
     try {
       if (!editor) {
         const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -4290,12 +4380,20 @@ var JournalSyncPlugin = class extends Plugin {
         };
       }
       if (processResult.failed.length > 0) {
-        new Notice(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5F20\uFF09\uFF0C\u53D1\u9001\u65F6\u5C06\u8DF3\u8FC7\u3002`);
+        const failedNames = [...new Set(processResult.failed.map((item) => item.target).filter(Boolean))];
+        const suffix = failedNames.length > 0 ? `\uFF1A${failedNames.slice(0, 3).join("\u3001")}${failedNames.length > 3 ? " \u7B49" : ""}` : "";
+        new Notice(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7${suffix}`, 1e4);
+      }
+      const preparedContent = (_a = processResult.content) != null ? _a : current.content;
+      const preparedImages = ((_b = processResult.richDraft) == null ? void 0 : _b.images) || [];
+      if (!preparedContent.trim() && preparedImages.length === 0) {
+        new Notice("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002");
+        return;
       }
       const readImageFile = (vaultPath) => this.readImageFromVault(vaultPath, currentFile);
       const noteTitle = current.heading || this.getNoteTitle(currentFile, current.source);
       new JournalSyncSendModal(this.app, this, {
-        content: processResult.content || current.content,
+        content: preparedContent,
         richDraft: processResult.richDraft,
         readImageFile,
         notionTitle: noteTitle
