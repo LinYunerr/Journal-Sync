@@ -31,6 +31,15 @@ export const manifest = {
                 desc: '在 flomo 网页版“API”页面获取',
                 required: true,
                 placeholder: 'https://flomoapp.com/iwh/...'
+            },
+            {
+                key: 'testConnection',
+                type: 'action',
+                label: '测试连接',
+                action: 'testConnection',
+                buttonLabel: '测试连接',
+                busyLabel: '连接中...',
+                desc: '使用当前 Flomo API URL 发送一条测试消息验证连接。'
             }
         ]
     }
@@ -137,4 +146,26 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
     }
 }
 
-export default { manifest, execute, validate };
+export async function runAction(actionId, config = {}, requestUrlFn) {
+    if (actionId !== 'testConnection') {
+        throw new Error(`Flomo 适配器不支持操作：${actionId}`);
+    }
+    const apiUrl = String(config.apiUrl || '').trim();
+    if (!apiUrl) throw new Error('请先配置 Flomo API URL');
+    const response = await requestUrlFn({
+        url: apiUrl,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Journal Sync 测试连接 ✓' }),
+        throw: false
+    });
+    let result = {};
+    try { result = response.json || JSON.parse(response.text); } catch {}
+    const isSuccess = response.status >= 200 && response.status < 300 && result.code === 0;
+    if (!isSuccess) {
+        throw new Error(result.message || `HTTP ${response.status}`);
+    }
+    return { success: true, message: 'Flomo 连接成功' };
+}
+
+export default { manifest, execute, validate, runAction };

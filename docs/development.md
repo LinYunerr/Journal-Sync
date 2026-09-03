@@ -20,7 +20,8 @@ This document contains the implementation, build, and release information that i
 | Publishing dialog, target presets, and Telegram channel selection | `src/ui/send-modal.js` |
 | Settings page shell: adapter tabs, enable toggles, manifest-driven generic rendering, debounced persistence | `src/ui/settings-tab.js` |
 | Adapter registration | `src/core/adapter-registry.js` |
-| Rich content and Telegram segment rendering | `src/core/content-renderer.js` |
+| Unified payload builder (content + images), used by send-modal.js | `src/core/payload.js` |
+| Telegraph API client, Markdown→Node conversion, used by telegram.js | `src/core/telegraph.js` |
 | Platform manifests, settings schema or custom panels, requests, and validation | `src/adapters/` |
 | Plugin metadata and compatibility | `manifest.json` |
 | Plugin styles | `styles.css` |
@@ -158,4 +159,8 @@ Before creating a release:
 3. Confirm that no credentials, `data.json`, or personal information are staged.
 4. Push the version commit and matching tag.
 
-`.github/workflows/release.yml` verifies version alignment, installs locked dependencies, builds the production bundle, attests the build provenance, and creates a GitHub Release containing only `main.js`, `manifest.json`, and `styles.css`.
+`.github/workflows/release.yml` verifies version alignment, installs locked dependencies, builds the production bundle, attests the build provenance, and creates a GitHub Release containing only `main.js`, `manifest.json`, and `styles.css`. Release notes are extracted from `CHANGELOG.md` — the workflow looks for a `## [version]` section matching the tag and uses it as the GitHub Release body, falling back to a plain title if no entry is found.
+
+### Changelog
+
+Every release must have a `## [version]` section in `CHANGELOG.md` with human-readable update notes organized under `Added`, `Changed`, `Fixed`, etc. The release workflow uses this section as the GitHub Release body, so users see meaningful update descriptions instead of auto-generated commit lists.

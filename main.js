@@ -1,3 +1,8 @@
+/*!
+ * Journal Sync v1.0.7
+ * Build: 2026-09-03 (production)
+ * https://github.com/LinYunerr/Journal-Sync
+ */
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -206,8 +211,8 @@ var require_payload = __commonJS({
 // src/ui/send-modal.js
 var require_send_modal = __commonJS({
   "src/ui/send-modal.js"(exports2, module2) {
-    var { Modal, Notice: Notice5 } = require("obsidian");
-    var { buildPayload } = require_payload();
+    var { Modal, Notice: Notice6 } = require("obsidian");
+    var { buildPayload, getMimeType: getMimeType3 } = require_payload();
     function hasRemoteImageReference(content) {
       return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ""));
     }
@@ -608,8 +613,10 @@ ${tokenStr}` : tokenStr;
         range.insertNode(token);
         range.setStartAfter(spacer);
         range.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(range);
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
         richDiv.dispatchEvent(new Event("input"));
       }
       /**
@@ -666,7 +673,7 @@ ${tokenStr}` : tokenStr;
           } else {
             this.readImageFile(img.vaultPath).then((arrayBuf) => {
               if (!arrayBuf) return;
-              const blob = new Blob([arrayBuf]);
+              const blob = new Blob([arrayBuf], { type: getMimeType3(img.filename) });
               const url = URL.createObjectURL(blob);
               if (renderId !== this._imageGridRenderId) {
                 URL.revokeObjectURL(url);
@@ -847,7 +854,12 @@ ${tokenStr}` : tokenStr;
       renderSimpleTargets() {
         if (!this.simpleTargetsEl) return;
         this.simpleTargetsEl.empty();
-        const adapters = this.plugin.adapterRegistry.getAll();
+        const adapters = this.plugin.adapterRegistry.getAll().slice().sort((a, b) => {
+          var _a, _b, _c, _d;
+          const ao = (_b = (_a = a == null ? void 0 : a.manifest) == null ? void 0 : _a.displayOrder) != null ? _b : Infinity;
+          const bo = (_d = (_c = b == null ? void 0 : b.manifest) == null ? void 0 : _c.displayOrder) != null ? _d : Infinity;
+          return ao - bo;
+        });
         const generalAdapters = adapters.filter((a) => a.manifest.id !== "telegram" && a.manifest.id !== "mastodon" && this.plugin.isAdapterEnabled(a.manifest.id));
         if (generalAdapters.length === 0) return;
         for (const adapter of generalAdapters) {
@@ -1118,7 +1130,16 @@ ${tokenStr}` : tokenStr;
         const targetAdapters = Array.from(this.selectedTargets).filter(
           (adapterId) => adapterId !== "telegram" && adapterId !== "mastodon" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
         );
-        const tgChannels = plugin.adapterRegistry.has("telegram") && plugin.isAdapterEnabled("telegram") ? Array.from(this.selectedTgChannels) : [];
+        let tgChannels = [];
+        if (plugin.adapterRegistry.has("telegram") && plugin.isAdapterEnabled("telegram")) {
+          const tgConfig = plugin.getAdapterConfig("telegram");
+          const validIds = new Set((Array.isArray(tgConfig.channels) ? tgConfig.channels : []).map((ch) => String(ch.id)));
+          const staleIds = Array.from(this.selectedTgChannels).filter((id) => !validIds.has(String(id)));
+          if (staleIds.length > 0) {
+            new Notice6(`\u4EE5\u4E0B Telegram \u9891\u9053\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5DF2\u81EA\u52A8\u8DF3\u8FC7\uFF1A${staleIds.join("\u3001")}`, 8e3);
+          }
+          tgChannels = Array.from(this.selectedTgChannels).filter((id) => validIds.has(String(id)));
+        }
         if (tgChannels.length > 0) {
           targetAdapters.push("telegram");
         }
@@ -1127,7 +1148,7 @@ ${tokenStr}` : tokenStr;
           targetAdapters.push("mastodon");
         }
         if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
-          new Notice5("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
+          new Notice6("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
           return;
         }
         const rawContent = this.content;
@@ -1149,7 +1170,7 @@ ${tokenStr}` : tokenStr;
           payload.plainText.trim() || payload.attachments.length > 0 || hasRemoteImageReference(payload.content)
         );
         if (!hasSendableContent) {
-          new Notice5("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
+          new Notice6("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
           return;
         }
         const targetConfigOverrides = {};
@@ -1165,7 +1186,7 @@ ${tokenStr}` : tokenStr;
         try {
           capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
         } catch (error) {
-          new Notice5(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          new Notice6(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
           return;
         }
         const warningMessages = capabilityWarnings.warnings || [];
@@ -1200,18 +1221,18 @@ ${tokenStr}` : tokenStr;
           }
           validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
-          new Notice5(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          new Notice6(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
           return;
         }
         if (validation.warnings.length > 0) {
-          new Notice5(`\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A${validation.warnings.join("\uFF1B")}`, 1e4);
+          new Notice6(`\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A${validation.warnings.join("\uFF1B")}`, 1e4);
         }
         if (validation.errors.length > 0) {
-          new Notice5(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
+          new Notice6(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
           return;
         }
         this.close();
-        new Notice5("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
+        new Notice6("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
         (async () => {
           const results = {};
           for (const adapterId of targetAdapters) {
@@ -1266,9 +1287,9 @@ ${tokenStr}` : tokenStr;
             return result.success ? result.skipped ? `${displayId}: \u8DF3\u8FC7` : `${displayId}: \u6210\u529F${warn}` : `${displayId}: \u5931\u8D25(${result.error || "\u672A\u77E5\u9519\u8BEF"})`;
           }).join("\uFF1B\n");
           if (anyFailure) {
-            new Notice5(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 1e4);
+            new Notice6(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 1e4);
           } else {
-            new Notice5(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
+            new Notice6(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
           }
         })().finally(() => {
           for (const image of images) {
@@ -1299,7 +1320,7 @@ ${tokenStr}` : tokenStr;
 // src/ui/settings-tab.js
 var require_settings_tab = __commonJS({
   "src/ui/settings-tab.js"(exports2, module2) {
-    var { PluginSettingTab, Setting: Setting5, Notice: Notice5 } = require("obsidian");
+    var { PluginSettingTab, Setting: Setting5, Notice: Notice6, Platform: Platform2 } = require("obsidian");
     var JournalSyncSettingTab2 = class extends PluginSettingTab {
       constructor(app, plugin) {
         super(app, plugin);
@@ -1339,7 +1360,8 @@ var require_settings_tab = __commonJS({
         button.toggleClass("is-active", this.activeSection === section);
         button.addEventListener("click", () => {
           this.activeSection = section;
-          this.display();
+          void this.display().catch(() => {
+          });
         });
       }
       /**
@@ -1364,7 +1386,7 @@ var require_settings_tab = __commonJS({
         if (!this._savePending) return;
         this._savePending = false;
         this._savePromise = this.plugin.saveSettings().catch((error) => {
-          new Notice5(`\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A${error.message || String(error)}`);
+          new Notice6(`\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A${error.message || String(error)}`);
         });
         await this._savePromise;
         this._savePromise = null;
@@ -1411,9 +1433,10 @@ var require_settings_tab = __commonJS({
             const currentLv = tgCfg.telegraphTitleLevel || 1;
             if (currentLv > maxLv) {
               await this.plugin.setAdapterConfig("telegram", { ...tgCfg, telegraphTitleLevel: maxLv });
+            } else {
+              await this.plugin.saveSettings();
             }
-            await this.plugin.saveSettings();
-            this.display();
+            await this.display();
           });
         });
         new Setting5(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u7EA7\u522B").setDesc("\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002").addDropdown((dropdown) => {
@@ -1464,7 +1487,8 @@ var require_settings_tab = __commonJS({
           button.toggleClass("is-active", this.activePlugin === id);
           button.addEventListener("click", () => {
             this.activePlugin = id;
-            this.display();
+            void this.display().catch(() => {
+            });
           });
         }
         const panelEl = containerEl.createDiv({ cls: "js-bridge-plugin-panel" });
@@ -1482,14 +1506,15 @@ var require_settings_tab = __commonJS({
             this._renderGenericAdapterSettings(panelEl, adapter);
           }
         } catch (error) {
-          new Notice5(`${adapter.manifest.name || adapter.manifest.id} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
+          new Notice6(`${adapter.manifest.name || adapter.manifest.id} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
         }
       }
       _addEnabledToggle(containerEl, id, label) {
         new Setting5(containerEl).setName(`\u542F\u7528 ${label}`).addToggle((toggle) => toggle.setValue(this.plugin.isAdapterEnabled(id)).onChange(async (value) => {
           this.plugin.setAdapterEnabled(id, value);
           await this.plugin.saveSettings();
-          this.display();
+          void this.display().catch(() => {
+          });
         }));
       }
       /**
@@ -1501,7 +1526,10 @@ var require_settings_tab = __commonJS({
           containerEl,
           scheduleConfigSave: (patch) => this._scheduleAdapterConfigSave(id, patch),
           saveConfig: async (patch) => this.plugin.setAdapterConfig(id, { ...this.plugin.getAdapterConfig(id), ...patch }),
-          refresh: () => this.display(),
+          refresh: () => {
+            void this.display().catch(() => {
+            });
+          },
           requestUrl: this.plugin.requestUrl.bind(this.plugin)
         };
       }
@@ -1600,11 +1628,12 @@ var require_settings_tab = __commonJS({
           if (field.busyLabel) btn.setButtonText(field.busyLabel);
           btn.disabled = true;
           try {
-            const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl);
-            new Notice5((result == null ? void 0 : result.message) || field.successMessage || "\u64CD\u4F5C\u5B8C\u6210");
-            this.display();
+            const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl, { mobile: Platform2.isMobile });
+            new Notice6((result == null ? void 0 : result.message) || field.successMessage || "\u64CD\u4F5C\u5B8C\u6210");
+            void this.display().catch(() => {
+            });
           } catch (error) {
-            new Notice5(`${buttonText || "\u64CD\u4F5C"}\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
+            new Notice6(`${buttonText || "\u64CD\u4F5C"}\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
           } finally {
             btn.setButtonText(buttonText || "\u6267\u884C");
             btn.disabled = false;
@@ -1634,6 +1663,7 @@ __export(flomo_exports, {
   default: () => flomo_default,
   execute: () => execute,
   manifest: () => manifest,
+  runAction: () => runAction,
   validate: () => validate
 });
 function extractRemoteImageUrls(content) {
@@ -1707,6 +1737,30 @@ async function execute({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
     return { success: false, error: error.message, warnings };
   }
 }
+async function runAction(actionId, config = {}, requestUrlFn) {
+  if (actionId !== "testConnection") {
+    throw new Error(`Flomo \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+  }
+  const apiUrl = String(config.apiUrl || "").trim();
+  if (!apiUrl) throw new Error("\u8BF7\u5148\u914D\u7F6E Flomo API URL");
+  const response = await requestUrlFn({
+    url: apiUrl,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: "Journal Sync \u6D4B\u8BD5\u8FDE\u63A5 \u2713" }),
+    throw: false
+  });
+  let result = {};
+  try {
+    result = response.json || JSON.parse(response.text);
+  } catch (e) {
+  }
+  const isSuccess = response.status >= 200 && response.status < 300 && result.code === 0;
+  if (!isSuccess) {
+    throw new Error(result.message || `HTTP ${response.status}`);
+  }
+  return { success: true, message: "Flomo \u8FDE\u63A5\u6210\u529F" };
+}
 var MAX_FLOMO_IMAGES, manifest, flomo_default;
 var init_flomo = __esm({
   "src/adapters/flomo.js"() {
@@ -1736,11 +1790,20 @@ var init_flomo = __esm({
             desc: "\u5728 flomo \u7F51\u9875\u7248\u201CAPI\u201D\u9875\u9762\u83B7\u53D6",
             required: true,
             placeholder: "https://flomoapp.com/iwh/..."
+          },
+          {
+            key: "testConnection",
+            type: "action",
+            label: "\u6D4B\u8BD5\u8FDE\u63A5",
+            action: "testConnection",
+            buttonLabel: "\u6D4B\u8BD5\u8FDE\u63A5",
+            busyLabel: "\u8FDE\u63A5\u4E2D...",
+            desc: "\u4F7F\u7528\u5F53\u524D Flomo API URL \u53D1\u9001\u4E00\u6761\u6D4B\u8BD5\u6D88\u606F\u9A8C\u8BC1\u8FDE\u63A5\u3002"
           }
         ]
       }
     };
-    flomo_default = { manifest, execute, validate };
+    flomo_default = { manifest, execute, validate, runAction };
   }
 });
 
@@ -2064,7 +2127,7 @@ __export(telegram_exports, {
   listChannels: () => listChannels,
   manifest: () => manifest2,
   renderSettings: () => renderSettings,
-  runAction: () => runAction,
+  runAction: () => runAction2,
   validate: () => validate2
 });
 function escapeTelegramMarkdownWikilinks(text) {
@@ -2753,7 +2816,7 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
     warnings
   };
 }
-async function runAction(actionId, config, requestUrlFn) {
+async function runAction2(actionId, config, requestUrlFn) {
   if (actionId === "discoverChannels" || actionId === "testConnection") {
     if (!(config == null ? void 0 : config.botToken)) throw new Error("Bot Token \u672A\u914D\u7F6E");
     const channels = await listChannels(config.botToken, config.channels || [], requestUrlFn);
@@ -2957,7 +3020,7 @@ var init_telegram = __esm({
       telegraphAuthorName: "",
       telegraphTitleLevel: 1
     };
-    telegram_default = { manifest: manifest2, defaultConfig, renderSettings, execute: execute2, validate: validate2, listChannels, runAction };
+    telegram_default = { manifest: manifest2, defaultConfig, renderSettings, execute: execute2, validate: validate2, listChannels, runAction: runAction2 };
   }
 });
 
@@ -3172,6 +3235,45 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
   new import_obsidian2.Setting(cardEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("unlisted", "\u4E0D\u5217\u51FA").addOption("private", "\u4EC5\u5173\u6CE8\u8005").addOption("direct", "\u79C1\u4FE1").setValue(acct.visibility || "public").onChange((value) => {
     updateMastodonAccount(ctx, acct.id, { visibility: value });
   }));
+  new import_obsidian2.Setting(cardEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u9A8C\u8BC1\u5F53\u524D\u8D26\u53F7\u7684\u5B9E\u4F8B\u5730\u5740\u548C Access Token \u662F\u5426\u6709\u6548\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+    var _a;
+    const currentConfig = ctx.plugin.getMastodonAccount(acct.id) || {};
+    const serverUrl = String(currentConfig.serverUrl || "").trim();
+    const accessToken = String(currentConfig.accessToken || "").trim();
+    if (!serverUrl || !accessToken) {
+      new import_obsidian2.Notice("\u8BF7\u5148\u914D\u7F6E\u5B9E\u4F8B\u5730\u5740\u548C Access Token");
+      return;
+    }
+    btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+    btn.disabled = true;
+    try {
+      const baseUrl = serverUrl.replace(/\/+$/, "");
+      const response = await ctx.requestUrl({
+        url: `${baseUrl}/api/v1/accounts/verify_credentials`,
+        method: "GET",
+        headers: { "Authorization": `Bearer ${accessToken}` },
+        throw: false
+      });
+      if (response.status >= 200 && response.status < 300) {
+        const result = response.json || {};
+        const display = result.display_name || result.username || "\u672A\u77E5";
+        new import_obsidian2.Notice(`Mastodon \u8FDE\u63A5\u6210\u529F\uFF08${display}\uFF09`);
+      } else {
+        let errMsg = "";
+        try {
+          errMsg = ((_a = response.json) == null ? void 0 : _a.error) || response.text || `HTTP ${response.status}`;
+        } catch (e) {
+          errMsg = `HTTP ${response.status}`;
+        }
+        new import_obsidian2.Notice(`Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A${errMsg}`);
+      }
+    } catch (error) {
+      new import_obsidian2.Notice(`Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A${error.message || String(error)}`);
+    } finally {
+      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.disabled = false;
+    }
+  }));
 }
 function updateMastodonAccount(ctx, accountId, patch) {
   const accounts = ctx.plugin.getMastodonAccounts();
@@ -3257,6 +3359,7 @@ __export(missky_exports, {
   default: () => missky_default,
   execute: () => execute4,
   manifest: () => manifest4,
+  runAction: () => runAction3,
   validate: () => validate4
 });
 function getMimeType2(filename) {
@@ -3398,6 +3501,39 @@ async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
     return { success: false, error: error.message, warnings };
   }
 }
+async function runAction3(actionId, config = {}, requestUrlFn) {
+  var _a, _b;
+  if (actionId !== "testConnection") {
+    throw new Error(`Misskey \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+  }
+  const serverUrl = String(config.serverUrl || "").trim();
+  const apiToken = String(config.apiToken || "").trim();
+  if (!serverUrl || !apiToken) throw new Error("\u8BF7\u5148\u914D\u7F6E Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token");
+  const baseUrl = serverUrl.replace(/\/+$/, "");
+  const response = await requestUrlFn({
+    url: `${baseUrl}/api/i`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ i: apiToken }),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    let errMsg = "";
+    try {
+      errMsg = ((_b = (_a = response.json) == null ? void 0 : _a.error) == null ? void 0 : _b.message) || response.text || `HTTP ${response.status}`;
+    } catch (e) {
+      errMsg = `HTTP ${response.status}`;
+    }
+    throw new Error(errMsg);
+  }
+  let result = {};
+  try {
+    result = response.json || {};
+  } catch (e) {
+  }
+  const username = result.username || result.name || "\u672A\u77E5";
+  return { success: true, message: `Misskey \u8FDE\u63A5\u6210\u529F\uFF08\u7528\u6237\uFF1A${username}\uFF09` };
+}
 var manifest4, MAX_MISSKEY_IMAGES, missky_default;
 var init_missky = __esm({
   "src/adapters/missky.js"() {
@@ -3444,12 +3580,21 @@ var init_missky = __esm({
               { value: "specified", label: "\u79C1\u4FE1" }
             ],
             default: "public"
+          },
+          {
+            key: "testConnection",
+            type: "action",
+            label: "\u6D4B\u8BD5\u8FDE\u63A5",
+            action: "testConnection",
+            buttonLabel: "\u6D4B\u8BD5\u8FDE\u63A5",
+            busyLabel: "\u8FDE\u63A5\u4E2D...",
+            desc: "\u9A8C\u8BC1 Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token \u662F\u5426\u6709\u6548\u3002"
           }
         ]
       }
     };
     MAX_MISSKEY_IMAGES = manifest4.capabilities.maxAttachments;
-    missky_default = { manifest: manifest4, execute: execute4, validate: validate4 };
+    missky_default = { manifest: manifest4, execute: execute4, validate: validate4, runAction: runAction3 };
   }
 });
 
@@ -3912,6 +4057,37 @@ function renderSettings3(containerEl, ctx) {
       ctx.scheduleConfigSave({ token: value.trim() });
     });
   });
+  new import_obsidian3.Setting(containerEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u9A8C\u8BC1 Notion Token \u662F\u5426\u6709\u6548\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+    var _a, _b;
+    const currentConfig = ctx.plugin.getAdapterConfig("notion") || {};
+    const token = String(currentConfig.token || "").trim();
+    if (!token) {
+      new import_obsidian3.Notice("\u8BF7\u5148\u914D\u7F6E Notion Token");
+      return;
+    }
+    btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+    btn.disabled = true;
+    try {
+      const response = await notionRequest(ctx.requestUrl, token, {
+        url: `${NOTION_API_BASE}/users/me`,
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        throw: false
+      });
+      if (response.status >= 200 && response.status < 300) {
+        const result = response.json || {};
+        const name = result.name || ((_b = (_a = result.bot) == null ? void 0 : _a.owner) == null ? void 0 : _b.name) || "\u672A\u77E5";
+        new import_obsidian3.Notice(`Notion \u8FDE\u63A5\u6210\u529F\uFF08${name}\uFF09`);
+      } else {
+        new import_obsidian3.Notice(`Notion \u8FDE\u63A5\u5931\u8D25\uFF1A${getResponseError(response)}`);
+      }
+    } catch (error) {
+      new import_obsidian3.Notice(`Notion \u8FDE\u63A5\u5931\u8D25\uFF1A${error.message || String(error)}`);
+    } finally {
+      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.disabled = false;
+    }
+  }));
   new import_obsidian3.Setting(containerEl).setName("\u4FDD\u5B58\u76EE\u6807").setDesc("\u9009\u62E9\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA Notion \u9875\u9762\uFF0C\u6216\u5728 Data Source \u4E2D\u521B\u5EFA\u4E00\u6761\u8BB0\u5F55\u9875\u9762\u3002").addDropdown((dropdown) => dropdown.addOption("page", "\u4FDD\u5B58\u4E3A\u9875\u9762").addOption("database", "\u4FDD\u5B58\u5230\u6570\u636E\u5E93").setValue(config.targetType || "page").onChange(async (value) => {
     await ctx.saveConfig({ targetType: value });
     ctx.refresh();
@@ -4405,7 +4581,7 @@ var require_bluesky = __commonJS({
         return { success: false, error: error.message || String(error), warnings };
       }
     }
-    async function runAction3(actionId, config, requestUrlFn) {
+    async function runAction5(actionId, config, requestUrlFn) {
       if (actionId !== "testConnection") {
         throw new Error(`Bluesky \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
       }
@@ -4418,7 +4594,7 @@ var require_bluesky = __commonJS({
       const session = await createSession(serviceUrl, identifier, appPassword, requestUrlFn);
       return { success: true, message: `\u5DF2\u8FDE\u63A5 ${session.handle || identifier}` };
     }
-    module2.exports = { manifest: manifest7, execute: execute7, validate: validate7, runAction: runAction3 };
+    module2.exports = { manifest: manifest7, execute: execute7, validate: validate7, runAction: runAction5 };
   }
 });
 
@@ -4430,7 +4606,7 @@ __export(weibo_exports, {
   execute: () => execute6,
   manifest: () => manifest6,
   renderSettings: () => renderSettings4,
-  runAction: () => runAction2,
+  runAction: () => runAction4,
   validate: () => validate6
 });
 function weiboTextLength(text) {
@@ -4464,7 +4640,7 @@ function weiboApiErrorMessage(response, actionLabel) {
   } catch (e) {
   }
   const errorCode = Number(body.error_code || body.code || 0) || 0;
-  const rawError = String(body.error || body.error_request || response.text || "");
+  const rawError = String(body.error || body.error_description || response.text || "");
   if (rawError.includes("\u91CD\u590D")) return "\u5FAE\u535A\u62D2\u7EDD\u8FDE\u7EED\u91CD\u590D\u5185\u5BB9\uFF0C\u8BF7\u4FEE\u6539\u5185\u5BB9\u540E\u518D\u8BD5";
   if (errorCode && WEIBO_ERROR_MESSAGES[errorCode]) return WEIBO_ERROR_MESSAGES[errorCode];
   if (response.status === 401) return "\u5FAE\u535A\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743";
@@ -4704,7 +4880,7 @@ function extractAuthCode(raw) {
   }
   return { code: input, state: "" };
 }
-async function runAction2(actionId, config = {}, requestUrlFn, options = {}) {
+async function runAction4(actionId, config = {}, requestUrlFn, options = {}) {
   var _a, _b;
   if (actionId === "getAuthorizeUrl") {
     const appKey = String((config == null ? void 0 : config.appKey) || "").trim();
@@ -4794,6 +4970,7 @@ async function runAction2(actionId, config = {}, requestUrlFn, options = {}) {
 }
 function renderSettings4(containerEl, ctx) {
   const config = ctx.plugin.getAdapterConfig("weibo") || {};
+  new import_obsidian4.Setting(containerEl).setName("\u26A0\uFE0F \u5F53\u524D\u63D2\u4EF6\u672A\u7ECF\u6D4B\u8BD5").setDesc("\u5FAE\u535A\u9002\u914D\u5668\u5C1A\u672A\u7ECF\u8FC7\u5B8C\u6574\u6D4B\u8BD5\uFF0C\u4F7F\u7528\u4E2D\u5982\u9047\u95EE\u9898\uFF0C\u6B22\u8FCE\u5728 GitHub \u4E0A\u63D0 issue \u53CD\u9988\u3002");
   new import_obsidian4.Setting(containerEl).setName("\u5FAE\u535A\u5F00\u653E\u5E73\u53F0").setDesc("\u9700\u5728\u5FAE\u535A\u5F00\u653E\u5E73\u53F0\uFF08open.weibo.com\uFF09\u521B\u5EFA\u5E94\u7528\u540E\u4F7F\u7528\uFF1A\u2460 \u6CE8\u518C\u5F00\u53D1\u8005\u5E76\u5B8C\u6210\u4E2A\u4EBA\u8EAB\u4EFD\u8BA4\u8BC1\uFF1B\u2461 \u521B\u5EFA\u300C\u7F51\u7AD9\u5E94\u7528\u300D\uFF0C\u6388\u6743\u56DE\u8C03\u9875\u586B https://api.weibo.com/oauth2/default.html\uFF1B\u2462 \u5EFA\u8BAE\u5728\u300C\u9AD8\u7EA7\u4FE1\u606F \u2192 OAuth2.0 \u6388\u6743\u8BBE\u7F6E\u300D\u4E2D\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF0C\u907F\u514D token \u77ED\u65F6\u95F4\u8FC7\u671F\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002");
   new import_obsidian4.Setting(containerEl).setName("App Key").setDesc("\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Key\u3002").addText((text) => text.setPlaceholder("App Key").setValue(config.appKey || "").onChange((value) => ctx.scheduleConfigSave({ appKey: value.trim() })));
   new import_obsidian4.Setting(containerEl).setName("App Secret").setDesc("\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002").addText((text) => {
@@ -4809,7 +4986,7 @@ function renderSettings4(containerEl, ctx) {
     try {
       btn.setButtonText("\u6253\u5F00\u4E2D...");
       btn.disabled = true;
-      const result = await runAction2(
+      const result = await runAction4(
         "getAuthorizeUrl",
         ctx.plugin.getAdapterConfig("weibo"),
         ctx.requestUrl,
@@ -4845,7 +5022,7 @@ function renderSettings4(containerEl, ctx) {
     try {
       btn.setButtonText("\u6362\u53D6\u4E2D...");
       btn.disabled = true;
-      const result = await runAction2(
+      const result = await runAction4(
         "exchangeToken",
         { ...ctx.plugin.getAdapterConfig("weibo"), code: authCode },
         ctx.requestUrl
@@ -4870,7 +5047,7 @@ function renderSettings4(containerEl, ctx) {
     try {
       btn.setButtonText("\u8FDE\u63A5\u4E2D...");
       btn.disabled = true;
-      const result = await runAction2(
+      const result = await runAction4(
         "testConnection",
         ctx.plugin.getAdapterConfig("weibo"),
         ctx.requestUrl
@@ -4945,14 +5122,14 @@ var init_weibo = __esm({
     };
     pendingAuthState = "";
     BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    weibo_default = { manifest: manifest6, execute: execute6, validate: validate6, runAction: runAction2, renderSettings: renderSettings4, defaultConfig: defaultConfig4 };
+    weibo_default = { manifest: manifest6, execute: execute6, validate: validate6, runAction: runAction4, renderSettings: renderSettings4, defaultConfig: defaultConfig4 };
   }
 });
 
 // src/main.js
 var {
   Plugin,
-  Notice: Notice4,
+  Notice: Notice5,
   MarkdownView,
   requestUrl
 } = require("obsidian");
@@ -5019,9 +5196,6 @@ function dirnameVaultPath(p) {
   const i = n.lastIndexOf("/");
   return i >= 0 ? n.slice(0, i) : "";
 }
-function normalizeAbsPath(v) {
-  return String(v || "").replace(/\\/g, "/").replace(/\/+$/, "");
-}
 function isImagePath(v) {
   const clean = String(v || "").split("#")[0].split("?")[0];
   const ext = clean.includes(".") ? clean.split(".").pop().toLowerCase() : "";
@@ -5032,14 +5206,6 @@ function isRemoteUrl(v) {
 }
 function isDataUrl(v) {
   return /^data:/i.test(String(v || "").trim());
-}
-function positionToOffset(doc, pos) {
-  if (!pos || typeof pos.line !== "number") return 0;
-  const lines = doc.split("\n");
-  const line = Math.max(0, Math.min(pos.line, lines.length - 1));
-  let off = 0;
-  for (let i = 0; i < line; i++) off += lines[i].length + 1;
-  return off + Math.max(0, Math.min(pos.ch, lines[line].length));
 }
 function parseImageRefs(markdown) {
   const refs = [];
@@ -5067,22 +5233,19 @@ function parseImageRefs(markdown) {
     const idx = m.index + m[1].length;
     refs.push({ raw: m[2], target: t, type: "bare", index: idx, end: idx + m[2].length });
   }
-  return refs.sort((a, b) => a.index - b.index);
+  const codeRanges = [];
+  const fenceRe = /```[^\n]*[\s\S]*?```/g;
+  let fm;
+  while ((fm = fenceRe.exec(markdown)) !== null) {
+    codeRanges.push([fm.index, fm.index + fm[0].length]);
+  }
+  const filtered = codeRanges.length === 0 ? refs : refs.filter((ref) => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
+  return filtered.sort((a, b) => a.index - b.index);
 }
 function getSelectedOrBlockContent(editor, scope = 2) {
   const selected = editor.getSelection();
   if (selected && selected.trim()) {
-    const doc2 = editor.getValue().replace(/\r\n/g, "\n");
-    const from = editor.getCursor("from");
-    const to = editor.getCursor("to");
-    return {
-      content: selected.trim(),
-      heading: "",
-      source: "selection",
-      selectionStart: positionToOffset(doc2, from),
-      selectionEnd: positionToOffset(doc2, to),
-      doc: doc2
-    };
+    return { content: selected.trim(), heading: "", source: "selection" };
   }
   const doc = editor.getValue().replace(/\r\n/g, "\n");
   const lines = doc.split("\n");
@@ -5287,25 +5450,6 @@ var JournalSyncPlugin = class extends Plugin {
   getMastodonAccount(accountId) {
     return this.getMastodonAccounts().find((a) => a.id === accountId) || null;
   }
-  // ── Obsidian Vault 工具 ──────────────────────
-  getVaultBasePath() {
-    const adapter = this.app.vault.adapter;
-    if (adapter && typeof adapter.getBasePath === "function") {
-      return normalizeAbsPath(adapter.getBasePath());
-    }
-    return "";
-  }
-  absoluteToVaultPath(absPath) {
-    const base = this.getVaultBasePath();
-    const norm = normalizeAbsPath(absPath);
-    if (!norm) return "";
-    if (!base) return !/^(?:[a-zA-Z]|\/)/.test(norm) ? normalizeVaultPath(norm) : "";
-    if (norm === base) return "";
-    if (!norm.startsWith(`${base}/`)) {
-      return !/^(?:[a-zA-Z]|\/)/.test(norm) ? normalizeVaultPath(norm) : null;
-    }
-    return normalizeVaultPath(norm.slice(base.length + 1));
-  }
   /**
    * 从 Vault 读取图片为 ArrayBuffer
    * @param {string} filename - 图片文件名或 vault 路径
@@ -5380,9 +5524,7 @@ var JournalSyncPlugin = class extends Plugin {
     content += markdown.slice(cursor);
     return {
       content: content.trim(),
-      imageFilenames: Array.from(uploadedByPath.values()).map((image) => image.vaultPath).filter(Boolean),
       richDraft: buildRichDraftFromUploadedMarkdown(markdown, uploadedRefs),
-      imageRefs: uploadedRefs,
       failed
     };
   }
@@ -5445,9 +5587,9 @@ var JournalSyncPlugin = class extends Plugin {
         view.editor.setCursor({ line: cursorLine, ch: 0 });
         view.editor.focus();
       }, 50);
-      new Notice4("\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002");
+      new Notice5("\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002");
     } catch (error) {
-      new Notice4(error.message || String(error));
+      new Notice5(error.message || String(error));
     }
   }
   getNoteTitle(file, source) {
@@ -5465,12 +5607,12 @@ var JournalSyncPlugin = class extends Plugin {
         editor = activeView == null ? void 0 : activeView.editor;
       }
       if (!editor) {
-        new Notice4("\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0");
+        new Notice5("\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0");
         return;
       }
       const current = getSelectedOrBlockContent(editor, this.settings.sendScope);
       if (!current || !current.content.trim()) {
-        new Notice4("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002");
+        new Notice5("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002");
         return;
       }
       const currentFile = (view == null ? void 0 : view.file) || this.app.workspace.getActiveFile();
@@ -5480,21 +5622,19 @@ var JournalSyncPlugin = class extends Plugin {
       } else {
         processResult = {
           content: current.content,
-          imageFilenames: [],
           richDraft: buildRichDraftFromUploadedMarkdown(current.content, []),
-          imageRefs: [],
           failed: []
         };
       }
       if (processResult.failed.length > 0) {
         const failedNames = [...new Set(processResult.failed.map((item) => item.target).filter(Boolean))];
         const suffix = failedNames.length > 0 ? `\uFF1A${failedNames.slice(0, 3).join("\u3001")}${failedNames.length > 3 ? " \u7B49" : ""}` : "";
-        new Notice4(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7${suffix}`, 1e4);
+        new Notice5(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7${suffix}`, 1e4);
       }
       const preparedContent = (_a = processResult.content) != null ? _a : current.content;
       const preparedImages = ((_b = processResult.richDraft) == null ? void 0 : _b.images) || [];
       if (!preparedContent.trim() && preparedImages.length === 0) {
-        new Notice4("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002");
+        new Notice5("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002");
         return;
       }
       const readImageFile = (vaultPath) => this.readImageFromVault(vaultPath, currentFile);
@@ -5506,7 +5646,7 @@ var JournalSyncPlugin = class extends Plugin {
         notionTitle: noteTitle
       }).open();
     } catch (error) {
-      new Notice4(error.message || String(error));
+      new Notice5(error.message || String(error));
     }
   }
 };

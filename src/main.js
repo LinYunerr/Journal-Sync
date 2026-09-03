@@ -100,10 +100,6 @@ function dirnameVaultPath(p) {
   return i >= 0 ? n.slice(0,i) : '';
 }
 
-function normalizeAbsPath(v) {
-  return String(v||'').replace(/\\/g,'/').replace(/\/+$/,'');
-}
-
 function isImagePath(v) {
   const clean = String(v||'').split('#')[0].split('?')[0];
   const ext = clean.includes('.') ? clean.split('.').pop().toLowerCase() : '';
@@ -111,15 +107,6 @@ function isImagePath(v) {
 }
 function isRemoteUrl(v) { return /^https?:\/\//i.test(String(v||'').trim()); }
 function isDataUrl(v)   { return /^data:/i.test(String(v||'').trim()); }
-
-function positionToOffset(doc, pos) {
-  if (!pos || typeof pos.line !== 'number') return 0;
-  const lines = doc.split('\n');
-  const line = Math.max(0, Math.min(pos.line, lines.length-1));
-  let off = 0;
-  for (let i = 0; i < line; i++) off += lines[i].length + 1;
-  return off + Math.max(0, Math.min(pos.ch, lines[line].length));
-}
 
 function parseImageRefs(markdown) {
   const refs = [];
@@ -146,21 +133,24 @@ function parseImageRefs(markdown) {
     refs.push({ raw: m[2], target: t, type: 'bare', index: idx, end: idx+m[2].length });
   }
 
-  return refs.sort((a,b) => a.index - b.index);
+  // 排除代码围栏内的引用
+  const codeRanges = [];
+  const fenceRe = /```[^\n]*[\s\S]*?```/g;
+  let fm;
+  while ((fm = fenceRe.exec(markdown)) !== null) {
+    codeRanges.push([fm.index, fm.index + fm[0].length]);
+  }
+  const filtered = codeRanges.length === 0
+    ? refs
+    : refs.filter(ref => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
+
+  return filtered.sort((a,b) => a.index - b.index);
 }
 
 function getSelectedOrBlockContent(editor, scope = 2) {
   const selected = editor.getSelection();
   if (selected && selected.trim()) {
-    const doc = editor.getValue().replace(/\r\n/g,'\n');
-    const from = editor.getCursor('from');
-    const to   = editor.getCursor('to');
-    return {
-      content: selected.trim(), heading: '', source: 'selection',
-      selectionStart: positionToOffset(doc, from),
-      selectionEnd: positionToOffset(doc, to),
-      doc
-    };
+    return { content: selected.trim(), heading: '', source: 'selection' };
   }
 
   const doc   = editor.getValue().replace(/\r\n/g,'\n');
@@ -420,28 +410,6 @@ class JournalSyncPlugin extends Plugin {
     return this.getMastodonAccounts().find(a => a.id === accountId) || null;
   }
 
-  // ── Obsidian Vault 工具 ──────────────────────
-
-  getVaultBasePath() {
-    const adapter = this.app.vault.adapter;
-    if (adapter && typeof adapter.getBasePath === 'function') {
-      return normalizeAbsPath(adapter.getBasePath());
-    }
-    return '';
-  }
-
-  absoluteToVaultPath(absPath) {
-    const base = this.getVaultBasePath();
-    const norm = normalizeAbsPath(absPath);
-    if (!norm) return '';
-    if (!base) return !/^(?:[a-zA-Z]|\/)/.test(norm) ? normalizeVaultPath(norm) : '';
-    if (norm === base) return '';
-    if (!norm.startsWith(`${base}/`)) {
-      return !/^(?:[a-zA-Z]|\/)/.test(norm) ? normalizeVaultPath(norm) : null;
-    }
-    return normalizeVaultPath(norm.slice(base.length + 1));
-  }
-
   /**
    * 从 Vault 读取图片为 ArrayBuffer
    * @param {string} filename - 图片文件名或 vault 路径
@@ -528,9 +496,7 @@ class JournalSyncPlugin extends Plugin {
 
     return {
       content: content.trim(),
-      imageFilenames: Array.from(uploadedByPath.values()).map(image => image.vaultPath).filter(Boolean),
       richDraft: buildRichDraftFromUploadedMarkdown(markdown, uploadedRefs),
-      imageRefs: uploadedRefs,
       failed
     };
   }
@@ -641,9 +607,7 @@ class JournalSyncPlugin extends Plugin {
       } else {
         processResult = {
           content: current.content,
-          imageFilenames: [],
           richDraft: buildRichDraftFromUploadedMarkdown(current.content, []),
-          imageRefs: [],
           failed: []
         };
       }

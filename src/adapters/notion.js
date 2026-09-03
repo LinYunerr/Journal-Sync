@@ -585,6 +585,42 @@ export function renderSettings(containerEl, ctx) {
         });
 
     new Setting(containerEl)
+        .setName('测试连接')
+        .setDesc('验证 Notion Token 是否有效。')
+        .addButton(btn => btn
+            .setButtonText('测试连接')
+            .onClick(async () => {
+                const currentConfig = ctx.plugin.getAdapterConfig('notion') || {};
+                const token = String(currentConfig.token || '').trim();
+                if (!token) {
+                    new Notice('请先配置 Notion Token');
+                    return;
+                }
+                btn.setButtonText('连接中...');
+                btn.disabled = true;
+                try {
+                    const response = await notionRequest(ctx.requestUrl, token, {
+                        url: `${NOTION_API_BASE}/users/me`,
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' },
+                        throw: false
+                    });
+                    if (response.status >= 200 && response.status < 300) {
+                        const result = response.json || {};
+                        const name = result.name || result.bot?.owner?.name || '未知';
+                        new Notice(`Notion 连接成功（${name}）`);
+                    } else {
+                        new Notice(`Notion 连接失败：${getResponseError(response)}`);
+                    }
+                } catch (error) {
+                    new Notice(`Notion 连接失败：${error.message || String(error)}`);
+                } finally {
+                    btn.setButtonText('测试连接');
+                    btn.disabled = false;
+                }
+            }));
+
+    new Setting(containerEl)
         .setName('保存目标')
         .setDesc('选择每次发送创建 Notion 页面，或在 Data Source 中创建一条记录页面。')
         .addDropdown(dropdown => dropdown

@@ -15,7 +15,7 @@
  */
 
 const { Modal, Notice } = require('obsidian');
-const { buildPayload } = require('../core/payload');
+const { buildPayload, getMimeType } = require('../core/payload');
 
 function hasRemoteImageReference(content) {
     return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ''));
@@ -498,8 +498,10 @@ class JournalSyncSendModal extends Modal {
         range.setStartAfter(spacer);
         range.collapse(true);
 
-        sel.removeAllRanges();
-        sel.addRange(range);
+        if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
 
         richDiv.dispatchEvent(new Event('input'));
     }
@@ -571,7 +573,7 @@ class JournalSyncSendModal extends Modal {
             } else {
                 this.readImageFile(img.vaultPath).then(arrayBuf => {
                     if (!arrayBuf) return;
-                    const blob = new Blob([arrayBuf]);
+                    const blob = new Blob([arrayBuf], { type: getMimeType(img.filename) });
                     const url = URL.createObjectURL(blob);
                     if (renderId !== this._imageGridRenderId) {
                         URL.revokeObjectURL(url);
@@ -769,7 +771,11 @@ class JournalSyncSendModal extends Modal {
         if (!this.simpleTargetsEl) return;
         this.simpleTargetsEl.empty();
 
-        const adapters = this.plugin.adapterRegistry.getAll();
+        const adapters = this.plugin.adapterRegistry.getAll().slice().sort((a, b) => {
+            const ao = a?.manifest?.displayOrder ?? Infinity;
+            const bo = b?.manifest?.displayOrder ?? Infinity;
+            return ao - bo;
+        });
         const generalAdapters = adapters.filter(a => a.manifest.id !== 'telegram' && a.manifest.id !== 'mastodon' && this.plugin.isAdapterEnabled(a.manifest.id));
 
         if (generalAdapters.length === 0) return;
@@ -1107,9 +1113,16 @@ class JournalSyncSendModal extends Modal {
             plugin.adapterRegistry.has(adapterId) &&
             plugin.isAdapterEnabled(adapterId)
         );
-        const tgChannels = plugin.adapterRegistry.has('telegram') && plugin.isAdapterEnabled('telegram')
-            ? Array.from(this.selectedTgChannels)
-            : [];
+        let tgChannels = [];
+        if (plugin.adapterRegistry.has('telegram') && plugin.isAdapterEnabled('telegram')) {
+            const tgConfig = plugin.getAdapterConfig('telegram');
+            const validIds = new Set((Array.isArray(tgConfig.channels) ? tgConfig.channels : []).map(ch => String(ch.id)));
+            const staleIds = Array.from(this.selectedTgChannels).filter(id => !validIds.has(String(id)));
+            if (staleIds.length > 0) {
+                new Notice(`以下 Telegram 频道已不存在，已自动跳过：${staleIds.join('、')}`, 8000);
+            }
+            tgChannels = Array.from(this.selectedTgChannels).filter(id => validIds.has(String(id)));
+        }
         if (tgChannels.length > 0) {
             targetAdapters.push('telegram');
         }

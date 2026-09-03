@@ -26,7 +26,8 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
 | Send dialog and send-target selection | `src/ui/send-modal.js` |
 | Settings page shell, enable toggles, manifest-driven generic rendering, debounced persistence | `src/ui/settings-tab.js` |
 | Platform adapter registry | `src/core/adapter-registry.js` |
-| Rich text, image ordering, Telegram segments | `src/core/content-renderer.js` |
+| Unified payload builder (content + images), used by send-modal.js | `src/core/payload.js` |
+| Telegraph API client, used by telegram.js | `src/core/telegraph.js` |
 | Per-platform manifests, settings schema or custom panels, HTTP requests and validation | `src/adapters/flomo.js`, `telegram.js`, `mastodon.js`, `missky.js`, `notion.js`, `bluesky.js`, `weibo.js` |
 | Plugin metadata | `manifest.json` |
 | Plugin styling | `styles.css` |
@@ -109,5 +110,6 @@ For iterative local development, use `npm run dev`. Do not leave the watch proce
 - When adding a platform, create `src/adapters/<id>.js` with a `manifest` (including `settings.fields`) plus `execute`/`validate` and optional `runAction`; export `renderSettings` and `defaultConfig` only for panels the schema cannot express. Then add one `require` line to `ADAPTER_MODULES` in `src/main.js` and rebuild. No changes to `settings-tab.js` or `DEFAULT_SETTINGS` are needed.
 - Keep `package.json`, `manifest.json`, and `versions.json` aligned when releasing. The release tag must exactly match `manifest.json.version` and must not use a `v` prefix.
 - Do not manually alter generated `main.js`; verify it changes only as a result of `npm run build`.
-- `.github/workflows/release.yml` builds tagged versions and attaches only `main.js`, `manifest.json`, and `styles.css` to the GitHub Release.
+- `.github/workflows/release.yml` builds tagged versions and attaches only `main.js`, `manifest.json`, and `styles.css` to the GitHub Release. Release notes are extracted from `CHANGELOG.md` (section matching the tag), falling back to a plain title if no changelog entry exists.
 - To trigger the release workflow, push a git tag matching `manifest.json.version` (no `v` prefix). The workflow verifies version alignment across tag, `manifest.json`, `package.json`, and `versions.json`, then builds and creates the GitHub Release automatically—no manual release steps.
+- Every release must have a corresponding `## [version]` section in `CHANGELOG.md` with human-readable update notes; the release workflow uses it as the GitHub Release body.

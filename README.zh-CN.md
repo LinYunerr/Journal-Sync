@@ -4,7 +4,7 @@
 
 **写在 Obsidian，发布到你常用的平台。**
 
-Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇笔记发送到 **flomo、Telegram、Mastodon、Misskey、Bluesky 和 Notion**。插件完全运行在 Obsidian 内，无需安装 Node.js、Python，也不需要单独部署后端服务。
+Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇笔记发送到 **flomo、Telegram、Mastodon、Misskey、Bluesky、微博和 Notion**。插件完全运行在 Obsidian 内，无需安装 Node.js、Python，也不需要单独部署后端服务。
 
 ![Journal Sync 发送面板：编辑内容并选择发布目标](docs/assets/send-dialog.png)
 
@@ -76,6 +76,7 @@ Journal Sync 可以把 Obsidian 中选中的文字、当前标题片段或整篇
 | Mastodon | ✓ | — | 可配置实例地址和可见性。 |
 | Misskey | ✓ | — | 可配置实例地址和可见性。 |
 | Bluesky | ✓ | ✓ | 使用 App Password 登录（在 Bluesky 设置 → Privacy & security → App passwords 生成）。单帖上限 300 个可见字符且不超过 3,000 个 UTF-8 字节，最多 4 张图片（JPEG/PNG/WebP/GIF，每张 2 MB）。 |
+| 微博 | ✓ | ✓ | 通过微博开放平台 OAuth 授权发布（需自建应用获取 App Key/Secret）。纯文本超过 140 字可发送长文；带图发送支持单张 JPEG/PNG/GIF 图片，正文上限 140 字。可见性可选公开或仅自己可见。 |
 | Notion | ✓ | ✓ | 可以创建页面或数据库记录，并上传正文引用的本地图片。 |
 
 各平台自身的限制仍然适用。较长的 Telegram 消息会自动分段，媒体数量和 caption 长度遵循 Telegram Bot API 的限制。

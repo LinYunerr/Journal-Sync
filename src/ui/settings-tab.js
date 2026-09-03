@@ -1,4 +1,4 @@
-const { PluginSettingTab, Setting, Notice } = require('obsidian');
+const { PluginSettingTab, Setting, Notice, Platform } = require('obsidian');
 
 class JournalSyncSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
@@ -44,7 +44,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
         button.toggleClass('is-active', this.activeSection === section);
         button.addEventListener('click', () => {
             this.activeSection = section;
-            this.display();
+            void this.display().catch(() => {});
         });
     }
 
@@ -138,11 +138,13 @@ class JournalSyncSettingTab extends PluginSettingTab {
                     const tgCfg = this.plugin.getAdapterConfig('telegram');
                     const currentLv = tgCfg.telegraphTitleLevel || 1;
                     if (currentLv > maxLv) {
+                        // setAdapterConfig 内部已调用 saveSettings()，无需重复保存
                         await this.plugin.setAdapterConfig('telegram', { ...tgCfg, telegraphTitleLevel: maxLv });
+                    } else {
+                        await this.plugin.saveSettings();
                     }
-                    await this.plugin.saveSettings();
                     // Refresh settings display so the title-level dropdown updates
-                    this.display();
+                    await this.display();
                 });
             });
 
@@ -201,7 +203,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
             button.toggleClass('is-active', this.activePlugin === id);
             button.addEventListener('click', () => {
                 this.activePlugin = id;
-                this.display();
+                void this.display().catch(() => {});
             });
         }
 
@@ -230,10 +232,9 @@ class JournalSyncSettingTab extends PluginSettingTab {
             .onChange(async value => {
                 this.plugin.setAdapterEnabled(id, value);
                 await this.plugin.saveSettings();
-                this.display();
+                void this.display().catch(() => {});
             }));
     }
-
     /**
      * 传给适配器自定义面板 renderSettings(panelEl, ctx) 的上下文。
      */
@@ -243,7 +244,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
             containerEl,
             scheduleConfigSave: patch => this._scheduleAdapterConfigSave(id, patch),
             saveConfig: async patch => this.plugin.setAdapterConfig(id, { ...this.plugin.getAdapterConfig(id), ...patch }),
-            refresh: () => this.display(),
+            refresh: () => { void this.display().catch(() => {}); },
             requestUrl: this.plugin.requestUrl.bind(this.plugin)
         };
     }
@@ -342,9 +343,9 @@ class JournalSyncSettingTab extends PluginSettingTab {
                 if (field.busyLabel) btn.setButtonText(field.busyLabel);
                 btn.disabled = true;
                 try {
-                    const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl);
+                    const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl, { mobile: Platform.isMobile });
                     new Notice(result?.message || field.successMessage || '操作完成');
-                    this.display();
+                    void this.display().catch(() => {});
                 } catch (error) {
                     new Notice(`${buttonText || '操作'}失败：${error?.message || String(error)}`);
                 } finally {

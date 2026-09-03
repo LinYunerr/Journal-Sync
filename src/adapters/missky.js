@@ -46,6 +46,15 @@ export const manifest = {
                     { value: 'specified', label: '私信' }
                 ],
                 default: 'public'
+            },
+            {
+                key: 'testConnection',
+                type: 'action',
+                label: '测试连接',
+                action: 'testConnection',
+                buttonLabel: '测试连接',
+                busyLabel: '连接中...',
+                desc: '验证 Misskey 实例地址和 API Token 是否有效。'
             }
         ]
     }
@@ -202,4 +211,30 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
     }
 }
 
-export default { manifest, execute, validate };
+export async function runAction(actionId, config = {}, requestUrlFn) {
+    if (actionId !== 'testConnection') {
+        throw new Error(`Misskey 适配器不支持操作：${actionId}`);
+    }
+    const serverUrl = String(config.serverUrl || '').trim();
+    const apiToken = String(config.apiToken || '').trim();
+    if (!serverUrl || !apiToken) throw new Error('请先配置 Misskey 实例地址和 API Token');
+    const baseUrl = serverUrl.replace(/\/+$/, '');
+    const response = await requestUrlFn({
+        url: `${baseUrl}/api/i`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ i: apiToken }),
+        throw: false
+    });
+    if (response.status < 200 || response.status >= 300) {
+        let errMsg = '';
+        try { errMsg = response.json?.error?.message || response.text || `HTTP ${response.status}`; } catch { errMsg = `HTTP ${response.status}`; }
+        throw new Error(errMsg);
+    }
+    let result = {};
+    try { result = response.json || {}; } catch {}
+    const username = result.username || result.name || '未知';
+    return { success: true, message: `Misskey 连接成功（用户：${username}）` };
+}
+
+export default { manifest, execute, validate, runAction };

@@ -55,11 +55,33 @@ jobs:
             main.js
             styles.css
 
+      - name: Extract release notes from CHANGELOG
+        id: changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "notes=Release ${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NOTES=$(node -e "
+            const fs = require('fs');
+            const cl = fs.readFileSync('CHANGELOG.md', 'utf8');
+            const tag = process.env.RELEASE_TAG;
+            const section = cl.match(new RegExp('##\\\\s*\\\\[' + tag + '\\\\].*?(?=\\\\n##\\\\s*\\\\[|$)', 's'));
+            console.log(section ? section[0].trim() : 'Release ' + tag);
+          " 2>/dev/null || echo "Release ${RELEASE_TAG}")
+          {
+            echo "notes<<CHANGELOG_EOF"
+            echo "$NOTES"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
-            --generate-notes \
+            --notes "${{ steps.changelog.outputs.notes }}" \
             main.js manifest.json styles.css

@@ -115,7 +115,7 @@ function weiboApiErrorMessage(response, actionLabel) {
     try { body = response.json || {}; } catch {}
 
     const errorCode = Number(body.error_code || body.code || 0) || 0;
-    const rawError = String(body.error || body.error_request || response.text || '');
+    const rawError = String(body.error || body.error_description || response.text || '');
 
     // 官方规则：连续两次发布的微博不可以重复
     if (rawError.includes('重复')) return '微博拒绝连续重复内容，请修改内容后再试';
@@ -497,6 +497,10 @@ export async function runAction(actionId, config = {}, requestUrlFn, options = {
  */
 export function renderSettings(containerEl, ctx) {
     const config = ctx.plugin.getAdapterConfig('weibo') || {};
+
+    new Setting(containerEl)
+        .setName('⚠️ 当前插件未经测试')
+        .setDesc('微博适配器尚未经过完整测试，使用中如遇问题，欢迎在 GitHub 上提 issue 反馈。');
 
     new Setting(containerEl)
         .setName('微博开放平台')

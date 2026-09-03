@@ -64,12 +64,17 @@ function normalizeReplyControl(value) {
 }
 
 /**
- * Threads 文本长度：BMP 码点记 1，增补平面（绝大多数 emoji）按 UTF-8 记 4。
+ * Threads 文本长度：按 UTF-8 字节数计（官方限制 500 字节）。
+ * ASCII 1 字节，拉丁/西里尔 2 字节，CJK 及大多数 BMP 符号 3 字节，emoji 4 字节。
  */
 function threadsTextLength(text) {
     let len = 0;
     for (const ch of String(text || '')) {
-        len += ch.codePointAt(0) >= 0x10000 ? 4 : 1;
+        const cp = ch.codePointAt(0);
+        if (cp <= 0x7F) len += 1;
+        else if (cp <= 0x7FF) len += 2;
+        else if (cp <= 0xFFFF) len += 3;
+        else len += 4;
     }
     return len;
 }
@@ -284,7 +289,7 @@ export async function validate({ payload = {}, config = {} } = {}) {
     } else {
         const length = threadsTextLength(plainText);
         if (length > MAX_TEXT_LENGTH) {
-            errors.push(`Threads 单帖上限 ${MAX_TEXT_LENGTH} 字符（当前 ${length}），请缩短内容`);
+            errors.push(`Threads 单帖上限 ${MAX_TEXT_LENGTH} 字节（当前 ${length}），请缩短内容`);
         }
         if (countUniqueUrls(plainText) > MAX_LINKS) {
             warnings.push(`Threads 单帖最多 ${MAX_LINKS} 个链接，超出部分可能被服务端拒绝`);

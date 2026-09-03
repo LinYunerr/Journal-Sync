@@ -3,7 +3,7 @@
  * 通过 Obsidian requestUrl 直接发送到 Mastodon 实例
  */
 
-import { Setting } from 'obsidian';
+import { Setting, Notice } from 'obsidian';
 
 export const manifest = {
     id: 'mastodon',
@@ -326,6 +326,47 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
             .setValue(acct.visibility || 'public')
             .onChange(value => {
                 updateMastodonAccount(ctx, acct.id, { visibility: value });
+            }));
+
+    // 测试连接按钮
+    new Setting(cardEl)
+        .setName('测试连接')
+        .setDesc('验证当前账号的实例地址和 Access Token 是否有效。')
+        .addButton(btn => btn
+            .setButtonText('测试连接')
+            .onClick(async () => {
+                const currentConfig = ctx.plugin.getMastodonAccount(acct.id) || {};
+                const serverUrl = String(currentConfig.serverUrl || '').trim();
+                const accessToken = String(currentConfig.accessToken || '').trim();
+                if (!serverUrl || !accessToken) {
+                    new Notice('请先配置实例地址和 Access Token');
+                    return;
+                }
+                btn.setButtonText('连接中...');
+                btn.disabled = true;
+                try {
+                    const baseUrl = serverUrl.replace(/\/+$/, '');
+                    const response = await ctx.requestUrl({
+                        url: `${baseUrl}/api/v1/accounts/verify_credentials`,
+                        method: 'GET',
+                        headers: { 'Authorization': `Bearer ${accessToken}` },
+                        throw: false
+                    });
+                    if (response.status >= 200 && response.status < 300) {
+                        const result = response.json || {};
+                        const display = result.display_name || result.username || '未知';
+                        new Notice(`Mastodon 连接成功（${display}）`);
+                    } else {
+                        let errMsg = '';
+                        try { errMsg = response.json?.error || response.text || `HTTP ${response.status}`; } catch { errMsg = `HTTP ${response.status}`; }
+                        new Notice(`Mastodon 连接失败：${errMsg}`);
+                    }
+                } catch (error) {
+                    new Notice(`Mastodon 连接失败：${error.message || String(error)}`);
+                } finally {
+                    btn.setButtonText('测试连接');
+                    btn.disabled = false;
+                }
             }));
 }
 

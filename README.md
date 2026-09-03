@@ -4,7 +4,7 @@
 
 **Write in Obsidian. Publish wherever your notes live.**
 
-Journal Sync sends selected text, the current heading section, or an entire note from Obsidian to **flomo, Telegram, Mastodon, Misskey, Bluesky, and Notion**. Everything runs inside Obsidian—no Node.js, Python, or separate backend service required.
+Journal Sync sends selected text, the current heading section, or an entire note from Obsidian to **flomo, Telegram, Mastodon, Misskey, Bluesky, Weibo, and Notion**. Everything runs inside Obsidian—no Node.js, Python, or separate backend service required.
 
 ![Journal Sync publishing dialog with content preview and destination selection](docs/assets/send-dialog.png)
 
@@ -76,6 +76,7 @@ Local image references appear as tokens such as `@图片1`, with thumbnails belo
 | Mastodon | ✓ | — | Supports a custom instance and visibility setting. |
 | Misskey | ✓ | — | Supports a custom instance and visibility setting. |
 | Bluesky | ✓ | ✓ | Signs in with an App Password created in Bluesky → Privacy & security → App passwords. Text is limited to 300 graphemes and 3,000 UTF-8 bytes per post, with up to 4 images (JPEG/PNG/WebP/GIF, 2 MB each). |
+| Weibo | ✓ | ✓ | Publishes through the Weibo Open Platform after OAuth authorization with your own app (App Key/Secret). Plain text beyond 140 Weibo units can be sent as long text; image posts attach a single JPEG/PNG/GIF image with text capped at 140. Visibility is public or self-only. |
 | Notion | ✓ | ✓ | Creates pages or database records and uploads referenced local images. |
 
 Platform limits still apply. Long Telegram messages are split automatically; media count and caption limits follow the Telegram Bot API.
