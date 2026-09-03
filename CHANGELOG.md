@@ -5,6 +5,12 @@ All notable changes to Journal Sync are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-09-04
+
+### Added
+
+- **Threads 适配器上线**：注册 Threads (Meta) 适配器，支持通过 Threads Graph API 发布纯文本。设置页面提供完整 OAuth 授权流程（打开授权页 → 粘贴 code → 换取长期 Token），支持测试连接与回复权限配置。
+
 ## [1.0.7] - 2026-09-04
 
 ### Added

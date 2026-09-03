@@ -21,7 +21,7 @@ const AdapterRegistry     = require('./core/adapter-registry');
 const JournalSyncSendModal = require('./ui/send-modal');
 const JournalSyncSettingTab = require('./ui/settings-tab');
 
-// 适配器（各自独立，按需 require）；数组顺序即注册顺序：flomo、telegram、mastodon、missky、notion、bluesky、weibo
+// 适配器（各自独立，按需 require）；数组顺序即注册顺序：flomo、telegram、mastodon、missky、notion、bluesky、weibo、threads
 const ADAPTER_MODULES = [
   require('./adapters/flomo'),
   require('./adapters/telegram'),
@@ -29,7 +29,8 @@ const ADAPTER_MODULES = [
   require('./adapters/missky'),
   require('./adapters/notion'),
   require('./adapters/bluesky'),
-  require('./adapters/weibo')
+  require('./adapters/weibo'),
+  require('./adapters/threads')
 ];
 
 // ──────────────────────────────────────────────

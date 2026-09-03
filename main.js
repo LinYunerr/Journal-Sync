@@ -1,5 +1,5 @@
 /*!
- * Journal Sync v1.0.7
+ * Journal Sync v1.0.8
  * Build: 2026-09-03 (production)
  * https://github.com/LinYunerr/Journal-Sync
  */
@@ -211,7 +211,7 @@ var require_payload = __commonJS({
 // src/ui/send-modal.js
 var require_send_modal = __commonJS({
   "src/ui/send-modal.js"(exports2, module2) {
-    var { Modal, Notice: Notice6 } = require("obsidian");
+    var { Modal, Notice: Notice7 } = require("obsidian");
     var { buildPayload, getMimeType: getMimeType3 } = require_payload();
     function hasRemoteImageReference(content) {
       return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ""));
@@ -1136,7 +1136,7 @@ ${tokenStr}` : tokenStr;
           const validIds = new Set((Array.isArray(tgConfig.channels) ? tgConfig.channels : []).map((ch) => String(ch.id)));
           const staleIds = Array.from(this.selectedTgChannels).filter((id) => !validIds.has(String(id)));
           if (staleIds.length > 0) {
-            new Notice6(`\u4EE5\u4E0B Telegram \u9891\u9053\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5DF2\u81EA\u52A8\u8DF3\u8FC7\uFF1A${staleIds.join("\u3001")}`, 8e3);
+            new Notice7(`\u4EE5\u4E0B Telegram \u9891\u9053\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5DF2\u81EA\u52A8\u8DF3\u8FC7\uFF1A${staleIds.join("\u3001")}`, 8e3);
           }
           tgChannels = Array.from(this.selectedTgChannels).filter((id) => validIds.has(String(id)));
         }
@@ -1148,7 +1148,7 @@ ${tokenStr}` : tokenStr;
           targetAdapters.push("mastodon");
         }
         if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
-          new Notice6("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
+          new Notice7("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
           return;
         }
         const rawContent = this.content;
@@ -1170,7 +1170,7 @@ ${tokenStr}` : tokenStr;
           payload.plainText.trim() || payload.attachments.length > 0 || hasRemoteImageReference(payload.content)
         );
         if (!hasSendableContent) {
-          new Notice6("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
+          new Notice7("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
           return;
         }
         const targetConfigOverrides = {};
@@ -1186,7 +1186,7 @@ ${tokenStr}` : tokenStr;
         try {
           capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
         } catch (error) {
-          new Notice6(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          new Notice7(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
           return;
         }
         const warningMessages = capabilityWarnings.warnings || [];
@@ -1221,18 +1221,18 @@ ${tokenStr}` : tokenStr;
           }
           validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
-          new Notice6(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          new Notice7(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
           return;
         }
         if (validation.warnings.length > 0) {
-          new Notice6(`\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A${validation.warnings.join("\uFF1B")}`, 1e4);
+          new Notice7(`\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A${validation.warnings.join("\uFF1B")}`, 1e4);
         }
         if (validation.errors.length > 0) {
-          new Notice6(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
+          new Notice7(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
           return;
         }
         this.close();
-        new Notice6("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
+        new Notice7("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
         (async () => {
           const results = {};
           for (const adapterId of targetAdapters) {
@@ -1287,9 +1287,9 @@ ${tokenStr}` : tokenStr;
             return result.success ? result.skipped ? `${displayId}: \u8DF3\u8FC7` : `${displayId}: \u6210\u529F${warn}` : `${displayId}: \u5931\u8D25(${result.error || "\u672A\u77E5\u9519\u8BEF"})`;
           }).join("\uFF1B\n");
           if (anyFailure) {
-            new Notice6(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 1e4);
+            new Notice7(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 1e4);
           } else {
-            new Notice6(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
+            new Notice7(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
           }
         })().finally(() => {
           for (const image of images) {
@@ -1320,7 +1320,7 @@ ${tokenStr}` : tokenStr;
 // src/ui/settings-tab.js
 var require_settings_tab = __commonJS({
   "src/ui/settings-tab.js"(exports2, module2) {
-    var { PluginSettingTab, Setting: Setting5, Notice: Notice6, Platform: Platform2 } = require("obsidian");
+    var { PluginSettingTab, Setting: Setting6, Notice: Notice7, Platform: Platform3 } = require("obsidian");
     var JournalSyncSettingTab2 = class extends PluginSettingTab {
       constructor(app, plugin) {
         super(app, plugin);
@@ -1386,7 +1386,7 @@ var require_settings_tab = __commonJS({
         if (!this._savePending) return;
         this._savePending = false;
         this._savePromise = this.plugin.saveSettings().catch((error) => {
-          new Notice6(`\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A${error.message || String(error)}`);
+          new Notice7(`\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A${error.message || String(error)}`);
         });
         await this._savePromise;
         this._savePromise = null;
@@ -1407,21 +1407,21 @@ var require_settings_tab = __commonJS({
           text: "\u7BA1\u7406\u65E5\u8BB0\u521B\u5EFA\u548C\u53D1\u9001\u65F6\u901A\u7528\u7684\u884C\u4E3A\u3002",
           cls: "js-bridge-settings-section-desc"
         });
-        new Setting5(containerEl).setName("\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84").setDesc("Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09").addText((text) => text.setPlaceholder("\u65E5\u8BB0").setValue(this.plugin.settings.diaryPath || "").onChange((value) => {
+        new Setting6(containerEl).setName("\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84").setDesc("Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09").addText((text) => text.setPlaceholder("\u65E5\u8BB0").setValue(this.plugin.settings.diaryPath || "").onChange((value) => {
           this._scheduleSettingsSave(() => {
             this.plugin.settings.diaryPath = value.trim();
           });
         }));
-        new Setting5(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219").setDesc("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0").addText((text) => text.setPlaceholder("YYYY-MM-DD \u65E5\u8BB0").setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange((value) => {
+        new Setting6(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219").setDesc("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0").addText((text) => text.setPlaceholder("YYYY-MM-DD \u65E5\u8BB0").setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange((value) => {
           this._scheduleSettingsSave(() => {
             this.plugin.settings.filenameRule = value.trim() || "YYYY-MM-DD \u65E5\u8BB0";
           });
         }));
-        new Setting5(containerEl).setName("\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247").setDesc("\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async (value) => {
+        new Setting6(containerEl).setName("\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247").setDesc("\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async (value) => {
           this.plugin.settings.autoUploadImages = value;
           await this.plugin.saveSettings();
         }));
-        new Setting5(containerEl).setName("\u53D1\u9001\u8303\u56F4\uFF08\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF09").setDesc("\u4F7F\u7528\u53D1\u9001\u547D\u4EE4\u4E14\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF0C\u53D1\u9001\u5149\u6807\u6240\u5728\u4F4D\u7F6E\u7684\u5185\u5BB9\u8303\u56F4\u3002\u9009\u62E9\u4EFB\u610F\u6807\u9898\u7EA7\u522B\u65F6\uFF0C\u4E0D\u5305\u542B\u6807\u9898\u672C\u8EAB\u3002").addDropdown((dropdown) => {
+        new Setting6(containerEl).setName("\u53D1\u9001\u8303\u56F4\uFF08\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF09").setDesc("\u4F7F\u7528\u53D1\u9001\u547D\u4EE4\u4E14\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF0C\u53D1\u9001\u5149\u6807\u6240\u5728\u4F4D\u7F6E\u7684\u5185\u5BB9\u8303\u56F4\u3002\u9009\u62E9\u4EFB\u610F\u6807\u9898\u7EA7\u522B\u65F6\uFF0C\u4E0D\u5305\u542B\u6807\u9898\u672C\u8EAB\u3002").addDropdown((dropdown) => {
           var _a;
           dropdown.addOption("0", "\u6574\u4E2A\u9875\u9762");
           for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
@@ -1439,7 +1439,7 @@ var require_settings_tab = __commonJS({
             await this.display();
           });
         });
-        new Setting5(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u7EA7\u522B").setDesc("\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002").addDropdown((dropdown) => {
+        new Setting6(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u7EA7\u522B").setDesc("\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002").addDropdown((dropdown) => {
           var _a;
           for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
           dropdown.setValue(String((_a = this.plugin.settings.diaryTimestampLevel) != null ? _a : 2)).onChange(async (value) => {
@@ -1447,7 +1447,7 @@ var require_settings_tab = __commonJS({
             await this.plugin.saveSettings();
           });
         });
-        new Setting5(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u683C\u5F0F").setDesc("\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM").addText((text) => text.setPlaceholder("HH:MM:SS").setValue(this.plugin.settings.diaryHeadingRule || "HH:MM:SS").onChange((value) => {
+        new Setting6(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u683C\u5F0F").setDesc("\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM").addText((text) => text.setPlaceholder("HH:MM:SS").setValue(this.plugin.settings.diaryHeadingRule || "HH:MM:SS").onChange((value) => {
           this._scheduleSettingsSave(() => {
             this.plugin.settings.diaryHeadingRule = value.trim() || "HH:MM:SS";
           });
@@ -1506,11 +1506,11 @@ var require_settings_tab = __commonJS({
             this._renderGenericAdapterSettings(panelEl, adapter);
           }
         } catch (error) {
-          new Notice6(`${adapter.manifest.name || adapter.manifest.id} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
+          new Notice7(`${adapter.manifest.name || adapter.manifest.id} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
         }
       }
       _addEnabledToggle(containerEl, id, label) {
-        new Setting5(containerEl).setName(`\u542F\u7528 ${label}`).addToggle((toggle) => toggle.setValue(this.plugin.isAdapterEnabled(id)).onChange(async (value) => {
+        new Setting6(containerEl).setName(`\u542F\u7528 ${label}`).addToggle((toggle) => toggle.setValue(this.plugin.isAdapterEnabled(id)).onChange(async (value) => {
           this.plugin.setAdapterEnabled(id, value);
           await this.plugin.saveSettings();
           void this.display().catch(() => {
@@ -1572,7 +1572,7 @@ var require_settings_tab = __commonJS({
         var _a;
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
-        const setting = new Setting5(panelEl).setName(field.label || field.key);
+        const setting = new Setting6(panelEl).setName(field.label || field.key);
         const desc = (_a = field.desc) != null ? _a : field.description;
         if (desc) setting.setDesc(desc);
         setting.addText((text) => {
@@ -1588,7 +1588,7 @@ var require_settings_tab = __commonJS({
         var _a;
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
-        const setting = new Setting5(panelEl).setName(field.label || field.key);
+        const setting = new Setting6(panelEl).setName(field.label || field.key);
         const desc = (_a = field.desc) != null ? _a : field.description;
         if (desc) setting.setDesc(desc);
         setting.addToggle((toggle) => {
@@ -1603,7 +1603,7 @@ var require_settings_tab = __commonJS({
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
         const options = Array.isArray(field.options) ? field.options : [];
-        const setting = new Setting5(panelEl).setName(field.label || field.key);
+        const setting = new Setting6(panelEl).setName(field.label || field.key);
         const desc = (_a = field.desc) != null ? _a : field.description;
         if (desc) setting.setDesc(desc);
         setting.addDropdown((dropdown) => {
@@ -1621,19 +1621,19 @@ var require_settings_tab = __commonJS({
         var _a;
         if (!field.action || typeof adapter.runAction !== "function") return;
         const buttonText = field.buttonLabel || field.label;
-        const setting = new Setting5(panelEl).setName(field.label || "");
+        const setting = new Setting6(panelEl).setName(field.label || "");
         const desc = (_a = field.desc) != null ? _a : field.description;
         if (desc) setting.setDesc(desc);
         setting.addButton((btn) => btn.setButtonText(buttonText || "\u6267\u884C").onClick(async () => {
           if (field.busyLabel) btn.setButtonText(field.busyLabel);
           btn.disabled = true;
           try {
-            const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl, { mobile: Platform2.isMobile });
-            new Notice6((result == null ? void 0 : result.message) || field.successMessage || "\u64CD\u4F5C\u5B8C\u6210");
+            const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl, { mobile: Platform3.isMobile });
+            new Notice7((result == null ? void 0 : result.message) || field.successMessage || "\u64CD\u4F5C\u5B8C\u6210");
             void this.display().catch(() => {
             });
           } catch (error) {
-            new Notice6(`${buttonText || "\u64CD\u4F5C"}\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
+            new Notice7(`${buttonText || "\u64CD\u4F5C"}\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
           } finally {
             btn.setButtonText(buttonText || "\u6267\u884C");
             btn.disabled = false;
@@ -1644,7 +1644,7 @@ var require_settings_tab = __commonJS({
         var _a;
         const desc = (_a = field.desc) != null ? _a : field.description;
         if (!field.label && !desc) return;
-        const setting = new Setting5(panelEl).setName(field.label || "");
+        const setting = new Setting6(panelEl).setName(field.label || "");
         if (desc) setting.setDesc(desc);
       }
       _headingLevelLabel(level) {
@@ -4322,7 +4322,7 @@ var require_bluesky = __commonJS({
       measurePostText,
       buildLinkFacets
     } = require_bluesky_core();
-    var manifest7 = {
+    var manifest8 = {
       id: "bluesky",
       version: "1.0.0",
       name: "Bluesky",
@@ -4514,11 +4514,11 @@ var require_bluesky = __commonJS({
       }
       return { text, images: preparedImages, warnings, errors };
     }
-    async function validate7({ payload = {} } = {}) {
+    async function validate8({ payload = {} } = {}) {
       const prepared = await preparePayload(payload);
       return { warnings: prepared.warnings, errors: prepared.errors };
     }
-    async function execute7({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
+    async function execute8({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
       const identifier = String(config.identifier || "").trim();
       const appPassword = String(config.appPassword || "").trim();
       const serviceUrl = normalizeServiceUrl(config.serviceUrl);
@@ -4581,7 +4581,7 @@ var require_bluesky = __commonJS({
         return { success: false, error: error.message || String(error), warnings };
       }
     }
-    async function runAction5(actionId, config, requestUrlFn) {
+    async function runAction6(actionId, config, requestUrlFn) {
       if (actionId !== "testConnection") {
         throw new Error(`Bluesky \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
       }
@@ -4594,7 +4594,7 @@ var require_bluesky = __commonJS({
       const session = await createSession(serviceUrl, identifier, appPassword, requestUrlFn);
       return { success: true, message: `\u5DF2\u8FDE\u63A5 ${session.handle || identifier}` };
     }
-    module2.exports = { manifest: manifest7, execute: execute7, validate: validate7, runAction: runAction5 };
+    module2.exports = { manifest: manifest8, execute: execute8, validate: validate8, runAction: runAction6 };
   }
 });
 
@@ -5126,10 +5126,499 @@ var init_weibo = __esm({
   }
 });
 
+// src/adapters/threads.js
+var threads_exports = {};
+__export(threads_exports, {
+  authorizeUrl: () => authorizeUrl,
+  default: () => threads_default,
+  execute: () => execute7,
+  manifest: () => manifest7,
+  renderSettings: () => renderSettings5,
+  runAction: () => runAction5,
+  validate: () => validate7
+});
+function normalizeReplyControl(value) {
+  const v = String(value || "").trim();
+  return REPLY_CONTROL_VALUES.has(v) ? v : "";
+}
+function threadsTextLength(text) {
+  let len = 0;
+  for (const ch of String(text || "")) {
+    const cp = ch.codePointAt(0);
+    if (cp <= 127) len += 1;
+    else if (cp <= 2047) len += 2;
+    else if (cp <= 65535) len += 3;
+    else len += 4;
+  }
+  return len;
+}
+function countUniqueUrls(text) {
+  const matches = String(text || "").match(/https?:\/\/[^\s<>"']+/g) || [];
+  const urls = /* @__PURE__ */ new Set();
+  for (const raw of matches) {
+    const url = raw.replace(/[.,;:!?)\]}>'"。，；：！？）」』]+$/g, "").toLowerCase();
+    if (/^https?:\/\//.test(url)) urls.add(url);
+  }
+  return urls.size;
+}
+function responseJson(response) {
+  try {
+    return response.json || {};
+  } catch (e) {
+    return {};
+  }
+}
+function graphErrorMessage(response, actionLabel) {
+  var _a;
+  const body = responseJson(response);
+  const err = body.error && typeof body.error === "object" ? body.error : {};
+  const code2 = Number((_a = err.code) != null ? _a : body.code) || 0;
+  const detail = String(err.message || err.error_message || body.error_message || body.message || (typeof body.error === "string" ? body.error : "") || `HTTP ${response.status}`);
+  const userMsg = String(err.error_user_msg || body.error_user_msg || "");
+  const combined = `${detail} ${userMsg}`;
+  if (code2 === 190 || /access token|token has expired|invalid oauth/i.test(combined)) {
+    return "Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743";
+  }
+  if (combined.includes("LINK_LIMIT")) {
+    return `Threads \u5355\u5E16\u6700\u591A ${MAX_LINKS} \u4E2A\u94FE\u63A5\uFF08\u6B63\u6587\u4E0E\u94FE\u63A5\u5361\u7247\u5408\u5E76\u8BA1\u7B97\uFF09\uFF0C\u8BF7\u51CF\u5C11\u94FE\u63A5\u540E\u91CD\u8BD5`;
+  }
+  if (response.status === 429) {
+    return "\u89E6\u53D1 Threads \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+  }
+  if (/quota|publishing limit/i.test(combined)) {
+    return "\u5DF2\u8FBE Threads 24 \u5C0F\u65F6\u53D1\u5E03\u4E0A\u9650\uFF08250 \u5E16\uFF09\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+  }
+  return `${actionLabel}\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${userMsg || detail}\uFF09`;
+}
+function oauthExchangeErrorMessage(response) {
+  var _a;
+  const body = responseJson(response);
+  const err = body.error && typeof body.error === "object" ? body.error : {};
+  const detail = String(err.message || err.error_message || body.error_message || body.error_description || (typeof body.error === "string" ? body.error : "") || `HTTP ${response.status}`);
+  if (/redirect/i.test(detail) || /url blocked/i.test(detail)) {
+    return "\u91CD\u5B9A\u5411 URI \u4E0E Meta App \u540E\u53F0\u767B\u8BB0\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u9010\u5B57\u7B26\u6838\u5BF9\uFF08\u6CE8\u610F\u540E\u53F0\u53EF\u80FD\u81EA\u52A8\u8865\u5C3E\u659C\u6760\uFF09";
+  }
+  if (/code.*(?:used|expired|invalid)|invalid.*code/i.test(detail)) {
+    return "\u6388\u6743\u7801\u65E0\u6548\u6216\u5DF2\u88AB\u4F7F\u7528\uFF08code \u53EA\u80FD\u7528\u4E00\u6B21\uFF09\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u6388\u6743\u9875\u83B7\u53D6\u65B0\u7684 code";
+  }
+  if (Number((_a = err.code) != null ? _a : body.code) === 190) {
+    return "Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743";
+  }
+  return `Threads \u6388\u6743\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${detail}\uFF09`;
+}
+async function fetchProfile(requestUrlFn, accessToken) {
+  const response = await requestUrlFn({
+    url: `${API_BASE2}/me?fields=id,username&access_token=${encodeURIComponent(accessToken)}`,
+    method: "GET",
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(graphErrorMessage(response, "\u83B7\u53D6 Threads \u7528\u6237\u4FE1\u606F"));
+  }
+  const body = responseJson(response);
+  if (!body.id) throw new Error("Threads \u672A\u8FD4\u56DE\u7528\u6237\u4FE1\u606F");
+  return { id: String(body.id), username: String(body.username || "") };
+}
+async function refreshAccessToken(accessToken, requestUrlFn) {
+  const response = await requestUrlFn({
+    url: `${OAUTH_BASE}/refresh_access_token?grant_type=th_refresh_token&access_token=${encodeURIComponent(accessToken)}`,
+    method: "GET",
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const body2 = responseJson(response);
+    const err = body2.error && typeof body2.error === "object" ? body2.error : {};
+    const detail = String(err.message || err.error_message || body2.error_message || body2.message || `HTTP ${response.status}`);
+    throw new Error(`Threads token \u5237\u65B0\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${detail}\uFF09`);
+  }
+  const body = responseJson(response);
+  if (!body.access_token) throw new Error("Threads \u672A\u8FD4\u56DE\u5237\u65B0\u540E\u7684 token");
+  return {
+    accessToken: String(body.access_token),
+    expiresInMs: Number(body.expires_in) > 0 ? Number(body.expires_in) * 1e3 : DEFAULT_TOKEN_TTL_MS
+  };
+}
+async function getValidToken({ config, requestUrl: requestUrl2, saveConfig }) {
+  const token = String(config.accessToken || "").trim();
+  if (!token) throw new Error("Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token");
+  const now = Date.now();
+  const expiresAt = Number(config.tokenExpiresAt) || 0;
+  const issuedAt = Number(config.tokenIssuedAt) || 0;
+  if (expiresAt && now >= expiresAt) {
+    throw new Error("Threads \u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743");
+  }
+  const expiringSoon = !expiresAt || expiresAt - now <= SEVEN_DAYS_MS;
+  const refreshable = issuedAt > 0 && now - issuedAt >= TWENTY_FOUR_HOURS_MS;
+  if (expiringSoon && refreshable) {
+    try {
+      const refreshed = await refreshAccessToken(token, requestUrl2);
+      const issuedNow = Date.now();
+      if (typeof saveConfig === "function") {
+        await saveConfig({
+          accessToken: refreshed.accessToken,
+          tokenIssuedAt: issuedNow,
+          tokenExpiresAt: issuedNow + refreshed.expiresInMs
+        });
+      }
+      return { token: refreshed.accessToken, warnings: [] };
+    } catch (error) {
+      const message = error.message || String(error);
+      if (!expiresAt || now < expiresAt) {
+        return { token, warnings: [`Threads token \u81EA\u52A8\u5237\u65B0\u5931\u8D25\uFF0C\u5DF2\u4F7F\u7528\u73B0\u6709 token\uFF08${message}\uFF09`] };
+      }
+      throw new Error(`Threads token \u5237\u65B0\u5931\u8D25\uFF1A${message}\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743`);
+    }
+  }
+  return { token, warnings: [] };
+}
+async function ensureUserId(config, token, requestUrlFn, saveConfig) {
+  const known = String(config.threadsUserId || "").trim();
+  if (known) return known;
+  const profile = await fetchProfile(requestUrlFn, token);
+  try {
+    if (typeof saveConfig === "function") {
+      await saveConfig({ threadsUserId: profile.id, username: profile.username });
+    }
+  } catch (e) {
+  }
+  return profile.id;
+}
+function extractAuthCode2(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+  if (raw.includes("code=")) {
+    const match = raw.match(/code=([^&#\s]+)/);
+    return match ? match[1] : "";
+  }
+  return raw;
+}
+function authorizeUrl(config = {}) {
+  const clientId = String(config.clientId || "").trim();
+  const redirectUri = String(config.redirectUri || "").trim() || DEFAULT_REDIRECT_URI2;
+  if (!clientId) return "";
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "threads_basic,threads_content_publish"
+  });
+  return `https://threads.net/oauth/authorize?${params.toString()}`;
+}
+async function validate7({ payload = {}, config = {} } = {}) {
+  const warnings = [];
+  const errors = [];
+  if (!String(config.accessToken || "").trim()) {
+    errors.push("Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token");
+  }
+  const plainText = String(payload.plainText || "").trim();
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  if (!plainText) {
+    errors.push(attachments.length > 0 ? "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09\uFF0C\u8BF7\u8865\u5145\u6B63\u6587" : "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+  } else {
+    const length = threadsTextLength(plainText);
+    if (length > MAX_TEXT_LENGTH) {
+      errors.push(`Threads \u5355\u5E16\u4E0A\u9650 ${MAX_TEXT_LENGTH} \u5B57\u8282\uFF08\u5F53\u524D ${length}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9`);
+    }
+    if (countUniqueUrls(plainText) > MAX_LINKS) {
+      warnings.push(`Threads \u5355\u5E16\u6700\u591A ${MAX_LINKS} \u4E2A\u94FE\u63A5\uFF0C\u8D85\u51FA\u90E8\u5206\u53EF\u80FD\u88AB\u670D\u52A1\u7AEF\u62D2\u7EDD`);
+    }
+  }
+  return { warnings, errors };
+}
+async function execute7({ config = {}, payload = {}, requestUrl: requestUrl2, saveConfig } = {}) {
+  const warnings = [];
+  try {
+    if (!requestUrl2) return { success: false, error: "\u7F3A\u5C11 requestUrl", warnings };
+    const { token, warnings: tokenWarnings } = await getValidToken({ config, requestUrl: requestUrl2, saveConfig });
+    warnings.push(...tokenWarnings);
+    const text = String(payload.plainText || "").trim();
+    if (!text) {
+      const hasImages = Array.isArray(payload.attachments) && payload.attachments.length > 0;
+      return { success: false, error: hasImages ? "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09" : "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A", warnings };
+    }
+    if (Array.isArray(payload.attachments) && payload.attachments.length > 0) {
+      warnings.push("Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF0C\u672C\u6B21\u4EC5\u53D1\u9001\u6587\u672C");
+    }
+    const userId = await ensureUserId(config, token, requestUrl2, saveConfig);
+    const createForm = new URLSearchParams({
+      access_token: token,
+      media_type: "TEXT",
+      text
+    });
+    const replyControl = normalizeReplyControl(config.replyControl);
+    if (replyControl && replyControl !== "everyone") createForm.set("reply_control", replyControl);
+    const createResponse = await requestUrl2({
+      url: `${API_BASE2}/${encodeURIComponent(userId)}/threads`,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: createForm.toString(),
+      throw: false
+    });
+    if (createResponse.status < 200 || createResponse.status >= 300) {
+      return { success: false, error: graphErrorMessage(createResponse, "\u521B\u5EFA Threads \u5E16\u5B50"), warnings };
+    }
+    const containerId = responseJson(createResponse).id;
+    if (!containerId) {
+      return { success: false, error: "Threads \u672A\u8FD4\u56DE\u5A92\u4F53\u5BB9\u5668 ID", warnings };
+    }
+    const publishForm = new URLSearchParams({
+      access_token: token,
+      creation_id: containerId
+    });
+    const publishResponse = await requestUrl2({
+      url: `${API_BASE2}/${encodeURIComponent(userId)}/threads_publish`,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: publishForm.toString(),
+      throw: false
+    });
+    if (publishResponse.status < 200 || publishResponse.status >= 300) {
+      return { success: false, error: graphErrorMessage(publishResponse, "\u53D1\u5E03 Threads \u5E16\u5B50"), warnings };
+    }
+    const postId = responseJson(publishResponse).id;
+    let url = "";
+    if (postId) {
+      try {
+        const permalinkResponse = await requestUrl2({
+          url: `${API_BASE2}/${encodeURIComponent(postId)}?fields=permalink&access_token=${encodeURIComponent(token)}`,
+          method: "GET",
+          throw: false
+        });
+        if (permalinkResponse.status >= 200 && permalinkResponse.status < 300) {
+          url = String(responseJson(permalinkResponse).permalink || "");
+        }
+      } catch (e) {
+      }
+    }
+    return { success: true, url, warnings };
+  } catch (error) {
+    return { success: false, error: error.message || String(error), warnings };
+  }
+}
+async function connectCode(config, requestUrlFn, options = {}) {
+  const clientId = String(config.clientId || "").trim();
+  const clientSecret = String(config.clientSecret || "").trim();
+  const redirectUri = String(config.redirectUri || "").trim() || DEFAULT_REDIRECT_URI2;
+  if (!clientId || !clientSecret) {
+    throw new Error("\u8BF7\u5148\u586B\u5199 Threads App ID \u4E0E App Secret");
+  }
+  const code2 = extractAuthCode2(options.code);
+  if (!code2) {
+    throw new Error("\u8BF7\u7C98\u8D34\u6388\u6743\u540E\u6D4F\u89C8\u5668\u5730\u5740\u680F\u4E2D\u7684\u5B8C\u6574\u94FE\u63A5\u6216\u5176\u4E2D\u7684 code");
+  }
+  const shortForm = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    code: code2,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri
+  });
+  const shortResponse = await requestUrlFn({
+    url: `${OAUTH_BASE}/oauth/access_token`,
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: shortForm.toString(),
+    throw: false
+  });
+  if (shortResponse.status < 200 || shortResponse.status >= 300) {
+    throw new Error(oauthExchangeErrorMessage(shortResponse));
+  }
+  const shortBody = responseJson(shortResponse);
+  if (!shortBody.access_token) throw new Error("Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u77ED\u671F token");
+  const longResponse = await requestUrlFn({
+    url: `${OAUTH_BASE}/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(clientSecret)}&access_token=${encodeURIComponent(shortBody.access_token)}`,
+    method: "GET",
+    throw: false
+  });
+  if (longResponse.status < 200 || longResponse.status >= 300) {
+    throw new Error(oauthExchangeErrorMessage(longResponse));
+  }
+  const longBody = responseJson(longResponse);
+  if (!longBody.access_token) throw new Error("Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u957F\u671F token");
+  const expiresInMs = Number(longBody.expires_in) > 0 ? Number(longBody.expires_in) * 1e3 : DEFAULT_TOKEN_TTL_MS;
+  const profile = await fetchProfile(requestUrlFn, longBody.access_token);
+  const issuedAt = Date.now();
+  return {
+    success: true,
+    message: `\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @${profile.username || profile.id}`,
+    configPatch: {
+      accessToken: String(longBody.access_token),
+      tokenIssuedAt: issuedAt,
+      tokenExpiresAt: issuedAt + expiresInMs,
+      threadsUserId: profile.id || String(shortBody.user_id || ""),
+      username: profile.username
+    }
+  };
+}
+async function testConnection(config, requestUrlFn) {
+  const token = String(config.accessToken || "").trim();
+  if (!token) {
+    throw new Error("\u8BF7\u5148\u5B8C\u6210 Threads \u6388\u6743\uFF08\u300C\u5B8C\u6210\u8FDE\u63A5\u300D\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token\uFF09");
+  }
+  const profile = await fetchProfile(requestUrlFn, token);
+  let quotaText = "";
+  const userId = profile.id || String(config.threadsUserId || "").trim();
+  if (userId) {
+    try {
+      const response = await requestUrlFn({
+        url: `${API_BASE2}/${encodeURIComponent(userId)}/threads_publishing_limit?access_token=${encodeURIComponent(token)}`,
+        method: "GET",
+        throw: false
+      });
+      if (response.status >= 200 && response.status < 300) {
+        const body = responseJson(response);
+        const data = Array.isArray(body.data) ? body.data[0] || {} : body;
+        const total = Number(data.quota_total) || 0;
+        const used = Number(data.quota_usage) || 0;
+        if (total > 0) quotaText = `\uFF0C24h \u53D1\u5E16\u914D\u989D\u5269\u4F59 ${Math.max(total - used, 0)}/${total}`;
+      }
+    } catch (e) {
+    }
+  }
+  return { success: true, message: `\u5DF2\u8FDE\u63A5 @${profile.username || profile.id}${quotaText}` };
+}
+async function runAction5(actionId, config, requestUrlFn, options = {}) {
+  if (actionId === "connectCode") return connectCode(config, requestUrlFn, options);
+  if (actionId === "testConnection") return testConnection(config, requestUrlFn);
+  throw new Error(`Threads \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+}
+function renderSettings5(containerEl, ctx) {
+  const config = ctx.plugin.getAdapterConfig("threads") || {};
+  new import_obsidian5.Setting(containerEl).setName("Meta \u5F00\u53D1\u8005\u5E73\u53F0").setDesc("\u9700\u5728 developers.threads.net \u521B\u5EFA Meta App \u5E76\u542F\u7528 Threads API \u540E\u4F7F\u7528\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002");
+  new import_obsidian5.Setting(containerEl).setName("Threads App ID").setDesc("Meta App \u7684\u7EAF\u6570\u5B57 App ID\u3002").addText((text) => text.setPlaceholder("\u7EAF\u6570\u5B57 App ID").setValue(config.clientId || "").onChange((value) => ctx.scheduleConfigSave({ clientId: value.trim() })));
+  new import_obsidian5.Setting(containerEl).setName("App Secret").setDesc("Meta App \u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002").addText((text) => {
+    text.inputEl.type = "password";
+    text.setPlaceholder("App Secret").setValue(config.clientSecret || "").onChange((value) => ctx.scheduleConfigSave({ clientSecret: value.trim() }));
+  });
+  new import_obsidian5.Setting(containerEl).setName("\u91CD\u5B9A\u5411 URI").setDesc("\u6388\u6743\u56DE\u8C03\u5730\u5740\uFF0C\u9700\u4E0E Meta App \u8BBE\u7F6E\u4E2D\u5B8C\u5168\u4E00\u81F4\u3002").addText((text) => text.setPlaceholder("https://localhost:3000/callback").setValue(config.redirectUri || "").onChange((value) => ctx.scheduleConfigSave({ redirectUri: value.trim() })));
+  const tokenOk = !!config.accessToken;
+  const tokenDesc = tokenOk ? `\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @${config.username || ""}${config.tokenExpiresAt && Date.now() > config.tokenExpiresAt ? "\uFF0CToken \u5DF2\u8FC7\u671F\uFF0C\u53D1\u9001\u65F6\u4F1A\u81EA\u52A8\u5237\u65B0\u6216\u9700\u91CD\u65B0\u6388\u6743" : ""}\u3002` : "\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55 Threads \u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002";
+  new import_obsidian5.Setting(containerEl).setName("Threads \u6388\u6743").setDesc(tokenDesc).addButton((btn) => btn.setButtonText("\u6253\u5F00\u6388\u6743\u9875\u9762").onClick(async () => {
+    try {
+      btn.setButtonText("\u6253\u5F00\u4E2D...");
+      btn.disabled = true;
+      const url = authorizeUrl(ctx.plugin.getAdapterConfig("threads"));
+      if (!url) throw new Error("\u8BF7\u5148\u586B\u5199 Threads App ID");
+      if (import_obsidian5.Platform.isMobile) {
+        navigator.clipboard.writeText(url).then(() => {
+          new import_obsidian5.Notice("\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55 Threads");
+        }).catch(() => {
+          new import_obsidian5.Notice(`\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A${url}`);
+        });
+      } else {
+        window.open(url, "_blank");
+        new import_obsidian5.Notice("\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00 Threads \u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740");
+      }
+    } catch (error) {
+      new import_obsidian5.Notice(`\u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A${error.message}`);
+    } finally {
+      btn.setButtonText("\u6253\u5F00\u6388\u6743\u9875\u9762");
+      btn.disabled = false;
+    }
+  }));
+  let authCode = "";
+  new import_obsidian5.Setting(containerEl).setName("\u6388\u6743 Code").setDesc("\u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002").addText((text) => text.setPlaceholder("\u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740").onChange((value) => {
+    authCode = value.trim();
+  })).addButton((btn) => btn.setButtonText("\u6362\u53D6 Token").onClick(async () => {
+    if (!authCode) {
+      new import_obsidian5.Notice("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code");
+      return;
+    }
+    try {
+      btn.setButtonText("\u6362\u53D6\u4E2D...");
+      btn.disabled = true;
+      const result = await runAction5(
+        "connectCode",
+        ctx.plugin.getAdapterConfig("threads"),
+        ctx.requestUrl,
+        { code: authCode }
+      );
+      if (result == null ? void 0 : result.configPatch) {
+        await ctx.saveConfig(result.configPatch);
+      }
+      new import_obsidian5.Notice((result == null ? void 0 : result.message) || "\u6388\u6743\u6210\u529F");
+      ctx.refresh();
+    } catch (error) {
+      new import_obsidian5.Notice(`\u6362\u53D6 Token \u5931\u8D25\uFF1A${error.message}`);
+    } finally {
+      btn.setButtonText("\u6362\u53D6 Token");
+      btn.disabled = false;
+    }
+  }));
+  new import_obsidian5.Setting(containerEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u9A8C\u8BC1 Token \u662F\u5426\u6709\u6548\uFF0C\u5E76\u5C55\u793A 24 \u5C0F\u65F6\u53D1\u5E16\u914D\u989D\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+    try {
+      btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+      btn.disabled = true;
+      const result = await runAction5(
+        "testConnection",
+        ctx.plugin.getAdapterConfig("threads"),
+        ctx.requestUrl
+      );
+      new import_obsidian5.Notice((result == null ? void 0 : result.message) || "\u8FDE\u63A5\u6210\u529F");
+    } catch (error) {
+      new import_obsidian5.Notice(`\u8FDE\u63A5\u5931\u8D25\uFF1A${error.message}`);
+    } finally {
+      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.disabled = false;
+    }
+  }));
+  new import_obsidian5.Setting(containerEl).setName("\u56DE\u590D\u6743\u9650").setDesc("\u53D1\u5E03\u540E\u5141\u8BB8\u54EA\u4E9B\u4EBA\u56DE\u590D\u4F60\u7684 Threads \u5E16\u5B50\u3002").addDropdown((dropdown) => dropdown.addOption("everyone", "\u6240\u6709\u4EBA").addOption("accounts_you_follow", "\u4F60\u5173\u6CE8\u7684\u8D26\u53F7").addOption("mentioned_only", "\u4EC5\u9650\u63D0\u53CA\u7684\u8D26\u53F7").setValue(config.replyControl || "everyone").onChange((value) => ctx.scheduleConfigSave({ replyControl: value })));
+}
+var import_obsidian5, manifest7, API_BASE2, OAUTH_BASE, DEFAULT_REDIRECT_URI2, MAX_TEXT_LENGTH, MAX_LINKS, SEVEN_DAYS_MS, TWENTY_FOUR_HOURS_MS, DEFAULT_TOKEN_TTL_MS, REPLY_CONTROL_VALUES, threads_default;
+var init_threads = __esm({
+  "src/adapters/threads.js"() {
+    import_obsidian5 = require("obsidian");
+    manifest7 = {
+      id: "threads",
+      version: "1.0.0",
+      name: "Threads",
+      description: "\u53D1\u5E03\u5185\u5BB9\u5230 Threads (Meta)",
+      displayOrder: 80,
+      enabledByDefault: false,
+      capabilities: {
+        text: true
+        // Phase 2 图片上线时追加：
+        // attachments: true, attachmentTypes: ['image/jpeg', 'image/png'],
+        // maxAttachments: 20, maxAttachmentSize: 8000000,
+        // warnOnAttachmentCount: true, warnOnAttachmentSize: true
+      },
+      settings: {
+        fields: [
+          { key: "clientId", type: "text", label: "Threads App ID", required: true, placeholder: "\u7EAF\u6570\u5B57 App ID" },
+          { key: "clientSecret", type: "password", label: "App Secret", required: true },
+          { key: "redirectUri", type: "text", label: "\u91CD\u5B9A\u5411 URI", default: "https://localhost:3000/callback" },
+          { key: "accessToken", type: "password", label: "Access Token", required: true },
+          {
+            key: "replyControl",
+            type: "select",
+            label: "\u56DE\u590D\u6743\u9650",
+            options: [
+              { value: "everyone", label: "\u6240\u6709\u4EBA" },
+              { value: "accounts_you_follow", label: "\u4F60\u5173\u6CE8\u7684\u8D26\u53F7" },
+              { value: "mentioned_only", label: "\u4EC5\u9650\u63D0\u53CA\u7684\u8D26\u53F7" }
+            ],
+            default: "everyone"
+          }
+        ]
+      }
+    };
+    API_BASE2 = "https://graph.threads.net/v1.0";
+    OAUTH_BASE = "https://graph.threads.net";
+    DEFAULT_REDIRECT_URI2 = "https://localhost:3000/callback";
+    MAX_TEXT_LENGTH = 500;
+    MAX_LINKS = 5;
+    SEVEN_DAYS_MS = 7 * 24 * 3600 * 1e3;
+    TWENTY_FOUR_HOURS_MS = 24 * 3600 * 1e3;
+    DEFAULT_TOKEN_TTL_MS = 60 * 24 * 3600 * 1e3;
+    REPLY_CONTROL_VALUES = /* @__PURE__ */ new Set(["everyone", "accounts_you_follow", "mentioned_only"]);
+    threads_default = { manifest: manifest7, execute: execute7, validate: validate7, runAction: runAction5, renderSettings: renderSettings5 };
+  }
+});
+
 // src/main.js
 var {
   Plugin,
-  Notice: Notice5,
+  Notice: Notice6,
   MarkdownView,
   requestUrl
 } = require("obsidian");
@@ -5143,7 +5632,8 @@ var ADAPTER_MODULES = [
   (init_missky(), __toCommonJS(missky_exports)),
   (init_notion(), __toCommonJS(notion_exports)),
   require_bluesky(),
-  (init_weibo(), __toCommonJS(weibo_exports))
+  (init_weibo(), __toCommonJS(weibo_exports)),
+  (init_threads(), __toCommonJS(threads_exports))
 ];
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 function padNumber(v, size = 2) {
@@ -5587,9 +6077,9 @@ var JournalSyncPlugin = class extends Plugin {
         view.editor.setCursor({ line: cursorLine, ch: 0 });
         view.editor.focus();
       }, 50);
-      new Notice5("\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002");
+      new Notice6("\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002");
     } catch (error) {
-      new Notice5(error.message || String(error));
+      new Notice6(error.message || String(error));
     }
   }
   getNoteTitle(file, source) {
@@ -5607,12 +6097,12 @@ var JournalSyncPlugin = class extends Plugin {
         editor = activeView == null ? void 0 : activeView.editor;
       }
       if (!editor) {
-        new Notice5("\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0");
+        new Notice6("\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0");
         return;
       }
       const current = getSelectedOrBlockContent(editor, this.settings.sendScope);
       if (!current || !current.content.trim()) {
-        new Notice5("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002");
+        new Notice6("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002");
         return;
       }
       const currentFile = (view == null ? void 0 : view.file) || this.app.workspace.getActiveFile();
@@ -5629,12 +6119,12 @@ var JournalSyncPlugin = class extends Plugin {
       if (processResult.failed.length > 0) {
         const failedNames = [...new Set(processResult.failed.map((item) => item.target).filter(Boolean))];
         const suffix = failedNames.length > 0 ? `\uFF1A${failedNames.slice(0, 3).join("\u3001")}${failedNames.length > 3 ? " \u7B49" : ""}` : "";
-        new Notice5(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7${suffix}`, 1e4);
+        new Notice6(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7${suffix}`, 1e4);
       }
       const preparedContent = (_a = processResult.content) != null ? _a : current.content;
       const preparedImages = ((_b = processResult.richDraft) == null ? void 0 : _b.images) || [];
       if (!preparedContent.trim() && preparedImages.length === 0) {
-        new Notice5("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002");
+        new Notice6("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002");
         return;
       }
       const readImageFile = (vaultPath) => this.readImageFromVault(vaultPath, currentFile);
@@ -5646,7 +6136,7 @@ var JournalSyncPlugin = class extends Plugin {
         notionTitle: noteTitle
       }).open();
     } catch (error) {
-      new Notice5(error.message || String(error));
+      new Notice6(error.message || String(error));
     }
   }
 };

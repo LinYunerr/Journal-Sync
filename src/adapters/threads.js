@@ -12,12 +12,14 @@
  * - testConnection()：GET /me + threads_publishing_limit，返回配额摘要。
  * 另导出 authorizeUrl(config)，供设置页「打开授权页」拼装授权地址。
  */
+import { Setting, Notice, Platform } from 'obsidian';
 
 export const manifest = {
     id: 'threads',
     version: '1.0.0',
     name: 'Threads',
     description: '发布内容到 Threads (Meta)',
+    displayOrder: 80,
     enabledByDefault: false,
     capabilities: {
         text: true
@@ -505,5 +507,147 @@ export async function runAction(actionId, config, requestUrlFn, options = {}) {
     if (actionId === 'testConnection') return testConnection(config, requestUrlFn);
     throw new Error(`Threads 适配器不支持操作：${actionId}`);
 }
+/**
+ * 设置页面（自定义面板）。
+ * Threads 的 OAuth 流程需要「打开授权页 → 粘贴 code → 换取 Token」交互，
+ * 无法用 manifest schema 的 action 字段表达，因此使用 renderSettings。
+ */
+export function renderSettings(containerEl, ctx) {
+    const config = ctx.plugin.getAdapterConfig('threads') || {};
 
-export default { manifest, execute, validate, runAction };
+    new Setting(containerEl)
+        .setName('Meta 开发者平台')
+        .setDesc('需在 developers.threads.net 创建 Meta App 并启用 Threads API 后使用。凭据仅保存在本地 data.json。');
+
+    new Setting(containerEl)
+        .setName('Threads App ID')
+        .setDesc('Meta App 的纯数字 App ID。')
+        .addText(text => text
+            .setPlaceholder('纯数字 App ID')
+            .setValue(config.clientId || '')
+            .onChange(value => ctx.scheduleConfigSave({ clientId: value.trim() })));
+
+    new Setting(containerEl)
+        .setName('App Secret')
+        .setDesc('Meta App 的 App Secret，仅保存在本地 data.json，请勿外传。')
+        .addText(text => {
+            text.inputEl.type = 'password';
+            text.setPlaceholder('App Secret')
+                .setValue(config.clientSecret || '')
+                .onChange(value => ctx.scheduleConfigSave({ clientSecret: value.trim() }));
+        });
+
+    new Setting(containerEl)
+        .setName('重定向 URI')
+        .setDesc('授权回调地址，需与 Meta App 设置中完全一致。')
+        .addText(text => text
+            .setPlaceholder('https://localhost:3000/callback')
+            .setValue(config.redirectUri || '')
+            .onChange(value => ctx.scheduleConfigSave({ redirectUri: value.trim() })));
+
+    // ── OAuth 授权流程 ──
+    const tokenOk = !!config.accessToken;
+    const tokenDesc = tokenOk
+        ? `已连接 Threads 账号 @${config.username || ''}${config.tokenExpiresAt && Date.now() > config.tokenExpiresAt ? '，Token 已过期，发送时会自动刷新或需重新授权' : ''}。`
+        : '尚未授权。点击「打开授权页面」登录 Threads 后，从回调页地址栏复制 code。';
+
+    new Setting(containerEl)
+        .setName('Threads 授权')
+        .setDesc(tokenDesc)
+        .addButton(btn => btn
+            .setButtonText('打开授权页面')
+            .onClick(async () => {
+                try {
+                    btn.setButtonText('打开中...');
+                    btn.disabled = true;
+                    const url = authorizeUrl(ctx.plugin.getAdapterConfig('threads'));
+                    if (!url) throw new Error('请先填写 Threads App ID');
+                    if (Platform.isMobile) {
+                        navigator.clipboard.writeText(url).then(() => {
+                            new Notice('授权链接已复制，请在浏览器中打开并登录 Threads');
+                        }).catch(() => {
+                            new Notice(`复制失败，请手动打开授权页：${url}`);
+                        });
+                    } else {
+                        window.open(url, '_blank');
+                        new Notice('已在浏览器打开 Threads 授权页，登录后从地址栏复制 code 或完整回调地址');
+                    }
+                } catch (error) {
+                    new Notice(`打开授权页失败：${error.message}`);
+                } finally {
+                    btn.setButtonText('打开授权页面');
+                    btn.disabled = false;
+                }
+            }));
+
+    let authCode = '';
+    new Setting(containerEl)
+        .setName('授权 Code')
+        .setDesc('粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。')
+        .addText(text => text
+            .setPlaceholder('粘贴 code 或回调地址')
+            .onChange(value => { authCode = value.trim(); }))
+        .addButton(btn => btn
+            .setButtonText('换取 Token')
+            .onClick(async () => {
+                if (!authCode) {
+                    new Notice('请先粘贴授权 code');
+                    return;
+                }
+                try {
+                    btn.setButtonText('换取中...');
+                    btn.disabled = true;
+                    const result = await runAction(
+                        'connectCode',
+                        ctx.plugin.getAdapterConfig('threads'),
+                        ctx.requestUrl,
+                        { code: authCode }
+                    );
+                    if (result?.configPatch) {
+                        await ctx.saveConfig(result.configPatch);
+                    }
+                    new Notice(result?.message || '授权成功');
+                    ctx.refresh();
+                } catch (error) {
+                    new Notice(`换取 Token 失败：${error.message}`);
+                } finally {
+                    btn.setButtonText('换取 Token');
+                    btn.disabled = false;
+                }
+            }));
+
+    new Setting(containerEl)
+        .setName('测试连接')
+        .setDesc('验证 Token 是否有效，并展示 24 小时发帖配额。')
+        .addButton(btn => btn
+            .setButtonText('测试连接')
+            .onClick(async () => {
+                try {
+                    btn.setButtonText('连接中...');
+                    btn.disabled = true;
+                    const result = await runAction(
+                        'testConnection',
+                        ctx.plugin.getAdapterConfig('threads'),
+                        ctx.requestUrl
+                    );
+                    new Notice(result?.message || '连接成功');
+                } catch (error) {
+                    new Notice(`连接失败：${error.message}`);
+                } finally {
+                    btn.setButtonText('测试连接');
+                    btn.disabled = false;
+                }
+            }));
+
+    new Setting(containerEl)
+        .setName('回复权限')
+        .setDesc('发布后允许哪些人回复你的 Threads 帖子。')
+        .addDropdown(dropdown => dropdown
+            .addOption('everyone', '所有人')
+            .addOption('accounts_you_follow', '你关注的账号')
+            .addOption('mentioned_only', '仅限提及的账号')
+            .setValue(config.replyControl || 'everyone')
+            .onChange(value => ctx.scheduleConfigSave({ replyControl: value })));
+}
+
+export default { manifest, execute, validate, runAction, renderSettings };
