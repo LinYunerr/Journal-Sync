@@ -35,11 +35,11 @@ export const manifest = {
             {
                 key: 'testConnection',
                 type: 'action',
-                label: '测试连接',
+                label: '测试连接（会发一条笔记）',
                 action: 'testConnection',
-                buttonLabel: '测试连接',
-                busyLabel: '连接中...',
-                desc: '使用当前 Flomo API URL 发送一条测试消息验证连接。'
+                buttonLabel: '测试连接（会发一条笔记）',
+                busyLabel: '发送中...',
+                desc: '会向 flomo 发送一条「Journal Sync 测试连接 ✓」笔记来验证 Webhook。这条笔记会留在你的 flomo 里。',
             }
         ]
     }

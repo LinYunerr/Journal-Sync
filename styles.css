@@ -879,3 +879,83 @@
 .mstd-account-list {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
+
+/* ── 发送日志弹窗 ────────────────────────── */
+.js-bridge-log-list {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.js-bridge-log-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.js-bridge-log-entry:last-child {
+  border-bottom: none;
+}
+
+.js-bridge-log-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.js-bridge-log-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.js-bridge-log-time {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.js-bridge-log-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgb(239, 68, 68);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+.js-bridge-log-preview {
+  font-size: 0.88em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.js-bridge-log-restore-btn {
+  flex: 0 0 auto;
+  height: 26px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  border-radius: 999px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 10px;
+  transition: all 0.15s ease;
+}
+
+.js-bridge-log-restore-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.js-bridge-log-restore-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

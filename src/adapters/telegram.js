@@ -8,7 +8,7 @@
  *
  * 三种发送模式（纯内部逻辑，管道不需要知道）：
  * - plain:  纯文本 + 图片附件
- * - rich:   富文本图文混排（sendRichMessage）
+ * - rich:   富文本图文混排（sendRichMessage）。失败不降级为普通发送，见 AGENTS.md。
  * - telegraph: 创建 Telegraph 页面，将链接发送到频道
  */
 import { Setting, Notice } from 'obsidian';
@@ -22,6 +22,14 @@ function escapeTelegramMarkdownWikilinks(text) {
 }
 
 const telegraph = require('../core/telegraph');
+const { getMimeType } = require('../core/mime');
+
+// Telegram 只发送图片附件；未知扩展名沿用历史兜底 image/jpeg
+// （core getMimeType 对未知扩展名返回 application/octet-stream）。
+function telegramImageMimeType(filename) {
+    const m = getMimeType(filename);
+    return m === 'application/octet-stream' ? 'image/jpeg' : m;
+}
 
 export const manifest = {
     id: 'telegram',
@@ -239,11 +247,7 @@ function richCharacterCount(text) {
 async function sendPhotoByBuffer(botToken, chatId, arrayBuffer, filename, caption, requestUrlFn) {
     const boundary = `----TgBridge${Date.now()}${Math.random().toString(16).slice(2)}`;
     const ext = filename.split('.').pop().toLowerCase();
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-        : ext === 'png' ? 'image/png'
-        : ext === 'gif' ? 'image/gif'
-        : ext === 'webp' ? 'image/webp'
-        : 'image/jpeg';
+    const mime = telegramImageMimeType(filename);
 
     const encoder = new TextEncoder();
     const parts = [];
@@ -319,11 +323,7 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
     imageItems.forEach((item, idx) => {
         const filename = item.filename || `photo${idx}.jpg`;
         const ext = filename.split('.').pop().toLowerCase();
-        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-            : ext === 'png' ? 'image/png'
-            : ext === 'gif' ? 'image/gif'
-            : ext === 'webp' ? 'image/webp'
-            : 'image/jpeg';
+        const mime = telegramImageMimeType(filename);
 
         const safeFilename = `image${idx}.${ext}`;
 
@@ -359,15 +359,6 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
 }
 
 // ── 富文本发送 ────────────────────────────────
-
-function getImageMimeType(filename = '') {
-    const ext = String(filename).split('.').pop().toLowerCase();
-    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-    if (ext === 'png') return 'image/png';
-    if (ext === 'gif') return 'image/gif';
-    if (ext === 'webp') return 'image/webp';
-    return 'application/octet-stream';
-}
 
 function buildRichMarkdown(parts) {
     const isPlainText = (block) => {
@@ -445,7 +436,7 @@ async function sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers
     formParts.push(encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="rich_message"\r\n\r\n${JSON.stringify({ markdown, media })}\r\n`));
     for (const file of parts) {
         formParts.push(encoder.encode(
-            `--${boundary}\r\nContent-Disposition: form-data; name="${file.attachmentName}"; filename="${file.filename.replace(/[\\\"\r\n]/g, '_')}"\r\nContent-Type: ${getImageMimeType(file.filename)}\r\n\r\n`
+            `--${boundary}\r\nContent-Disposition: form-data; name="${file.attachmentName}"; filename="${file.filename.replace(/[\\\"\r\n]/g, '_')}"\r\nContent-Type: ${getMimeType(file.filename)}\r\n\r\n`
         ));
         formParts.push(new Uint8Array(file.buffer));
         formParts.push(encoder.encode('\r\n'));
@@ -475,6 +466,7 @@ async function sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers
 async function sendRichContent(botToken, chatId, segments, imageBuffers, config, requestUrlFn, isRichText = true) {
     try {
         if (isRichText) {
+            // Decision: rich mode does not fall back to plain send. See AGENTS.md.
             const nativeResult = await sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers, requestUrlFn);
             if (nativeResult.success) return { success: true };
             return {

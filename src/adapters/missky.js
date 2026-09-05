@@ -2,6 +2,8 @@
  * Misskey 适配器
  * 通过 Obsidian requestUrl 发送到 Misskey 实例
  */
+const { getMimeType } = require('../core/mime');
+const { buildMultipartBody } = require('../core/multipart');
 
 export const manifest = {
     id: 'missky',
@@ -42,8 +44,7 @@ export const manifest = {
                 options: [
                     { value: 'public', label: '公开' },
                     { value: 'home', label: '主页' },
-                    { value: 'followers', label: '仅关注者' },
-                    { value: 'specified', label: '私信' }
+                    { value: 'followers', label: '仅关注者' }
                 ],
                 default: 'public'
             },
@@ -59,50 +60,27 @@ export const manifest = {
         ]
     }
 };
-const MAX_MISSKEY_IMAGES = manifest.capabilities.maxAttachments;
 
-function getMimeType(filename) {
-    const ext = String(filename || '').split('.').pop().toLowerCase();
-    const mimeTypes = {
-        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
-        gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
-        mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm'
-    };
-    return mimeTypes[ext] || 'application/octet-stream';
-}
+const MAX_MISSKEY_IMAGES = manifest.capabilities.maxAttachments;
 
 /**
  * 上传单张图片到 Misskey Drive（/api/drive/files/create），返回 fileId
  */
 async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, requestUrl) {
-    const safeFilename = String(filename || 'image').replace(/["\r\n]/g, '_');
     const mimeType = getMimeType(filename);
-    const boundary = `----MisskeyBoundary${Date.now()}${Math.random().toString(16).slice(2)}`;
-
-    const encoder = new TextEncoder();
-    const parts = [];
-    parts.push(encoder.encode(
-        `--${boundary}\r\nContent-Disposition: form-data; name="i"\r\n\r\n${apiToken}\r\n`
-    ));
-    parts.push(encoder.encode(
-        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFilename}"\r\nContent-Type: ${mimeType}\r\n\r\n`
-    ));
-    parts.push(new Uint8Array(arrayBuffer));
-    parts.push(encoder.encode(`\r\n--${boundary}--\r\n`));
-
-    const totalLength = parts.reduce((sum, p) => sum + p.byteLength, 0);
-    const body = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const part of parts) {
-        body.set(part, offset);
-        offset += part.byteLength;
-    }
+    const { boundary, body } = buildMultipartBody({
+        boundaryPrefix: '----MisskeyBoundary',
+        fields: [
+            { name: 'i', value: apiToken },
+            { name: 'file', filename, contentType: mimeType, buffer: arrayBuffer }
+        ]
+    });
 
     const response = await requestUrl({
         url: `${baseUrl}/api/drive/files/create`,
         method: 'POST',
         headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-        body: body.buffer,
+        body,
         throw: false
     });
 
@@ -139,7 +117,9 @@ export async function validate({ payload }) {
 export async function execute({ config = {}, payload = {}, requestUrl }) {
     const serverUrl = String(config.serverUrl || '').trim();
     const apiToken = String(config.apiToken || '').trim();
-    const visibility = config.visibility || 'public';
+    const visibility = ['public', 'home', 'followers'].includes(config.visibility)
+        ? config.visibility
+        : 'public';
 
     if (!serverUrl || !apiToken) {
         return { success: false, error: 'Misskey 实例地址或 API Token 未配置' };

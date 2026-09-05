@@ -4,6 +4,7 @@
  */
 
 'use strict';
+const { getMimeType } = require('./mime');
 
 /**
  * 从富文本草稿和原始内容构建统一 payload。
@@ -58,19 +59,6 @@ function extractAttachments(richDraft, content) {
   }
 
   return result;
-}
-
-function getMimeType(filename) {
-  const ext = String(filename || '').split('.').pop().toLowerCase();
-  const types = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    gif: 'image/gif',
-    svg: 'image/svg+xml'
-  };
-  return types[ext] || 'application/octet-stream';
 }
 
 module.exports = { buildPayload, getMimeType };

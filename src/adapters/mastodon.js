@@ -4,6 +4,8 @@
  */
 
 import { Setting, Notice } from 'obsidian';
+const { getMimeType } = require('../core/mime');
+const { buildMultipartBody } = require('../core/multipart');
 
 export const manifest = {
     id: 'mastodon',
@@ -54,42 +56,19 @@ export const manifest = {
 };
 
 export const defaultConfig = { accounts: [] };
-
 const MAX_MASTODON_IMAGES = manifest.capabilities.maxAttachments;
-
-function getMimeType(filename) {
-    const ext = String(filename || '').split('.').pop().toLowerCase();
-    const mimeTypes = {
-        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
-        gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
-        mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm'
-    };
-    return mimeTypes[ext] || 'application/octet-stream';
-}
 
 /**
  * 上传单张图片到 Mastodon /api/v1/media，返回 media_id
  */
 async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken, requestUrl) {
-    const safeFilename = String(filename || 'image').replace(/["\r\n]/g, '_');
     const mimeType = getMimeType(filename);
-    const boundary = `----MastodonBoundary${Date.now()}${Math.random().toString(16).slice(2)}`;
-
-    const encoder = new TextEncoder();
-    const parts = [];
-    parts.push(encoder.encode(
-        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFilename}"\r\nContent-Type: ${mimeType}\r\n\r\n`
-    ));
-    parts.push(new Uint8Array(arrayBuffer));
-    parts.push(encoder.encode(`\r\n--${boundary}--\r\n`));
-
-    const totalLength = parts.reduce((sum, p) => sum + p.byteLength, 0);
-    const body = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const part of parts) {
-        body.set(part, offset);
-        offset += part.byteLength;
-    }
+    const { boundary, body } = buildMultipartBody({
+        boundaryPrefix: '----MastodonBoundary',
+        fields: [
+            { name: 'file', filename, contentType: mimeType, buffer: arrayBuffer }
+        ]
+    });
 
     const response = await requestUrl({
         url: `${baseUrl}/api/v1/media`,
@@ -98,7 +77,7 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': `multipart/form-data; boundary=${boundary}`
         },
-        body: body.buffer,
+        body,
         throw: false
     });
 

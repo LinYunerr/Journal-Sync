@@ -1,4 +1,4 @@
-const { PluginSettingTab, Setting, Notice, Platform } = require('obsidian');
+const { PluginSettingTab, Setting, Notice, Platform, requestUrl } = require('obsidian');
 
 class JournalSyncSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
@@ -245,7 +245,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
             scheduleConfigSave: patch => this._scheduleAdapterConfigSave(id, patch),
             saveConfig: async patch => this.plugin.setAdapterConfig(id, { ...this.plugin.getAdapterConfig(id), ...patch }),
             refresh: () => { void this.display().catch(() => {}); },
-            requestUrl: this.plugin.requestUrl.bind(this.plugin)
+            requestUrl
         };
     }
 

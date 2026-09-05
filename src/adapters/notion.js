@@ -4,6 +4,7 @@
  * 图片压缩、标题来源选择等逻辑已内化到适配器内部。
  */
 import { Setting, Notice } from 'obsidian';
+const { getMimeType } = require('../core/mime');
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2026-03-11';
@@ -388,12 +389,6 @@ async function createPage(requestUrl, token, parent, title, children) {
 
 // ── 图片压缩（从 main.js 移入） ──────────────
 
-function getImageMimeType(filename) {
-    const ext = String(filename || '').split('.').pop().toLowerCase();
-    const types = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
-    return types[ext] || 'application/octet-stream';
-}
-
 async function compressImageToWebp(arrayBuffer, mimeType) {
     const source = new Blob([arrayBuffer], { type: mimeType });
     const bitmap = await createImageBitmap(source);
@@ -430,7 +425,7 @@ async function prepareLocalImages(payload, autoCompress) {
         const source = new Uint8Array(buffer);
         let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
         let filename = img.filename || `image-${index + 1}`;
-        let mimeType = getImageMimeType(filename);
+        let mimeType = getMimeType(filename);
         const originalBytes = source.byteLength;
 
         if (originalBytes > MAX_NOTION_ATTACHMENT_SIZE) {

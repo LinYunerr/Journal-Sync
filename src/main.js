@@ -4,7 +4,7 @@
  * 架构说明：
  * - src/main.js         本文件：插件主类，负责生命周期与命令注册
  * - src/core/           核心模块（内容渲染、适配器注册表）
- * - src/adapters/       各平台发送适配器（flomo / telegram / mastodon / missky / notion / bluesky / weibo）
+ * - src/adapters/       各平台发送适配器（flomo / telegram / mastodon / missky / notion / bluesky / weibo / threads）
  * - src/ui/             UI 组件（Send Modal、Settings Tab）；设置页为 manifest 驱动（通用 schema 渲染 + 适配器可选 renderSettings 自定义面板）
  *
  * 构建方式：npm run build → 打包为 main.js
@@ -18,8 +18,28 @@ const {
 } = require('obsidian');
 
 const AdapterRegistry     = require('./core/adapter-registry');
+const sendLog             = require('./core/send-log');
 const JournalSyncSendModal = require('./ui/send-modal');
 const JournalSyncSettingTab = require('./ui/settings-tab');
+const JournalSyncLogModal  = require('./ui/log-modal');
+// 纯逻辑工具（从本文件拆出，便于复用与单元测试）
+const {
+    formatDate,
+    buildDiaryFilename,
+    buildDiaryHeading
+} = require('./core/diary');
+const {
+    normalizeVaultPath,
+    joinVaultPath,
+    dirnameVaultPath,
+    isImagePath,
+    isRemoteUrl,
+    isDataUrl
+} = require('./core/vault-path');
+const { parseImageRefs } = require('./core/image-refs');
+const { getSelectedOrBlockContent } = require('./core/content');
+const { deepMergeSettings } = require('./core/settings');
+const { buildRichDraftFromUploadedMarkdown } = require('./core/rich-draft');
 
 // 适配器（各自独立，按需 require）；数组顺序即注册顺序：flomo、telegram、mastodon、missky、notion、bluesky、weibo、threads
 const ADAPTER_MODULES = [
@@ -32,226 +52,6 @@ const ADAPTER_MODULES = [
   require('./adapters/weibo'),
   require('./adapters/threads')
 ];
-
-// ──────────────────────────────────────────────
-// 工具函数（沿用原插件，无外部依赖）
-// ──────────────────────────────────────────────
-
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
-
-function padNumber(v, size = 2) { return String(v).padStart(size, '0'); }
-function formatDate(d = new Date()) {
-  return `${d.getFullYear()}-${padNumber(d.getMonth()+1)}-${padNumber(d.getDate())}`;
-}
-function formatTime(d = new Date()) {
-  return `${padNumber(d.getHours())}:${padNumber(d.getMinutes())}:${padNumber(d.getSeconds())}`;
-}
-
-function parseDateInput(dateInput) {
-  const m = String(dateInput || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) return { year: m[1], month: String(Number(m[2])), day: String(Number(m[3])) };
-  const n = new Date();
-  return { year: String(n.getFullYear()), month: String(n.getMonth()+1), day: String(n.getDate()) };
-}
-
-function formatDateToken(v, w) {
-  const d = String(v||'').replace(/\D/g,'');
-  if (!d) return '';
-  return w <= d.length ? d.slice(-w) : d.padStart(w,'0');
-}
-
-function sanitizeFilename(v) {
-  return String(v||'').trim().split(/[\\\/]/).pop().replace(/[:*?"<>|]/g,'_');
-}
-
-function buildDiaryFilename(dateInput, rule = 'YYYY-MM-DD 日记') {
-  const {year,month,day} = parseDateInput(dateInput);
-  const fallback = `${year.padStart(4,'0')}-${month.padStart(2,'0')}-${day.padStart(2,'0')} 日记`;
-  const rendered = String(rule||'YYYY-MM-DD 日记').trim()
-    .replace(/Y+|M+|D+/g, tok => {
-      if (tok.startsWith('Y')) return formatDateToken(year, tok.length);
-      if (tok.startsWith('M')) return formatDateToken(month, tok.length);
-      return formatDateToken(day, tok.length);
-    });
-  return `${(sanitizeFilename(rendered)||fallback).replace(/\.md$/i,'')}.md`;
-}
-
-function buildDiaryHeading(now, rule = 'HH:MM:SS') {
-  const fallback = `${padNumber(now.getHours())}:${padNumber(now.getMinutes())}:${padNumber(now.getSeconds())}`;
-  const rendered = String(rule || 'HH:MM:SS').trim()
-    .replace(/H+|M+|S+/g, tok => {
-      if (tok.startsWith('H')) return formatDateToken(String(now.getHours()), tok.length);
-      if (tok.startsWith('M')) return formatDateToken(String(now.getMinutes()), tok.length);
-      return formatDateToken(String(now.getSeconds()), tok.length);
-    });
-  return rendered || fallback;
-}
-
-function normalizeVaultPath(v) {
-  return String(v||'').replace(/\\/g,'/').replace(/^\/+|\/+$/g,'');
-}
-
-function joinVaultPath(...parts) {
-  return parts.map(normalizeVaultPath).filter(Boolean).join('/');
-}
-
-function dirnameVaultPath(p) {
-  const n = normalizeVaultPath(p);
-  const i = n.lastIndexOf('/');
-  return i >= 0 ? n.slice(0,i) : '';
-}
-
-function isImagePath(v) {
-  const clean = String(v||'').split('#')[0].split('?')[0];
-  const ext = clean.includes('.') ? clean.split('.').pop().toLowerCase() : '';
-  return IMAGE_EXTENSIONS.has(ext);
-}
-function isRemoteUrl(v) { return /^https?:\/\//i.test(String(v||'').trim()); }
-function isDataUrl(v)   { return /^data:/i.test(String(v||'').trim()); }
-
-function parseImageRefs(markdown) {
-  const refs = [];
-  const wiki = /!\[\[([^\]]+)\]\]/g;
-  const md   = /!\[[^\]]*\]\(([^)]+)\)/g;
-  const bare = /(^|\n)([^\n]+?\.(?:png|jpe?g|gif|webp|svg))(?=\n|$)/gi;
-  let m;
-
-  while ((m = wiki.exec(markdown)) !== null) {
-    const t = String(m[1]||'').split('|')[0].trim();
-    if (!t) continue;
-    refs.push({ raw: m[0], target: t, type: 'wiki', index: m.index, end: m.index+m[0].length });
-  }
-  while ((m = md.exec(markdown)) !== null) {
-    const t = String(m[1]||'').trim().replace(/^<|>$/g,'');
-    if (!t) continue;
-    try { refs.push({ raw: m[0], target: decodeURIComponent(t), type: 'markdown', index: m.index, end: m.index+m[0].length }); }
-    catch { refs.push({ raw: m[0], target: t, type: 'markdown', index: m.index, end: m.index+m[0].length }); }
-  }
-  while ((m = bare.exec(markdown)) !== null) {
-    const t = String(m[2]||'').trim();
-    if (!t || /[\[\]()]/.test(t)) continue;
-    const idx = m.index + m[1].length;
-    refs.push({ raw: m[2], target: t, type: 'bare', index: idx, end: idx+m[2].length });
-  }
-
-  // 排除代码围栏内的引用
-  const codeRanges = [];
-  const fenceRe = /```[^\n]*[\s\S]*?```/g;
-  let fm;
-  while ((fm = fenceRe.exec(markdown)) !== null) {
-    codeRanges.push([fm.index, fm.index + fm[0].length]);
-  }
-  const filtered = codeRanges.length === 0
-    ? refs
-    : refs.filter(ref => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
-
-  return filtered.sort((a,b) => a.index - b.index);
-}
-
-function getSelectedOrBlockContent(editor, scope = 2) {
-  const selected = editor.getSelection();
-  if (selected && selected.trim()) {
-    return { content: selected.trim(), heading: '', source: 'selection' };
-  }
-
-  const doc   = editor.getValue().replace(/\r\n/g,'\n');
-  const lines = doc.split('\n');
-  const cursorLine = editor.getCursor().line;
-
-  // scope = 0：发送整个页面
-  if (Number(scope) === 0) {
-    const content = doc.trim();
-    return content
-      ? { content, heading: '', source: 'page' }
-      : null;
-  }
-
-  // scope = 1-6：发送光标上方最近一级该级别标题下的内容（不含标题本身）。
-  // 遇到同级或更高级标题时结束，避免跨越到下一个父级章节。
-  const level = Math.min(6, Math.max(1, Number(scope) || 2));
-  const headingRe = new RegExp(`^#{${level}}\\s+`);
-  const anyHeadingRe = /^(#{1,6})\s+/;
-  let startLine = -1;
-  for (let i = Math.min(cursorLine, lines.length-1); i >= 0; i--) {
-    if (headingRe.test(lines[i])) { startLine = i; break; }
-  }
-  if (startLine >= 0) {
-    let endLine = lines.length;
-    for (let i = startLine+1; i < lines.length; i++) {
-      const nextHeading = lines[i].match(anyHeadingRe);
-      if (nextHeading && nextHeading[1].length <= level) {
-        endLine = i;
-        break;
-      }
-    }
-    const content = lines.slice(startLine+1, endLine).join('\n').trim();
-    if (!content) return null;
-    return {
-      content,
-      heading: lines[startLine].replace(headingRe, '').trim(),
-      source: 'heading'
-    };
-  }
-
-  // 未选中且光标不在所选级别标题下时视为无效操作，禁止整篇文档兜底发送。
-  return null;
-}
-
-function deepMergeSettings(target, source) {
-  if (!target || typeof target !== 'object') target = {};
-  if (!source || typeof source !== 'object') return target;
-
-  for (const key of Object.keys(source)) {
-    const sourceVal = source[key];
-    const targetVal = target[key];
-
-    if (Array.isArray(sourceVal)) {
-      if (!Array.isArray(targetVal) || targetVal.length === 0) {
-        target[key] = JSON.parse(JSON.stringify(sourceVal));
-      }
-    } else if (sourceVal && typeof sourceVal === 'object') {
-      if (!targetVal || typeof targetVal !== 'object') target[key] = {};
-      deepMergeSettings(target[key], sourceVal);
-    } else {
-      if (targetVal === undefined || targetVal === '' || targetVal === null) {
-        target[key] = sourceVal;
-      }
-    }
-  }
-  return target;
-}
-
-function buildRichDraftFromUploadedMarkdown(markdown, uploadedRefs = []) {
-  const blocks = [];
-  const images = [];
-  let cursor = 0;
-  const refs = (Array.isArray(uploadedRefs) ? uploadedRefs : [])
-    .filter(r => r && typeof r.index === 'number' && r.end <= markdown.length && r.filename)
-    .sort((a,b) => a.index - b.index);
-
-  for (const ref of refs) {
-    if (ref.index < cursor) continue;
-    const txt = markdown.slice(cursor, ref.index);
-    if (txt) {
-      const prev = blocks[blocks.length-1];
-      if (prev?.type === 'text') prev.text += txt;
-      else blocks.push({ type:'text', text: txt });
-    }
-    const imgId = `obsidian_${images.length}_${ref.filename}`;
-    images.push({ id: imgId, filename: ref.filename, vaultPath: ref.vaultPath || ref.filename, previewUrl: '', createdAt: '' });
-    blocks.push({ type:'image', imageId: imgId });
-    cursor = ref.end;
-  }
-
-  const remaining = markdown.slice(cursor);
-  if (remaining) {
-    const prev = blocks[blocks.length-1];
-    if (prev?.type === 'text') prev.text += remaining;
-    else blocks.push({ type:'text', text: remaining });
-  }
-
-  return { version: 1, blocks, images };
-}
 
 // ──────────────────────────────────────────────
 // 默认设置（已迁移用户原 Journal Sync 所有配置）
@@ -310,6 +110,7 @@ class JournalSyncPlugin extends Plugin {
   async onload() {
     // 加载用户已保存的数据
     const loadedData = (await this.loadData()) || {};
+    const loadedSnapshot = JSON.stringify(loadedData);
 
     // 初始化适配器注册表。必须先于默认设置合并：
     // adaptersEnabled / adaptersConfig 的默认值要从各适配器 manifest 派生。
@@ -322,7 +123,10 @@ class JournalSyncPlugin extends Plugin {
     this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
     // 迁移 Mastodon 单账号旧格式 → accounts 数组
     this._migrateMastodonAccounts();
-    await this.saveSettings();
+    // 仅在合并或迁移真正改写了设置时落盘，避免每次启动无故重写 data.json
+    if (JSON.stringify(this.settings) !== loadedSnapshot) {
+      await this.saveSettings();
+    }
 
     // Ribbon 按钮：新建日记
     this.addRibbonIcon('pencil', 'Journal Sync: 新建日记记录', () => this.createTodayDiaryEntry());
@@ -333,12 +137,18 @@ class JournalSyncPlugin extends Plugin {
       name: 'JournalSync-New',
       callback: () => this.createTodayDiaryEntry()
     });
-
     // 命令：发送（Send）
     this.addCommand({
       id: 'journal-sync-send',
       name: 'JournalSync-Send',
       editorCallback: (editor, view) => this.sendCurrentContent(editor, view)
+    });
+
+    // 命令：打开发送日志（最近 10 条快照，可重新编辑）
+    this.addCommand({
+      id: 'journal-sync-log',
+      name: 'JournalSync-Log',
+      callback: () => { new JournalSyncLogModal(this.app, this).open(); }
     });
 
     // 注册设置面板
@@ -502,12 +312,6 @@ class JournalSyncPlugin extends Plugin {
     };
   }
 
-  // ── requestUrl 包装 ─────────────────────────
-
-  async requestUrl(options) {
-    return requestUrl(options);
-  }
-
   // ── 执行适配器 ──────────────────────────────
 
   /**
@@ -639,6 +443,58 @@ class JournalSyncPlugin extends Plugin {
 
     } catch (error) {
       new Notice(error.message || String(error));
+    }
+  }
+
+  /**
+   * 从发送日志快照恢复发送面板（重新编辑）。
+   * @param {object} entry - log-modal 传入的 listEntries 条目（含 dirName 与 snapshot）
+   * @returns {Promise<boolean>} 成功 true；失败（含快照失效）false（已 Notice，不 throw）
+   */
+  async restoreFromSendLog(entry) {
+    try {
+      const snapshot = entry?.snapshot || await sendLog.readSnapshot({ plugin: this }, entry?.dirName);
+      if (!snapshot) {
+        new Notice('日志快照已失效');
+        return false;
+      }
+
+      // 预设指针恢复：预设仍存在则把 restorePresetId 交给发送面板（构造时仅内存中切换激活预设，
+      // 不落盘 saveSettings）；预设被删则不动 activePresetId（现有兜底：退回当前激活预设或默认全选）
+      let restorePresetId = null;
+      if (snapshot.presetId && Array.isArray(this.settings.publishPresets) &&
+          this.settings.publishPresets.some(p => p?.id === snapshot.presetId)) {
+        restorePresetId = snapshot.presetId;
+      }
+
+      const dirName = entry.dirName;
+      const cacheBase = `${this.manifest.dir}/${sendLog.SEND_LOG_DIR}/${dirName}`;
+
+      new JournalSyncSendModal(this.app, this, {
+        content: snapshot.content,
+        richDraft: {
+          version: 1,
+          blocks: [],
+          images: (Array.isArray(snapshot.images) ? snapshot.images : []).map(im => ({
+            id: `restore_${im.token}`,
+            filename: im.filename,
+            vaultPath: im.cacheFile,
+            token: im.token
+          }))
+        },
+        readImageFile: (p) => this.app.vault.adapter.readBinary(`${cacheBase}/${p}`),
+        notionTitle: snapshot.title || '',
+        restoreOptions: {
+          tgSendMode: snapshot.tgSendMode,
+          telegraphTitle: snapshot.telegraphTitle,
+          tgShowLinkPreview: snapshot.tgShowLinkPreview
+        },
+        restorePresetId
+      }).open();
+      return true;
+    } catch (error) {
+      new Notice(error.message || String(error));
+      return false;
     }
   }
 }

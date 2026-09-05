@@ -4,7 +4,7 @@
  * 认证：OAuth 2.0 用户自建 Meta App，长期 token（60 天）存 data.json，
  *       发送前按需自动刷新（刷新端点不需要 client_secret），经 saveConfig 持久化。
  * 发布是两步流：先创建 TEXT 媒体容器，再 threads_publish，最后取 permalink。
- * 设计文档：docs/research-threads-support.md（Phase 1 纯文本）
+ * Phase 1 is plain text only; images are not supported.
  *
  * runAction 扩展：
  * - connectCode(options.code)：授权码（或完整回调 URL）换取长期 token，

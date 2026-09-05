@@ -16,16 +16,24 @@ This document contains the implementation, build, and release information that i
 
 | Area | Source of truth |
 | --- | --- |
-| Plugin lifecycle, commands, journal creation, content extraction, dispatch, and vault image resolution | `src/main.js` |
-| Publishing dialog, target presets, and Telegram channel selection | `src/ui/send-modal.js` |
 | Settings page shell: adapter tabs, enable toggles, manifest-driven generic rendering, debounced persistence | `src/ui/settings-tab.js` |
 | Adapter registration | `src/core/adapter-registry.js` |
 | Unified payload builder (content + images), used by send-modal.js | `src/core/payload.js` |
 | Telegraph API client, Markdown→Node conversion, used by telegram.js | `src/core/telegraph.js` |
+| Shared MIME type inference (image + video), used by payload.js and adapters | `src/core/mime.js` |
+| Shared multipart/form-data body builder (mastodon, missky) | `src/core/multipart.js` |
+| Diary filename/heading placeholder rendering (date/sanitize helpers) | `src/core/diary.js` |
+| Vault path normalization/join/dirname, image/URL detection | `src/core/vault-path.js` |
+| Markdown image-ref parsing (`@图片N` token source) | `src/core/image-refs.js` |
+| Rich-draft builder from uploaded image refs | `src/core/rich-draft.js` |
+| Editor content extraction (selection / page / heading scope) | `src/core/content.js` |
+| Settings deep-merge (upgrade never resets user config) | `src/core/settings.js` |
 | Platform manifests, settings schema or custom panels, requests, and validation | `src/adapters/` |
 | Plugin metadata and compatibility | `manifest.json` |
 | Plugin styles | `styles.css` |
 | Build configuration | `esbuild.config.mjs`, `package.json` |
+| Send log modal (last-10 snapshots, Re-edit) | `src/ui/log-modal.js` |
+| Send log storage: snapshot write/list/read/trim under `send-log/` in the plugin directory | `src/core/send-log.js` |
 
 `main.js` at the repository root is generated. Do not edit it directly; change `src/` and rebuild.
 
@@ -59,7 +67,15 @@ npm run dev
 
 The production build writes `main.js` and removes `console` and `debugger` calls. Source, styles, manifest, dependency, or build-configuration changes require a production build before delivery. Markdown-only documentation changes do not.
 
-There is currently no lint script. `npm run test:bluesky` runs the Bluesky adapter unit tests (`tests/bluesky.test.js` against the pure helpers in `src/adapters/bluesky-core.js`). Verify the affected flow in Obsidian when practical. At minimum, exercise the command or platform path that changed and inspect the resulting notice or published content.
+There is currently no lint script. `npm test` runs the full unit-test suite: `tests/bluesky.test.js` against the pure helpers in `src/adapters/bluesky-core.js`, and `tests/core.test.js` against the `src/core/` pure helpers (payload token matching, `deepMergeSettings`, diary filename/heading, MIME, multipart). Verify the affected flow in Obsidian when practical. At minimum, exercise the command or platform path that changed and inspect the resulting notice or published content.
+
+## Send log
+
+Every publish attempt that reaches the dispatch stage (plus pre-dispatch failures, marked `未发出`) writes a snapshot under `send-log/<dir>/` inside the plugin directory: `snapshot.json` plus cached copies (`img-1.png`, …) of all referenced images, pasted images included. Only the newest 10 entries are kept; older directories are trimmed.
+
+- `src/ui/send-modal.js` collects the entry after the send finishes (image caching happens before pasted-image Blobs are released) and calls `sendLog.writeSnapshot`. Write failure only shows a Notice and never affects the send itself.
+- `JournalSync-Log` opens `src/ui/log-modal.js`; each entry's Re-edit calls `plugin.restoreFromSendLog(entry)`, which reopens the publishing dialog prefilled from the snapshot: content and image tokens verbatim (no renumbering), target selection restored via preset pointer only (never channel lists), Telegram one-shot options (send mode, Telegraph title, link preview) restored.
+- Snapshots are diagnostics, not settings: the per-target results recorded inside them are for debugging and are not surfaced in the UI.
 
 ## Settings system
 
@@ -113,6 +129,7 @@ Adapters whose configuration is too interactive for the schema export `renderSet
 - `mastodon` — multi-account cards; removing an account also removes its references from `publishPresets`.
 - `weibo` — OAuth authorization flow.
 - `notion` — sections that expand conditionally on `targetType` and `pageWriteMode`.
+- `threads` — OAuth authorization flow (open authorize page, paste code, exchange long-lived token).
 
 For a worked example, see the Telegram panel in `src/adapters/telegram.js`: it reads `ctx.plugin.getAdapterConfig('telegram')`, saves text input with `ctx.scheduleConfigSave`, runs channel discovery through `runAction('discoverChannels', ...)` and persists the result with `ctx.saveConfig`, then calls `ctx.refresh()`.
 
@@ -129,7 +146,7 @@ Known coupling: Telegraph heading levels are capped by the global send scope. Th
 7. Update both user READMEs and run `npm run build`.
 8. Manually exercise configuration, enable/disable, selection, request validation, success, and failure behavior in Obsidian.
 
-Work in progress: `src/adapters/threads.js` already exists (manifest schema and `runAction` design) but is not yet registered in `ADAPTER_MODULES`. Under the current architecture, registering it only requires adding one `require` line and a `displayOrder`.
+Registered destinations currently include flomo, telegram, mastodon, missky, bluesky, weibo, notion, and threads. Threads is Phase 1 plain text only.
 
 ## Settings and security
 

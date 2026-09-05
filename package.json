@@ -10,6 +10,7 @@
     "dev": "node esbuild.config.mjs --watch",
     "build:dev": "node esbuild.config.mjs",
     "test:bluesky": "node --test tests/bluesky.test.js",
+    "test": "node --test tests/bluesky.test.js tests/core.test.js",
     "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
   "devDependencies": {

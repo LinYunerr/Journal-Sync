@@ -1,6 +1,6 @@
 /*!
  * Journal Sync v1.0.8
- * Build: 2026-09-03 (production)
+ * Build: 2026-09-05 (production)
  * https://github.com/LinYunerr/Journal-Sync
  */
 var __defProp = Object.defineProperty;
@@ -158,10 +158,196 @@ var require_adapter_registry = __commonJS({
   }
 });
 
+// src/core/send-log.js
+var require_send_log = __commonJS({
+  "src/core/send-log.js"(exports2, module2) {
+    "use strict";
+    var SEND_LOG_DIR = "send-log";
+    var MAX_ENTRIES = 10;
+    function padNumber(v, size = 2) {
+      return String(v).padStart(size, "0");
+    }
+    function buildDirName(now = /* @__PURE__ */ new Date(), suffix = "") {
+      const stamp = `${now.getFullYear()}-${padNumber(now.getMonth() + 1)}-${padNumber(now.getDate())}T${padNumber(now.getHours())}${padNumber(now.getMinutes())}${padNumber(now.getSeconds())}`;
+      const tail = suffix || Math.random().toString(36).slice(2, 6);
+      return `${stamp}-${tail}`;
+    }
+    function toLocalIsoString(d = /* @__PURE__ */ new Date()) {
+      const offsetMin = -d.getTimezoneOffset();
+      const sign = offsetMin >= 0 ? "+" : "-";
+      const abs = Math.abs(offsetMin);
+      const offset = `${sign}${padNumber(Math.floor(abs / 60))}:${padNumber(abs % 60)}`;
+      const base = `${d.getFullYear()}-${padNumber(d.getMonth() + 1)}-${padNumber(d.getDate())}T${padNumber(d.getHours())}:${padNumber(d.getMinutes())}:${padNumber(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+      return `${base}${offset}`;
+    }
+    function sentAtTime(value) {
+      const t = Date.parse(String(value || ""));
+      return Number.isNaN(t) ? 0 : t;
+    }
+    function imageCacheExt(filename) {
+      const name = String(filename || "");
+      const dot = name.lastIndexOf(".");
+      const ext = dot > 0 ? name.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+      return ext || "bin";
+    }
+    function safeDirName(dirName) {
+      return String(dirName || "").replace(/[\\\/]/g, "");
+    }
+    function folderName(folder) {
+      return typeof folder === "string" ? folder.split("/").pop() : (folder == null ? void 0 : folder.name) || String((folder == null ? void 0 : folder.path) || "").split("/").pop();
+    }
+    function resolveCtx(ctx) {
+      var _a, _b, _c;
+      const plugin = ctx == null ? void 0 : ctx.plugin;
+      const adapter = (_b = (_a = plugin == null ? void 0 : plugin.app) == null ? void 0 : _a.vault) == null ? void 0 : _b.adapter;
+      const baseDir = String(((_c = plugin == null ? void 0 : plugin.manifest) == null ? void 0 : _c.dir) || "");
+      if (!adapter || !baseDir) return null;
+      return { adapter, baseDir };
+    }
+    function buildPreview(snapshot) {
+      const content = String((snapshot == null ? void 0 : snapshot.content) || "");
+      const stripped = content.replace(/@图片\d+/g, "").replace(/!\[\[[^\]]+\]\]/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "");
+      const firstLine = stripped.split("\n").map((l) => l.trim()).find((l) => l.length > 0) || "";
+      if (firstLine) return firstLine.slice(0, 80);
+      const count = Array.isArray(snapshot == null ? void 0 : snapshot.images) ? snapshot.images.length : 0;
+      return count > 0 ? `[\u56FE\u7247] \xD7${count}` : "";
+    }
+    async function writeSnapshot(ctx, entry) {
+      try {
+        const resolved = resolveCtx(ctx);
+        if (!resolved || !entry || typeof entry !== "object") return false;
+        const { adapter, baseDir } = resolved;
+        const nowMs = sentAtTime(entry.sentAt);
+        const suffix = (nowMs > 0 ? nowMs.toString(36).slice(-4).padStart(4, "0") : "") + Math.random().toString(36).slice(2, 6);
+        const sentAt = entry.sentAt || toLocalIsoString(/* @__PURE__ */ new Date());
+        const dirName = buildDirName(new Date(nowMs || Date.now()), suffix);
+        const rootDir = `${baseDir}/${SEND_LOG_DIR}`;
+        const entryDir = `${rootDir}/${dirName}`;
+        await adapter.mkdir(rootDir).catch(() => {
+        });
+        await adapter.mkdir(entryDir).catch(() => {
+        });
+        const images = Array.isArray(entry.images) ? entry.images : [];
+        const storedImages = [];
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          if (!img || typeof img !== "object") continue;
+          const cacheFile = img.cacheFile || `img-${i + 1}.${imageCacheExt(img.filename)}`;
+          if (img.data !== void 0 && img.data !== null) {
+            const buffer = img.data instanceof Blob ? await img.data.arrayBuffer() : img.data;
+            await adapter.writeBinary(`${entryDir}/${cacheFile}`, buffer);
+          }
+          const { data: _runtime, ...rest } = img;
+          storedImages.push({ ...rest, cacheFile });
+        }
+        const snapshot = { ...entry, sentAt, images: storedImages };
+        await adapter.write(`${entryDir}/snapshot.json`, JSON.stringify(snapshot, null, 2));
+        try {
+          const listed = await adapter.list(rootDir);
+          const folders = Array.isArray(listed == null ? void 0 : listed.folders) ? listed.folders : [];
+          const candidates = [];
+          for (const folder of folders) {
+            const name = folderName(folder);
+            if (!name) continue;
+            try {
+              const raw = await adapter.read(`${rootDir}/${name}/snapshot.json`);
+              const parsed = JSON.parse(raw);
+              candidates.push({ name, sentAt: parsed && parsed.sentAt ? parsed.sentAt : 0 });
+            } catch (e) {
+              candidates.push({ name, sentAt: 0 });
+            }
+          }
+          candidates.sort((a, b) => sentAtTime(a.sentAt) - sentAtTime(b.sentAt));
+          while (candidates.length > MAX_ENTRIES) {
+            const oldest = candidates.shift();
+            try {
+              await adapter.rmdir(`${rootDir}/${oldest.name}`, true);
+            } catch (e) {
+            }
+          }
+        } catch (e) {
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    async function listEntries(ctx) {
+      try {
+        const resolved = resolveCtx(ctx);
+        if (!resolved) return [];
+        const { adapter, baseDir } = resolved;
+        const rootDir = `${baseDir}/${SEND_LOG_DIR}`;
+        if (!await adapter.exists(rootDir)) return [];
+        const listed = await adapter.list(rootDir);
+        const folders = Array.isArray(listed == null ? void 0 : listed.folders) ? listed.folders : [];
+        const entries = [];
+        for (const folder of folders) {
+          const name = folderName(folder);
+          if (!name) continue;
+          const snapshot = await readSnapshot(ctx, name);
+          if (!snapshot || !snapshot.sentAt) continue;
+          entries.push({
+            dirName: name,
+            sentAt: snapshot.sentAt,
+            dispatched: snapshot.dispatched !== false,
+            failStage: snapshot.failStage || null,
+            preview: buildPreview(snapshot),
+            snapshot
+          });
+        }
+        entries.sort((a, b) => sentAtTime(b.sentAt) - sentAtTime(a.sentAt));
+        return entries.slice(0, MAX_ENTRIES);
+      } catch (e) {
+        return [];
+      }
+    }
+    async function readSnapshot(ctx, dirName) {
+      try {
+        const resolved = resolveCtx(ctx);
+        const name = safeDirName(dirName);
+        if (!resolved || !name) return null;
+        const { adapter, baseDir } = resolved;
+        const filePath = `${baseDir}/${SEND_LOG_DIR}/${name}/snapshot.json`;
+        if (!await adapter.exists(filePath)) return null;
+        const parsed = JSON.parse(await adapter.read(filePath));
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    module2.exports = { SEND_LOG_DIR, MAX_ENTRIES, writeSnapshot, listEntries, readSnapshot };
+  }
+});
+
+// src/core/mime.js
+var require_mime = __commonJS({
+  "src/core/mime.js"(exports2, module2) {
+    "use strict";
+    var MIME_TYPES = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
+      gif: "image/gif",
+      svg: "image/svg+xml",
+      mp4: "video/mp4",
+      mov: "video/quicktime",
+      webm: "video/webm"
+    };
+    function getMimeType5(filename) {
+      const ext = String(filename || "").split(".").pop().toLowerCase();
+      return MIME_TYPES[ext] || "application/octet-stream";
+    }
+    module2.exports = { getMimeType: getMimeType5 };
+  }
+});
+
 // src/core/payload.js
 var require_payload = __commonJS({
   "src/core/payload.js"(exports2, module2) {
     "use strict";
+    var { getMimeType: getMimeType5 } = require_mime();
     function buildPayload({ content = "", richDraft, title = "", readAttachment } = {}) {
       const plainText = String(content || "").replace(/@图片\d+/g, "").replace(/!\[\[[^\]]+\]\]/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
       const attachments = extractAttachments(richDraft, content);
@@ -186,25 +372,13 @@ var require_payload = __commonJS({
           token,
           filename: img.filename,
           vaultPath: img.vaultPath || img.filename,
-          mimeType: getMimeType3(img.filename),
+          mimeType: getMimeType5(img.filename),
           kind: "image"
         });
       }
       return result;
     }
-    function getMimeType3(filename) {
-      const ext = String(filename || "").split(".").pop().toLowerCase();
-      const types = {
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        png: "image/png",
-        webp: "image/webp",
-        gif: "image/gif",
-        svg: "image/svg+xml"
-      };
-      return types[ext] || "application/octet-stream";
-    }
-    module2.exports = { buildPayload, getMimeType: getMimeType3 };
+    module2.exports = { buildPayload, getMimeType: getMimeType5 };
   }
 });
 
@@ -212,7 +386,8 @@ var require_payload = __commonJS({
 var require_send_modal = __commonJS({
   "src/ui/send-modal.js"(exports2, module2) {
     var { Modal, Notice: Notice7 } = require("obsidian");
-    var { buildPayload, getMimeType: getMimeType3 } = require_payload();
+    var { buildPayload, getMimeType: getMimeType5 } = require_payload();
+    var sendLog2 = require_send_log();
     function hasRemoteImageReference(content) {
       return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ""));
     }
@@ -224,13 +399,16 @@ var require_send_modal = __commonJS({
        * @param {object} richDraft
        * @param {Function} readImageFile
        */
-      constructor(app, plugin, { content, richDraft, readImageFile, notionTitle = "" }) {
+      constructor(app, plugin, { content, richDraft, readImageFile, notionTitle = "", restoreOptions = null, restorePresetId = null }) {
         super(app);
         this.plugin = plugin;
         this.rawContent = content || "";
         this.richDraft = richDraft || { version: 1, blocks: [], images: [] };
         this.readImageFile = readImageFile;
         this.notionTitle = notionTitle;
+        if (restorePresetId && Array.isArray(plugin.settings.publishPresets) && plugin.settings.publishPresets.some((p) => (p == null ? void 0 : p.id) === restorePresetId)) {
+          plugin.settings.activePresetId = restorePresetId;
+        }
         this.tgSendMode = "plain";
         this.telegraphTitle = "";
         this.tgShowLinkPreview = true;
@@ -250,6 +428,11 @@ var require_send_modal = __commonJS({
         this.loadActivePresetSelection();
         const _tgConfig = this.plugin.getAdapterConfig("telegram");
         this.tgShowLinkPreview = (_tgConfig == null ? void 0 : _tgConfig.showLinkPreview) !== false;
+        if (restoreOptions) {
+          if (restoreOptions.tgSendMode) this.tgSendMode = restoreOptions.tgSendMode;
+          if (typeof restoreOptions.telegraphTitle === "string") this.telegraphTitle = restoreOptions.telegraphTitle;
+          if (typeof restoreOptions.tgShowLinkPreview === "boolean") this.tgShowLinkPreview = restoreOptions.tgShowLinkPreview;
+        }
       }
       /**
        * 初始化文本与图片 Token 逻辑
@@ -263,7 +446,7 @@ var require_send_modal = __commonJS({
                 filename: img.filename,
                 vaultPath: img.vaultPath || img.filename,
                 id: img.id || img.vaultPath || img.filename,
-                token: `@\u56FE\u7247${imgs.length + 1}`
+                token: img.token || `@\u56FE\u7247${imgs.length + 1}`
               });
             }
           }
@@ -673,7 +856,7 @@ ${tokenStr}` : tokenStr;
           } else {
             this.readImageFile(img.vaultPath).then((arrayBuf) => {
               if (!arrayBuf) return;
-              const blob = new Blob([arrayBuf], { type: getMimeType3(img.filename) });
+              const blob = new Blob([arrayBuf], { type: getMimeType5(img.filename) });
               const url = URL.createObjectURL(blob);
               if (renderId !== this._imageGridRenderId) {
                 URL.revokeObjectURL(url);
@@ -1113,6 +1296,77 @@ ${tokenStr}` : tokenStr;
         }, 5e3);
       }
       /**
+       * 采集当前正文引用的图片（用于发送日志快照）。
+       * vault 图读取失败时跳过该张，不影响其余采集。
+       */
+      async _collectLogImages(content, imagesSource = null) {
+        const text = String(content || "");
+        const referencedTokens = new Set(text.match(/@图片\d+/g) || []);
+        const collected = [];
+        const images = Array.isArray(imagesSource) ? imagesSource : Array.isArray(this.images) ? this.images : [];
+        for (const img of images) {
+          if (!img || !referencedTokens.has(img.token)) continue;
+          let data = null;
+          try {
+            data = img.blob ? await img.blob.arrayBuffer() : await this.readImageFile(img.vaultPath);
+          } catch (e) {
+            continue;
+          }
+          if (!data) continue;
+          const filename = String(img.filename || "");
+          const extMatch = filename.match(/\.([A-Za-z0-9]+)$/);
+          const ext = extMatch ? extMatch[1].toLowerCase() : "bin";
+          collected.push({
+            token: img.token,
+            filename,
+            originVaultPath: img.vaultPath,
+            pasted: Boolean(img.blob),
+            data,
+            cacheFile: `img-${collected.length + 1}.${ext}`
+          });
+        }
+        return collected;
+      }
+      /**
+       * 写入一条发送日志快照。失败仅 Notice，绝不 throw，不影响发送本身。
+       */
+      async _writeSendLog(entry) {
+        try {
+          const ok = await sendLog2.writeSnapshot({ plugin: this.plugin }, entry);
+          if (!ok) {
+            new Notice7("\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A\u65E0\u6CD5\u5199\u5165\u5FEB\u7167", 1e4);
+          }
+        } catch (err) {
+          new Notice7("\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A" + ((err == null ? void 0 : err.message) || err), 1e4);
+        }
+      }
+      /**
+       * 组装发送日志快照的公共字段。
+       */
+      _buildLogEntryBase(extra) {
+        var _a;
+        const presets = this.plugin.settings.publishPresets || [];
+        const presetId = this.plugin.settings.activePresetId || "";
+        const preset = presets.find((p) => p.id === presetId);
+        return Object.assign({
+          version: 1,
+          sentAt: (/* @__PURE__ */ new Date()).toISOString(),
+          dispatched: true,
+          failStage: null,
+          failReason: null,
+          pluginVersion: ((_a = this.plugin.manifest) == null ? void 0 : _a.version) || "",
+          title: this.notionTitle || "",
+          content: this.content || "",
+          images: [],
+          presetId,
+          presetName: preset ? String(preset.name || "") : "",
+          tgSendMode: this.tgSendMode,
+          telegraphTitle: this.telegraphTitle || "",
+          tgShowLinkPreview: this.tgShowLinkPreview !== false,
+          diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+        }, extra || {});
+      }
+      /**
        * 执行发送（即时关窗 + 后台无阻塞异步发送）
        * 外层防重入：预检 await 期间连按 Ctrl+Enter 或双击按钮不会重复提交。
        */
@@ -1149,6 +1403,13 @@ ${tokenStr}` : tokenStr;
         }
         if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
           new Notice7("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
+          await this._writeSendLog(this._buildLogEntryBase({
+            dispatched: false,
+            failStage: "no-target",
+            failReason: "\u672A\u9009\u62E9\u4EFB\u4F55\u53D1\u9001\u76EE\u6807",
+            images: await this._collectLogImages(this.content),
+            diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+          }));
           return;
         }
         const rawContent = this.content;
@@ -1171,6 +1432,13 @@ ${tokenStr}` : tokenStr;
         );
         if (!hasSendableContent) {
           new Notice7("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
+          await this._writeSendLog(this._buildLogEntryBase({
+            dispatched: false,
+            failStage: "empty-content",
+            failReason: "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9",
+            images: await this._collectLogImages(this.content),
+            diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+          }));
           return;
         }
         const targetConfigOverrides = {};
@@ -1187,6 +1455,13 @@ ${tokenStr}` : tokenStr;
           capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
         } catch (error) {
           new Notice7(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          await this._writeSendLog(this._buildLogEntryBase({
+            dispatched: false,
+            failStage: "attachment-warnings",
+            failReason: `\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`,
+            images: await this._collectLogImages(this.content),
+            diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+          }));
           return;
         }
         const warningMessages = capabilityWarnings.warnings || [];
@@ -1222,6 +1497,17 @@ ${tokenStr}` : tokenStr;
           validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
           new Notice7(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          await this._writeSendLog(this._buildLogEntryBase({
+            dispatched: false,
+            failStage: "validate-exception",
+            failReason: error.message || String(error),
+            images: await this._collectLogImages(this.content),
+            diagnostics: {
+              targets: [],
+              validationWarnings: [],
+              attachmentWarnings: Array.isArray(warningMessages) ? warningMessages : []
+            }
+          }));
           return;
         }
         if (validation.warnings.length > 0) {
@@ -1229,10 +1515,22 @@ ${tokenStr}` : tokenStr;
         }
         if (validation.errors.length > 0) {
           new Notice7(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
+          await this._writeSendLog(this._buildLogEntryBase({
+            dispatched: false,
+            failStage: "validate-errors",
+            failReason: validation.errors.join("\uFF1B"),
+            images: await this._collectLogImages(this.content),
+            diagnostics: {
+              targets: [],
+              validationWarnings: Array.isArray(validation.warnings) ? validation.warnings : [],
+              attachmentWarnings: Array.isArray(warningMessages) ? warningMessages : []
+            }
+          }));
           return;
         }
         this.close();
         new Notice7("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
+        const dispatchStartedAt = (/* @__PURE__ */ new Date()).toISOString();
         (async () => {
           const results = {};
           for (const adapterId of targetAdapters) {
@@ -1275,9 +1573,63 @@ ${tokenStr}` : tokenStr;
             }
           }
           const anyFailure = Object.values(results).some((r) => !r.success && !r.skipped);
+          try {
+            const diagTargets = [];
+            for (const adapterId of targetAdapters) {
+              if (adapterId === "telegram" || adapterId === "mastodon") continue;
+              const result = results[adapterId];
+              if (!result) continue;
+              diagTargets.push({
+                kind: "adapter",
+                id: adapterId,
+                label: adapterId,
+                success: Boolean(result.success) && !result.skipped,
+                error: result.error || null,
+                durationMs: null
+              });
+            }
+            const tgResult = results["telegram"];
+            if (tgResult && Array.isArray(tgResult.results)) {
+              for (const channel of tgResult.results) {
+                diagTargets.push({
+                  kind: "telegram-channel",
+                  id: channel.channelId,
+                  label: `telegram ${channel.channelId}`,
+                  success: Boolean(channel.success),
+                  error: channel.error || null,
+                  durationMs: null
+                });
+              }
+            }
+            for (const acctId of mstdAccountIds) {
+              const result = results[`mastodon:${acctId}`];
+              if (!result) continue;
+              diagTargets.push({
+                kind: "mastodon-account",
+                id: acctId,
+                label: result.displayLabel || acctId,
+                success: Boolean(result.success) && !result.skipped,
+                error: result.error || null,
+                durationMs: null
+              });
+            }
+            await this._writeSendLog(this._buildLogEntryBase({
+              dispatched: true,
+              failStage: null,
+              failReason: null,
+              sentAt: dispatchStartedAt,
+              images: await this._collectLogImages(rawContent, images),
+              diagnostics: {
+                targets: diagTargets,
+                validationWarnings: Array.isArray(validation == null ? void 0 : validation.warnings) ? validation.warnings : [],
+                attachmentWarnings: Array.isArray(warningMessages) ? warningMessages : []
+              }
+            }));
+          } catch (e) {
+          }
           const summary = Object.entries(results).flatMap(([id, result]) => {
             const channelResults = Array.isArray(result.results) ? result.results : null;
-            if ((id === "Telegram" || id === "telegram") && channelResults) {
+            if (id === "telegram" && channelResults) {
               return channelResults.map((channel) => {
                 return `Telegram ${channel.channelId}: ${channel.success ? "\u6210\u529F" : `\u5931\u8D25(${channel.error || "\u672A\u77E5\u9519\u8BEF"})`}`;
               });
@@ -1287,7 +1639,7 @@ ${tokenStr}` : tokenStr;
             return result.success ? result.skipped ? `${displayId}: \u8DF3\u8FC7` : `${displayId}: \u6210\u529F${warn}` : `${displayId}: \u5931\u8D25(${result.error || "\u672A\u77E5\u9519\u8BEF"})`;
           }).join("\uFF1B\n");
           if (anyFailure) {
-            new Notice7(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 1e4);
+            new Notice7(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 2e4);
           } else {
             new Notice7(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
           }
@@ -1320,7 +1672,7 @@ ${tokenStr}` : tokenStr;
 // src/ui/settings-tab.js
 var require_settings_tab = __commonJS({
   "src/ui/settings-tab.js"(exports2, module2) {
-    var { PluginSettingTab, Setting: Setting6, Notice: Notice7, Platform: Platform3 } = require("obsidian");
+    var { PluginSettingTab, Setting: Setting6, Notice: Notice7, Platform: Platform3, requestUrl: requestUrl2 } = require("obsidian");
     var JournalSyncSettingTab2 = class extends PluginSettingTab {
       constructor(app, plugin) {
         super(app, plugin);
@@ -1530,7 +1882,7 @@ var require_settings_tab = __commonJS({
             void this.display().catch(() => {
             });
           },
-          requestUrl: this.plugin.requestUrl.bind(this.plugin)
+          requestUrl: requestUrl2
         };
       }
       /**
@@ -1654,6 +2006,349 @@ var require_settings_tab = __commonJS({
       }
     };
     module2.exports = JournalSyncSettingTab2;
+  }
+});
+
+// src/ui/log-modal.js
+var require_log_modal = __commonJS({
+  "src/ui/log-modal.js"(exports2, module2) {
+    "use strict";
+    var { Modal, Notice: Notice7 } = require("obsidian");
+    var sendLog2 = require_send_log();
+    function formatLogTime(sentAt) {
+      const d = new Date(sentAt);
+      if (isNaN(d.getTime())) return "";
+      const pad = (v) => String(v).padStart(2, "0");
+      return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    var JournalSyncLogModal2 = class extends Modal {
+      /**
+       * @param {App} app
+       * @param {object} plugin
+       */
+      constructor(app, plugin) {
+        super(app);
+        this.plugin = plugin;
+        this._restoreInFlight = false;
+      }
+      async onOpen() {
+        const { contentEl, modalEl } = this;
+        contentEl.empty();
+        contentEl.addClass("js-bridge-log-modal");
+        modalEl.style.width = "560px";
+        modalEl.style.maxWidth = "92vw";
+        contentEl.createEl("h2", { text: "\u53D1\u9001\u65E5\u5FD7", cls: "js-bridge-send-title" });
+        const listEl = contentEl.createDiv({ cls: "js-bridge-log-list" });
+        listEl.setText("\u52A0\u8F7D\u4E2D\u2026");
+        let entries;
+        try {
+          entries = await sendLog2.listEntries({ plugin: this.plugin });
+        } catch (e) {
+          listEl.setText("\u65E5\u5FD7\u8BFB\u53D6\u5931\u8D25");
+          return;
+        }
+        listEl.empty();
+        if (!Array.isArray(entries) || entries.length === 0) {
+          listEl.setText("\u6682\u65E0\u53D1\u9001\u8BB0\u5F55");
+          return;
+        }
+        for (const entry of entries) {
+          const row = listEl.createDiv({ cls: "js-bridge-log-entry" });
+          const info = row.createDiv({ cls: "js-bridge-log-info" });
+          const metaRow = info.createDiv({ cls: "js-bridge-log-meta" });
+          metaRow.createSpan({ text: formatLogTime(entry.sentAt), cls: "js-bridge-log-time" });
+          if (entry.dispatched === false) {
+            metaRow.createSpan({ text: "\u672A\u53D1\u51FA", cls: "js-bridge-log-badge" });
+          }
+          info.createDiv({ text: entry.preview || "", cls: "js-bridge-log-preview" });
+          const btn = row.createEl("button", {
+            type: "button",
+            text: "\u91CD\u65B0\u7F16\u8F91",
+            cls: "js-bridge-log-restore-btn"
+          });
+          btn.addEventListener("click", async () => {
+            if (this._restoreInFlight) return;
+            this._restoreInFlight = true;
+            btn.disabled = true;
+            try {
+              const ok = await this.plugin.restoreFromSendLog(entry);
+              if (ok) {
+                this.close();
+              } else {
+                this._restoreInFlight = false;
+                btn.disabled = false;
+              }
+            } catch (e) {
+              this._restoreInFlight = false;
+              btn.disabled = false;
+              new Notice7("\u6253\u5F00\u53D1\u9001\u9762\u677F\u5931\u8D25\uFF1A" + ((e == null ? void 0 : e.message) || e), 1e4);
+            }
+          });
+        }
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+    };
+    module2.exports = JournalSyncLogModal2;
+  }
+});
+
+// src/core/diary.js
+var require_diary = __commonJS({
+  "src/core/diary.js"(exports2, module2) {
+    "use strict";
+    function padNumber(v, size = 2) {
+      return String(v).padStart(size, "0");
+    }
+    function formatDate2(d = /* @__PURE__ */ new Date()) {
+      return `${d.getFullYear()}-${padNumber(d.getMonth() + 1)}-${padNumber(d.getDate())}`;
+    }
+    function formatTime(d = /* @__PURE__ */ new Date()) {
+      return `${padNumber(d.getHours())}:${padNumber(d.getMinutes())}:${padNumber(d.getSeconds())}`;
+    }
+    function parseDateInput(dateInput) {
+      const m = String(dateInput || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) return { year: m[1], month: String(Number(m[2])), day: String(Number(m[3])) };
+      const n = /* @__PURE__ */ new Date();
+      return { year: String(n.getFullYear()), month: String(n.getMonth() + 1), day: String(n.getDate()) };
+    }
+    function formatDateToken(v, w) {
+      const d = String(v || "").replace(/\D/g, "");
+      if (!d) return "";
+      return w <= d.length ? d.slice(-w) : d.padStart(w, "0");
+    }
+    function sanitizeFilename(v) {
+      return String(v || "").trim().split(/[\\\/]/).pop().replace(/[:*?"<>|]/g, "_");
+    }
+    function buildDiaryFilename2(dateInput, rule = "YYYY-MM-DD \u65E5\u8BB0") {
+      const { year, month, day } = parseDateInput(dateInput);
+      const fallback = `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")} \u65E5\u8BB0`;
+      const rendered = String(rule || "YYYY-MM-DD \u65E5\u8BB0").trim().replace(/Y+|M+|D+/g, (tok) => {
+        if (tok.startsWith("Y")) return formatDateToken(year, tok.length);
+        if (tok.startsWith("M")) return formatDateToken(month, tok.length);
+        return formatDateToken(day, tok.length);
+      });
+      return `${(sanitizeFilename(rendered) || fallback).replace(/\.md$/i, "")}.md`;
+    }
+    function buildDiaryHeading2(now, rule = "HH:MM:SS") {
+      const fallback = `${padNumber(now.getHours())}:${padNumber(now.getMinutes())}:${padNumber(now.getSeconds())}`;
+      const rendered = String(rule || "HH:MM:SS").trim().replace(/H+|M+|S+/g, (tok) => {
+        if (tok.startsWith("H")) return formatDateToken(String(now.getHours()), tok.length);
+        if (tok.startsWith("M")) return formatDateToken(String(now.getMinutes()), tok.length);
+        return formatDateToken(String(now.getSeconds()), tok.length);
+      });
+      return rendered || fallback;
+    }
+    module2.exports = {
+      padNumber,
+      formatDate: formatDate2,
+      formatTime,
+      parseDateInput,
+      formatDateToken,
+      sanitizeFilename,
+      buildDiaryFilename: buildDiaryFilename2,
+      buildDiaryHeading: buildDiaryHeading2
+    };
+  }
+});
+
+// src/core/vault-path.js
+var require_vault_path = __commonJS({
+  "src/core/vault-path.js"(exports2, module2) {
+    "use strict";
+    var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
+    function normalizeVaultPath2(v) {
+      return String(v || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    }
+    function joinVaultPath2(...parts) {
+      return parts.map(normalizeVaultPath2).filter(Boolean).join("/");
+    }
+    function dirnameVaultPath2(p) {
+      const n = normalizeVaultPath2(p);
+      const i = n.lastIndexOf("/");
+      return i >= 0 ? n.slice(0, i) : "";
+    }
+    function isImagePath2(v) {
+      const clean = String(v || "").split("#")[0].split("?")[0];
+      const ext = clean.includes(".") ? clean.split(".").pop().toLowerCase() : "";
+      return IMAGE_EXTENSIONS.has(ext);
+    }
+    function isRemoteUrl2(v) {
+      return /^https?:\/\//i.test(String(v || "").trim());
+    }
+    function isDataUrl2(v) {
+      return /^data:/i.test(String(v || "").trim());
+    }
+    module2.exports = {
+      normalizeVaultPath: normalizeVaultPath2,
+      joinVaultPath: joinVaultPath2,
+      dirnameVaultPath: dirnameVaultPath2,
+      isImagePath: isImagePath2,
+      isRemoteUrl: isRemoteUrl2,
+      isDataUrl: isDataUrl2
+    };
+  }
+});
+
+// src/core/image-refs.js
+var require_image_refs = __commonJS({
+  "src/core/image-refs.js"(exports2, module2) {
+    "use strict";
+    function parseImageRefs2(markdown) {
+      const refs = [];
+      const wiki = /!\[\[([^\]]+)\]\]/g;
+      const md = /!\[[^\]]*\]\(([^)]+)\)/g;
+      const bare = /(^|\n)([^\n]+?\.(?:png|jpe?g|gif|webp|svg))(?=\n|$)/gi;
+      let m;
+      while ((m = wiki.exec(markdown)) !== null) {
+        const t = String(m[1] || "").split("|")[0].trim();
+        if (!t) continue;
+        refs.push({ raw: m[0], target: t, type: "wiki", index: m.index, end: m.index + m[0].length });
+      }
+      while ((m = md.exec(markdown)) !== null) {
+        const t = String(m[1] || "").trim().replace(/^<|>$/g, "");
+        if (!t) continue;
+        try {
+          refs.push({ raw: m[0], target: decodeURIComponent(t), type: "markdown", index: m.index, end: m.index + m[0].length });
+        } catch (e) {
+          refs.push({ raw: m[0], target: t, type: "markdown", index: m.index, end: m.index + m[0].length });
+        }
+      }
+      while ((m = bare.exec(markdown)) !== null) {
+        const t = String(m[2] || "").trim();
+        if (!t || /[\[\]()]/.test(t)) continue;
+        const idx = m.index + m[1].length;
+        refs.push({ raw: m[2], target: t, type: "bare", index: idx, end: idx + m[2].length });
+      }
+      const codeRanges = [];
+      const fenceRe = /```[^\n]*[\s\S]*?```/g;
+      let fm;
+      while ((fm = fenceRe.exec(markdown)) !== null) {
+        codeRanges.push([fm.index, fm.index + fm[0].length]);
+      }
+      const filtered = codeRanges.length === 0 ? refs : refs.filter((ref) => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
+      return filtered.sort((a, b) => a.index - b.index);
+    }
+    module2.exports = { parseImageRefs: parseImageRefs2 };
+  }
+});
+
+// src/core/content.js
+var require_content = __commonJS({
+  "src/core/content.js"(exports2, module2) {
+    "use strict";
+    function getSelectedOrBlockContent2(editor, scope = 2) {
+      const selected = editor.getSelection();
+      if (selected && selected.trim()) {
+        return { content: selected.trim(), heading: "", source: "selection" };
+      }
+      const doc = editor.getValue().replace(/\r\n/g, "\n");
+      const lines = doc.split("\n");
+      const cursorLine = editor.getCursor().line;
+      if (Number(scope) === 0) {
+        const content = doc.trim();
+        return content ? { content, heading: "", source: "page" } : null;
+      }
+      const level = Math.min(6, Math.max(1, Number(scope) || 2));
+      const headingRe = new RegExp(`^#{${level}}\\s+`);
+      const anyHeadingRe = /^(#{1,6})\s+/;
+      let startLine = -1;
+      for (let i = Math.min(cursorLine, lines.length - 1); i >= 0; i--) {
+        if (headingRe.test(lines[i])) {
+          startLine = i;
+          break;
+        }
+      }
+      if (startLine >= 0) {
+        let endLine = lines.length;
+        for (let i = startLine + 1; i < lines.length; i++) {
+          const nextHeading = lines[i].match(anyHeadingRe);
+          if (nextHeading && nextHeading[1].length <= level) {
+            endLine = i;
+            break;
+          }
+        }
+        const content = lines.slice(startLine + 1, endLine).join("\n").trim();
+        if (!content) return null;
+        return {
+          content,
+          heading: lines[startLine].replace(headingRe, "").trim(),
+          source: "heading"
+        };
+      }
+      return null;
+    }
+    module2.exports = { getSelectedOrBlockContent: getSelectedOrBlockContent2 };
+  }
+});
+
+// src/core/settings.js
+var require_settings = __commonJS({
+  "src/core/settings.js"(exports2, module2) {
+    "use strict";
+    function deepMergeSettings2(target, source) {
+      if (!target || typeof target !== "object") target = {};
+      if (!source || typeof source !== "object") return target;
+      for (const key of Object.keys(source)) {
+        const sourceVal = source[key];
+        const targetVal = target[key];
+        if (Array.isArray(sourceVal)) {
+          if (!Array.isArray(targetVal) || targetVal.length === 0) {
+            target[key] = JSON.parse(JSON.stringify(sourceVal));
+          }
+        } else if (sourceVal && typeof sourceVal === "object") {
+          if (!targetVal || typeof targetVal !== "object") target[key] = {};
+          deepMergeSettings2(target[key], sourceVal);
+        } else {
+          if (targetVal === void 0 || targetVal === "" || targetVal === null) {
+            target[key] = sourceVal;
+          }
+        }
+      }
+      return target;
+    }
+    module2.exports = { deepMergeSettings: deepMergeSettings2 };
+  }
+});
+
+// src/core/rich-draft.js
+var require_rich_draft = __commonJS({
+  "src/core/rich-draft.js"(exports2, module2) {
+    "use strict";
+    function buildRichDraftFromUploadedMarkdown2(markdown, uploadedRefs = []) {
+      const blocks = [];
+      const images = [];
+      let cursor = 0;
+      const refs = (Array.isArray(uploadedRefs) ? uploadedRefs : []).filter((r) => r && typeof r.index === "number" && r.end <= markdown.length && r.filename).sort((a, b) => a.index - b.index);
+      for (const ref of refs) {
+        if (ref.index < cursor) continue;
+        const txt = markdown.slice(cursor, ref.index);
+        if (txt) {
+          const prev = blocks[blocks.length - 1];
+          if ((prev == null ? void 0 : prev.type) === "text") prev.text += txt;
+          else blocks.push({ type: "text", text: txt });
+        }
+        const imgId = `obsidian_${images.length}_${ref.filename}`;
+        images.push({
+          id: imgId,
+          filename: ref.filename,
+          vaultPath: ref.vaultPath || ref.filename,
+          previewUrl: "",
+          createdAt: ""
+        });
+        blocks.push({ type: "image", imageId: imgId });
+        cursor = ref.end;
+      }
+      const remaining = markdown.slice(cursor);
+      if (remaining) {
+        const prev = blocks[blocks.length - 1];
+        if ((prev == null ? void 0 : prev.type) === "text") prev.text += remaining;
+        else blocks.push({ type: "text", text: remaining });
+      }
+      return { version: 1, blocks, images };
+    }
+    module2.exports = { buildRichDraftFromUploadedMarkdown: buildRichDraftFromUploadedMarkdown2 };
   }
 });
 
@@ -1794,11 +2489,11 @@ var init_flomo = __esm({
           {
             key: "testConnection",
             type: "action",
-            label: "\u6D4B\u8BD5\u8FDE\u63A5",
+            label: "\u6D4B\u8BD5\u8FDE\u63A5\uFF08\u4F1A\u53D1\u4E00\u6761\u7B14\u8BB0\uFF09",
             action: "testConnection",
-            buttonLabel: "\u6D4B\u8BD5\u8FDE\u63A5",
-            busyLabel: "\u8FDE\u63A5\u4E2D...",
-            desc: "\u4F7F\u7528\u5F53\u524D Flomo API URL \u53D1\u9001\u4E00\u6761\u6D4B\u8BD5\u6D88\u606F\u9A8C\u8BC1\u8FDE\u63A5\u3002"
+            buttonLabel: "\u6D4B\u8BD5\u8FDE\u63A5\uFF08\u4F1A\u53D1\u4E00\u6761\u7B14\u8BB0\uFF09",
+            busyLabel: "\u53D1\u9001\u4E2D...",
+            desc: "\u4F1A\u5411 flomo \u53D1\u9001\u4E00\u6761\u300CJournal Sync \u6D4B\u8BD5\u8FDE\u63A5 \u2713\u300D\u7B14\u8BB0\u6765\u9A8C\u8BC1 Webhook\u3002\u8FD9\u6761\u7B14\u8BB0\u4F1A\u7559\u5728\u4F60\u7684 flomo \u91CC\u3002"
           }
         ]
       }
@@ -2133,6 +2828,10 @@ __export(telegram_exports, {
 function escapeTelegramMarkdownWikilinks(text) {
   return String(text || "").replace(/\[\[([^\]]+)\]\]/g, "\\[$1\\]");
 }
+function telegramImageMimeType(filename) {
+  const m = getMimeType(filename);
+  return m === "application/octet-stream" ? "image/jpeg" : m;
+}
 async function tgApi(botToken, method, body, requestUrlFn) {
   const url = `${TG_API_BASE}/bot${botToken}/${method}`;
   const response = await requestUrlFn({
@@ -2268,7 +2967,7 @@ function richCharacterCount(text) {
 async function sendPhotoByBuffer(botToken, chatId, arrayBuffer, filename, caption, requestUrlFn) {
   const boundary = `----TgBridge${Date.now()}${Math.random().toString(16).slice(2)}`;
   const ext = filename.split(".").pop().toLowerCase();
-  const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "png" ? "image/png" : ext === "gif" ? "image/gif" : ext === "webp" ? "image/webp" : "image/jpeg";
+  const mime = telegramImageMimeType(filename);
   const encoder = new TextEncoder();
   const parts = [];
   parts.push(encoder.encode(
@@ -2358,7 +3057,7 @@ ${JSON.stringify(mediaList)}\r
   imageItems.forEach((item, idx) => {
     const filename = item.filename || `photo${idx}.jpg`;
     const ext = filename.split(".").pop().toLowerCase();
-    const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "png" ? "image/png" : ext === "gif" ? "image/gif" : ext === "webp" ? "image/webp" : "image/jpeg";
+    const mime = telegramImageMimeType(filename);
     const safeFilename = `image${idx}.${ext}`;
     parts.push(encoder.encode(
       `--${boundary}\r
@@ -2393,14 +3092,6 @@ Content-Type: ${mime}\r
   } catch (e) {
   }
   return { status: response.status, result, _bodyObj: { caption } };
-}
-function getImageMimeType(filename = "") {
-  const ext = String(filename).split(".").pop().toLowerCase();
-  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
-  if (ext === "png") return "image/png";
-  if (ext === "gif") return "image/gif";
-  if (ext === "webp") return "image/webp";
-  return "application/octet-stream";
 }
 function buildRichMarkdown(parts) {
   const isPlainText = (block) => {
@@ -2488,7 +3179,7 @@ ${JSON.stringify({ markdown, media })}\r
     formParts.push(encoder.encode(
       `--${boundary}\r
 Content-Disposition: form-data; name="${file.attachmentName}"; filename="${file.filename.replace(/[\\\"\r\n]/g, "_")}"\r
-Content-Type: ${getImageMimeType(file.filename)}\r
+Content-Type: ${getMimeType(file.filename)}\r
 \r
 `
     ));
@@ -2959,12 +3650,13 @@ function renderSettings(containerEl, ctx) {
     });
   }));
 }
-var import_obsidian, TG_API_BASE, telegraph, manifest2, MAX_TELEGRAM_IMAGES, defaultConfig, telegram_default;
+var import_obsidian, TG_API_BASE, telegraph, getMimeType, manifest2, MAX_TELEGRAM_IMAGES, defaultConfig, telegram_default;
 var init_telegram = __esm({
   "src/adapters/telegram.js"() {
     import_obsidian = require("obsidian");
     TG_API_BASE = "https://api.telegram.org";
     telegraph = require_telegraph();
+    ({ getMimeType } = require_mime());
     manifest2 = {
       id: "telegram",
       version: "2.0.0",
@@ -3024,6 +3716,53 @@ var init_telegram = __esm({
   }
 });
 
+// src/core/multipart.js
+var require_multipart = __commonJS({
+  "src/core/multipart.js"(exports2, module2) {
+    "use strict";
+    function buildMultipartBody3({ boundaryPrefix = "----Boundary", fields = [] }) {
+      var _a;
+      const boundary = `${boundaryPrefix}${Date.now()}${Math.random().toString(16).slice(2)}`;
+      const encoder = new TextEncoder();
+      const parts = [];
+      for (const field of fields) {
+        if (field.buffer !== void 0 && field.buffer !== null) {
+          const safeFilename = String(field.filename || "image").replace(/["\r\n]/g, "_");
+          const contentType = String(field.contentType || "application/octet-stream");
+          parts.push(encoder.encode(
+            `--${boundary}\r
+Content-Disposition: form-data; name="${field.name}"; filename="${safeFilename}"\r
+Content-Type: ${contentType}\r
+\r
+`
+          ));
+          parts.push(new Uint8Array(field.buffer));
+          parts.push(encoder.encode("\r\n"));
+        } else {
+          parts.push(encoder.encode(
+            `--${boundary}\r
+Content-Disposition: form-data; name="${field.name}"\r
+\r
+${String((_a = field.value) != null ? _a : "")}\r
+`
+          ));
+        }
+      }
+      parts.push(encoder.encode(`--${boundary}--\r
+`));
+      const totalLength = parts.reduce((sum, p) => sum + p.byteLength, 0);
+      const body = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const part of parts) {
+        body.set(part, offset);
+        offset += part.byteLength;
+      }
+      return { boundary, body: body.buffer };
+    }
+    module2.exports = { buildMultipartBody: buildMultipartBody3 };
+  }
+});
+
 // src/adapters/mastodon.js
 var mastodon_exports = {};
 __export(mastodon_exports, {
@@ -3034,45 +3773,14 @@ __export(mastodon_exports, {
   renderSettings: () => renderSettings2,
   validate: () => validate3
 });
-function getMimeType(filename) {
-  const ext = String(filename || "").split(".").pop().toLowerCase();
-  const mimeTypes = {
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    gif: "image/gif",
-    webp: "image/webp",
-    svg: "image/svg+xml",
-    mp4: "video/mp4",
-    mov: "video/quicktime",
-    webm: "video/webm"
-  };
-  return mimeTypes[ext] || "application/octet-stream";
-}
 async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken, requestUrl2) {
-  const safeFilename = String(filename || "image").replace(/["\r\n]/g, "_");
-  const mimeType = getMimeType(filename);
-  const boundary = `----MastodonBoundary${Date.now()}${Math.random().toString(16).slice(2)}`;
-  const encoder = new TextEncoder();
-  const parts = [];
-  parts.push(encoder.encode(
-    `--${boundary}\r
-Content-Disposition: form-data; name="file"; filename="${safeFilename}"\r
-Content-Type: ${mimeType}\r
-\r
-`
-  ));
-  parts.push(new Uint8Array(arrayBuffer));
-  parts.push(encoder.encode(`\r
---${boundary}--\r
-`));
-  const totalLength = parts.reduce((sum, p) => sum + p.byteLength, 0);
-  const body = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const part of parts) {
-    body.set(part, offset);
-    offset += part.byteLength;
-  }
+  const mimeType = getMimeType2(filename);
+  const { boundary, body } = buildMultipartBody({
+    boundaryPrefix: "----MastodonBoundary",
+    fields: [
+      { name: "file", filename, contentType: mimeType, buffer: arrayBuffer }
+    ]
+  });
   const response = await requestUrl2({
     url: `${baseUrl}/api/v1/media`,
     method: "POST",
@@ -3080,7 +3788,7 @@ Content-Type: ${mimeType}\r
       "Authorization": `Bearer ${accessToken}`,
       "Content-Type": `multipart/form-data; boundary=${boundary}`
     },
-    body: body.buffer,
+    body,
     throw: false
   });
   let result = {};
@@ -3296,10 +4004,12 @@ function cleanupMastodonPresets(ctx, accountId) {
     ctx.plugin.saveSettings();
   }
 }
-var import_obsidian2, manifest3, defaultConfig2, MAX_MASTODON_IMAGES, mastodon_default;
+var import_obsidian2, getMimeType2, buildMultipartBody, manifest3, defaultConfig2, MAX_MASTODON_IMAGES, mastodon_default;
 var init_mastodon = __esm({
   "src/adapters/mastodon.js"() {
     import_obsidian2 = require("obsidian");
+    ({ getMimeType: getMimeType2 } = require_mime());
+    ({ buildMultipartBody } = require_multipart());
     manifest3 = {
       id: "mastodon",
       version: "1.0.0",
@@ -3362,57 +4072,20 @@ __export(missky_exports, {
   runAction: () => runAction3,
   validate: () => validate4
 });
-function getMimeType2(filename) {
-  const ext = String(filename || "").split(".").pop().toLowerCase();
-  const mimeTypes = {
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    gif: "image/gif",
-    webp: "image/webp",
-    svg: "image/svg+xml",
-    mp4: "video/mp4",
-    mov: "video/quicktime",
-    webm: "video/webm"
-  };
-  return mimeTypes[ext] || "application/octet-stream";
-}
 async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, requestUrl2) {
-  const safeFilename = String(filename || "image").replace(/["\r\n]/g, "_");
-  const mimeType = getMimeType2(filename);
-  const boundary = `----MisskeyBoundary${Date.now()}${Math.random().toString(16).slice(2)}`;
-  const encoder = new TextEncoder();
-  const parts = [];
-  parts.push(encoder.encode(
-    `--${boundary}\r
-Content-Disposition: form-data; name="i"\r
-\r
-${apiToken}\r
-`
-  ));
-  parts.push(encoder.encode(
-    `--${boundary}\r
-Content-Disposition: form-data; name="file"; filename="${safeFilename}"\r
-Content-Type: ${mimeType}\r
-\r
-`
-  ));
-  parts.push(new Uint8Array(arrayBuffer));
-  parts.push(encoder.encode(`\r
---${boundary}--\r
-`));
-  const totalLength = parts.reduce((sum, p) => sum + p.byteLength, 0);
-  const body = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const part of parts) {
-    body.set(part, offset);
-    offset += part.byteLength;
-  }
+  const mimeType = getMimeType3(filename);
+  const { boundary, body } = buildMultipartBody2({
+    boundaryPrefix: "----MisskeyBoundary",
+    fields: [
+      { name: "i", value: apiToken },
+      { name: "file", filename, contentType: mimeType, buffer: arrayBuffer }
+    ]
+  });
   const response = await requestUrl2({
     url: `${baseUrl}/api/drive/files/create`,
     method: "POST",
     headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-    body: body.buffer,
+    body,
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
@@ -3434,7 +4107,7 @@ async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
   var _a, _b, _c;
   const serverUrl = String(config.serverUrl || "").trim();
   const apiToken = String(config.apiToken || "").trim();
-  const visibility = config.visibility || "public";
+  const visibility = ["public", "home", "followers"].includes(config.visibility) ? config.visibility : "public";
   if (!serverUrl || !apiToken) {
     return { success: false, error: "Misskey \u5B9E\u4F8B\u5730\u5740\u6216 API Token \u672A\u914D\u7F6E" };
   }
@@ -3534,9 +4207,11 @@ async function runAction3(actionId, config = {}, requestUrlFn) {
   const username = result.username || result.name || "\u672A\u77E5";
   return { success: true, message: `Misskey \u8FDE\u63A5\u6210\u529F\uFF08\u7528\u6237\uFF1A${username}\uFF09` };
 }
-var manifest4, MAX_MISSKEY_IMAGES, missky_default;
+var getMimeType3, buildMultipartBody2, manifest4, MAX_MISSKEY_IMAGES, missky_default;
 var init_missky = __esm({
   "src/adapters/missky.js"() {
+    ({ getMimeType: getMimeType3 } = require_mime());
+    ({ buildMultipartBody: buildMultipartBody2 } = require_multipart());
     manifest4 = {
       id: "missky",
       version: "1.0.0",
@@ -3576,8 +4251,7 @@ var init_missky = __esm({
             options: [
               { value: "public", label: "\u516C\u5F00" },
               { value: "home", label: "\u4E3B\u9875" },
-              { value: "followers", label: "\u4EC5\u5173\u6CE8\u8005" },
-              { value: "specified", label: "\u79C1\u4FE1" }
+              { value: "followers", label: "\u4EC5\u5173\u6CE8\u8005" }
             ],
             default: "public"
           },
@@ -3919,11 +4593,6 @@ async function createPage(requestUrl2, token, parent, title, children) {
   if (children.length > MAX_BLOCKS_PER_REQUEST) await appendBlocks(requestUrl2, token, pageId, children);
   return pageId;
 }
-function getImageMimeType2(filename) {
-  const ext = String(filename || "").split(".").pop().toLowerCase();
-  const types = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
-  return types[ext] || "application/octet-stream";
-}
 async function compressImageToWebp(arrayBuffer, mimeType) {
   const source = new Blob([arrayBuffer], { type: mimeType });
   const bitmap = await createImageBitmap(source);
@@ -3952,7 +4621,7 @@ async function prepareLocalImages(payload, autoCompress) {
     const source = new Uint8Array(buffer);
     let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
     let filename = img.filename || `image-${index + 1}`;
-    let mimeType = getImageMimeType2(filename);
+    let mimeType = getMimeType4(filename);
     const originalBytes = source.byteLength;
     if (originalBytes > MAX_NOTION_ATTACHMENT_SIZE) {
       warnings.push({ filename, bytes: originalBytes, canCompress: /^(image\/(png|jpe?g|webp))$/i.test(mimeType) });
@@ -4140,10 +4809,11 @@ function renderSettings3(containerEl, ctx) {
     await ctx.saveConfig({ autoCompressLargeImages: value });
   }));
 }
-var import_obsidian3, NOTION_API_BASE, NOTION_VERSION, MAX_RETRIES, MAX_BLOCKS_PER_REQUEST, manifest5, MAX_NOTION_ATTACHMENT_SIZE, defaultConfig3, notion_default;
+var import_obsidian3, getMimeType4, NOTION_API_BASE, NOTION_VERSION, MAX_RETRIES, MAX_BLOCKS_PER_REQUEST, manifest5, MAX_NOTION_ATTACHMENT_SIZE, defaultConfig3, notion_default;
 var init_notion = __esm({
   "src/adapters/notion.js"() {
     import_obsidian3 = require("obsidian");
+    ({ getMimeType: getMimeType4 } = require_mime());
     NOTION_API_BASE = "https://api.notion.com/v1";
     NOTION_VERSION = "2026-03-11";
     MAX_RETRIES = 3;
@@ -5623,8 +6293,27 @@ var {
   requestUrl
 } = require("obsidian");
 var AdapterRegistry = require_adapter_registry();
+var sendLog = require_send_log();
 var JournalSyncSendModal = require_send_modal();
 var JournalSyncSettingTab = require_settings_tab();
+var JournalSyncLogModal = require_log_modal();
+var {
+  formatDate,
+  buildDiaryFilename,
+  buildDiaryHeading
+} = require_diary();
+var {
+  normalizeVaultPath,
+  joinVaultPath,
+  dirnameVaultPath,
+  isImagePath,
+  isRemoteUrl,
+  isDataUrl
+} = require_vault_path();
+var { parseImageRefs } = require_image_refs();
+var { getSelectedOrBlockContent } = require_content();
+var { deepMergeSettings } = require_settings();
+var { buildRichDraftFromUploadedMarkdown } = require_rich_draft();
 var ADAPTER_MODULES = [
   (init_flomo(), __toCommonJS(flomo_exports)),
   (init_telegram(), __toCommonJS(telegram_exports)),
@@ -5635,191 +6324,6 @@ var ADAPTER_MODULES = [
   (init_weibo(), __toCommonJS(weibo_exports)),
   (init_threads(), __toCommonJS(threads_exports))
 ];
-var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
-function padNumber(v, size = 2) {
-  return String(v).padStart(size, "0");
-}
-function formatDate(d = /* @__PURE__ */ new Date()) {
-  return `${d.getFullYear()}-${padNumber(d.getMonth() + 1)}-${padNumber(d.getDate())}`;
-}
-function parseDateInput(dateInput) {
-  const m = String(dateInput || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) return { year: m[1], month: String(Number(m[2])), day: String(Number(m[3])) };
-  const n = /* @__PURE__ */ new Date();
-  return { year: String(n.getFullYear()), month: String(n.getMonth() + 1), day: String(n.getDate()) };
-}
-function formatDateToken(v, w) {
-  const d = String(v || "").replace(/\D/g, "");
-  if (!d) return "";
-  return w <= d.length ? d.slice(-w) : d.padStart(w, "0");
-}
-function sanitizeFilename(v) {
-  return String(v || "").trim().split(/[\\\/]/).pop().replace(/[:*?"<>|]/g, "_");
-}
-function buildDiaryFilename(dateInput, rule = "YYYY-MM-DD \u65E5\u8BB0") {
-  const { year, month, day } = parseDateInput(dateInput);
-  const fallback = `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")} \u65E5\u8BB0`;
-  const rendered = String(rule || "YYYY-MM-DD \u65E5\u8BB0").trim().replace(/Y+|M+|D+/g, (tok) => {
-    if (tok.startsWith("Y")) return formatDateToken(year, tok.length);
-    if (tok.startsWith("M")) return formatDateToken(month, tok.length);
-    return formatDateToken(day, tok.length);
-  });
-  return `${(sanitizeFilename(rendered) || fallback).replace(/\.md$/i, "")}.md`;
-}
-function buildDiaryHeading(now, rule = "HH:MM:SS") {
-  const fallback = `${padNumber(now.getHours())}:${padNumber(now.getMinutes())}:${padNumber(now.getSeconds())}`;
-  const rendered = String(rule || "HH:MM:SS").trim().replace(/H+|M+|S+/g, (tok) => {
-    if (tok.startsWith("H")) return formatDateToken(String(now.getHours()), tok.length);
-    if (tok.startsWith("M")) return formatDateToken(String(now.getMinutes()), tok.length);
-    return formatDateToken(String(now.getSeconds()), tok.length);
-  });
-  return rendered || fallback;
-}
-function normalizeVaultPath(v) {
-  return String(v || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-}
-function joinVaultPath(...parts) {
-  return parts.map(normalizeVaultPath).filter(Boolean).join("/");
-}
-function dirnameVaultPath(p) {
-  const n = normalizeVaultPath(p);
-  const i = n.lastIndexOf("/");
-  return i >= 0 ? n.slice(0, i) : "";
-}
-function isImagePath(v) {
-  const clean = String(v || "").split("#")[0].split("?")[0];
-  const ext = clean.includes(".") ? clean.split(".").pop().toLowerCase() : "";
-  return IMAGE_EXTENSIONS.has(ext);
-}
-function isRemoteUrl(v) {
-  return /^https?:\/\//i.test(String(v || "").trim());
-}
-function isDataUrl(v) {
-  return /^data:/i.test(String(v || "").trim());
-}
-function parseImageRefs(markdown) {
-  const refs = [];
-  const wiki = /!\[\[([^\]]+)\]\]/g;
-  const md = /!\[[^\]]*\]\(([^)]+)\)/g;
-  const bare = /(^|\n)([^\n]+?\.(?:png|jpe?g|gif|webp|svg))(?=\n|$)/gi;
-  let m;
-  while ((m = wiki.exec(markdown)) !== null) {
-    const t = String(m[1] || "").split("|")[0].trim();
-    if (!t) continue;
-    refs.push({ raw: m[0], target: t, type: "wiki", index: m.index, end: m.index + m[0].length });
-  }
-  while ((m = md.exec(markdown)) !== null) {
-    const t = String(m[1] || "").trim().replace(/^<|>$/g, "");
-    if (!t) continue;
-    try {
-      refs.push({ raw: m[0], target: decodeURIComponent(t), type: "markdown", index: m.index, end: m.index + m[0].length });
-    } catch (e) {
-      refs.push({ raw: m[0], target: t, type: "markdown", index: m.index, end: m.index + m[0].length });
-    }
-  }
-  while ((m = bare.exec(markdown)) !== null) {
-    const t = String(m[2] || "").trim();
-    if (!t || /[\[\]()]/.test(t)) continue;
-    const idx = m.index + m[1].length;
-    refs.push({ raw: m[2], target: t, type: "bare", index: idx, end: idx + m[2].length });
-  }
-  const codeRanges = [];
-  const fenceRe = /```[^\n]*[\s\S]*?```/g;
-  let fm;
-  while ((fm = fenceRe.exec(markdown)) !== null) {
-    codeRanges.push([fm.index, fm.index + fm[0].length]);
-  }
-  const filtered = codeRanges.length === 0 ? refs : refs.filter((ref) => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
-  return filtered.sort((a, b) => a.index - b.index);
-}
-function getSelectedOrBlockContent(editor, scope = 2) {
-  const selected = editor.getSelection();
-  if (selected && selected.trim()) {
-    return { content: selected.trim(), heading: "", source: "selection" };
-  }
-  const doc = editor.getValue().replace(/\r\n/g, "\n");
-  const lines = doc.split("\n");
-  const cursorLine = editor.getCursor().line;
-  if (Number(scope) === 0) {
-    const content = doc.trim();
-    return content ? { content, heading: "", source: "page" } : null;
-  }
-  const level = Math.min(6, Math.max(1, Number(scope) || 2));
-  const headingRe = new RegExp(`^#{${level}}\\s+`);
-  const anyHeadingRe = /^(#{1,6})\s+/;
-  let startLine = -1;
-  for (let i = Math.min(cursorLine, lines.length - 1); i >= 0; i--) {
-    if (headingRe.test(lines[i])) {
-      startLine = i;
-      break;
-    }
-  }
-  if (startLine >= 0) {
-    let endLine = lines.length;
-    for (let i = startLine + 1; i < lines.length; i++) {
-      const nextHeading = lines[i].match(anyHeadingRe);
-      if (nextHeading && nextHeading[1].length <= level) {
-        endLine = i;
-        break;
-      }
-    }
-    const content = lines.slice(startLine + 1, endLine).join("\n").trim();
-    if (!content) return null;
-    return {
-      content,
-      heading: lines[startLine].replace(headingRe, "").trim(),
-      source: "heading"
-    };
-  }
-  return null;
-}
-function deepMergeSettings(target, source) {
-  if (!target || typeof target !== "object") target = {};
-  if (!source || typeof source !== "object") return target;
-  for (const key of Object.keys(source)) {
-    const sourceVal = source[key];
-    const targetVal = target[key];
-    if (Array.isArray(sourceVal)) {
-      if (!Array.isArray(targetVal) || targetVal.length === 0) {
-        target[key] = JSON.parse(JSON.stringify(sourceVal));
-      }
-    } else if (sourceVal && typeof sourceVal === "object") {
-      if (!targetVal || typeof targetVal !== "object") target[key] = {};
-      deepMergeSettings(target[key], sourceVal);
-    } else {
-      if (targetVal === void 0 || targetVal === "" || targetVal === null) {
-        target[key] = sourceVal;
-      }
-    }
-  }
-  return target;
-}
-function buildRichDraftFromUploadedMarkdown(markdown, uploadedRefs = []) {
-  const blocks = [];
-  const images = [];
-  let cursor = 0;
-  const refs = (Array.isArray(uploadedRefs) ? uploadedRefs : []).filter((r) => r && typeof r.index === "number" && r.end <= markdown.length && r.filename).sort((a, b) => a.index - b.index);
-  for (const ref of refs) {
-    if (ref.index < cursor) continue;
-    const txt = markdown.slice(cursor, ref.index);
-    if (txt) {
-      const prev = blocks[blocks.length - 1];
-      if ((prev == null ? void 0 : prev.type) === "text") prev.text += txt;
-      else blocks.push({ type: "text", text: txt });
-    }
-    const imgId = `obsidian_${images.length}_${ref.filename}`;
-    images.push({ id: imgId, filename: ref.filename, vaultPath: ref.vaultPath || ref.filename, previewUrl: "", createdAt: "" });
-    blocks.push({ type: "image", imageId: imgId });
-    cursor = ref.end;
-  }
-  const remaining = markdown.slice(cursor);
-  if (remaining) {
-    const prev = blocks[blocks.length - 1];
-    if ((prev == null ? void 0 : prev.type) === "text") prev.text += remaining;
-    else blocks.push({ type: "text", text: remaining });
-  }
-  return { version: 1, blocks, images };
-}
 var DEFAULT_SETTINGS = {
   diaryPath: "\u65E5\u8BB0",
   filenameRule: "YYYY-MM-DD \u65E5\u8BB0",
@@ -5858,13 +6362,16 @@ function buildDefaultSettings(registry) {
 var JournalSyncPlugin = class extends Plugin {
   async onload() {
     const loadedData = await this.loadData() || {};
+    const loadedSnapshot = JSON.stringify(loadedData);
     this.adapterRegistry = new AdapterRegistry();
     for (const adapter of ADAPTER_MODULES) {
       this.adapterRegistry.register(adapter);
     }
     this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
     this._migrateMastodonAccounts();
-    await this.saveSettings();
+    if (JSON.stringify(this.settings) !== loadedSnapshot) {
+      await this.saveSettings();
+    }
     this.addRibbonIcon("pencil", "Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55", () => this.createTodayDiaryEntry());
     this.addCommand({
       id: "journal-sync-new",
@@ -5875,6 +6382,13 @@ var JournalSyncPlugin = class extends Plugin {
       id: "journal-sync-send",
       name: "JournalSync-Send",
       editorCallback: (editor, view) => this.sendCurrentContent(editor, view)
+    });
+    this.addCommand({
+      id: "journal-sync-log",
+      name: "JournalSync-Log",
+      callback: () => {
+        new JournalSyncLogModal(this.app, this).open();
+      }
     });
     this.addSettingTab(new JournalSyncSettingTab(this.app, this));
   }
@@ -6018,10 +6532,6 @@ var JournalSyncPlugin = class extends Plugin {
       failed
     };
   }
-  // ── requestUrl 包装 ─────────────────────────
-  async requestUrl(options) {
-    return requestUrl(options);
-  }
   // ── 执行适配器 ──────────────────────────────
   /**
    * 执行单个适配器的发送（统一接口）
@@ -6137,6 +6647,51 @@ var JournalSyncPlugin = class extends Plugin {
       }).open();
     } catch (error) {
       new Notice6(error.message || String(error));
+    }
+  }
+  /**
+   * 从发送日志快照恢复发送面板（重新编辑）。
+   * @param {object} entry - log-modal 传入的 listEntries 条目（含 dirName 与 snapshot）
+   * @returns {Promise<boolean>} 成功 true；失败（含快照失效）false（已 Notice，不 throw）
+   */
+  async restoreFromSendLog(entry) {
+    try {
+      const snapshot = (entry == null ? void 0 : entry.snapshot) || await sendLog.readSnapshot({ plugin: this }, entry == null ? void 0 : entry.dirName);
+      if (!snapshot) {
+        new Notice6("\u65E5\u5FD7\u5FEB\u7167\u5DF2\u5931\u6548");
+        return false;
+      }
+      let restorePresetId = null;
+      if (snapshot.presetId && Array.isArray(this.settings.publishPresets) && this.settings.publishPresets.some((p) => (p == null ? void 0 : p.id) === snapshot.presetId)) {
+        restorePresetId = snapshot.presetId;
+      }
+      const dirName = entry.dirName;
+      const cacheBase = `${this.manifest.dir}/${sendLog.SEND_LOG_DIR}/${dirName}`;
+      new JournalSyncSendModal(this.app, this, {
+        content: snapshot.content,
+        richDraft: {
+          version: 1,
+          blocks: [],
+          images: (Array.isArray(snapshot.images) ? snapshot.images : []).map((im) => ({
+            id: `restore_${im.token}`,
+            filename: im.filename,
+            vaultPath: im.cacheFile,
+            token: im.token
+          }))
+        },
+        readImageFile: (p) => this.app.vault.adapter.readBinary(`${cacheBase}/${p}`),
+        notionTitle: snapshot.title || "",
+        restoreOptions: {
+          tgSendMode: snapshot.tgSendMode,
+          telegraphTitle: snapshot.telegraphTitle,
+          tgShowLinkPreview: snapshot.tgShowLinkPreview
+        },
+        restorePresetId
+      }).open();
+      return true;
+    } catch (error) {
+      new Notice6(error.message || String(error));
+      return false;
     }
   }
 };

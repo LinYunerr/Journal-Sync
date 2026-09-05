@@ -16,6 +16,7 @@
 
 const { Modal, Notice } = require('obsidian');
 const { buildPayload, getMimeType } = require('../core/payload');
+const sendLog = require('../core/send-log');
 
 function hasRemoteImageReference(content) {
     return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ''));
@@ -30,13 +31,19 @@ class JournalSyncSendModal extends Modal {
      * @param {object} richDraft
      * @param {Function} readImageFile
      */
-    constructor(app, plugin, { content, richDraft, readImageFile, notionTitle = '' }) {
+    constructor(app, plugin, { content, richDraft, readImageFile, notionTitle = '', restoreOptions = null, restorePresetId = null }) {
         super(app);
         this.plugin = plugin;
         this.rawContent = content || '';
         this.richDraft = richDraft || { version: 1, blocks: [], images: [] };
         this.readImageFile = readImageFile;
         this.notionTitle = notionTitle;
+        // 从发送日志恢复：预设仍存在则仅内存中切换激活预设（不落盘），
+        // 让 loadActivePresetSelection 勾选快照预设；取消重开不留下持久变更
+        if (restorePresetId && Array.isArray(plugin.settings.publishPresets) &&
+            plugin.settings.publishPresets.some(p => p?.id === restorePresetId)) {
+            plugin.settings.activePresetId = restorePresetId;
+        }
 
         this.tgSendMode = 'plain'; // 'plain' | 'rich' | 'telegraph'
         this.telegraphTitle = '';  // Telegraph 标题缓存（仅窗口生命周期内有效）
@@ -59,6 +66,12 @@ class JournalSyncSendModal extends Modal {
         this.loadActivePresetSelection();
         const _tgConfig = this.plugin.getAdapterConfig('telegram');
         this.tgShowLinkPreview = _tgConfig?.showLinkPreview !== false;
+        // 从发送日志恢复：还原快照保存的 Telegram 单次发送选项（仅这三项，覆盖默认/配置值）
+        if (restoreOptions) {
+            if (restoreOptions.tgSendMode) this.tgSendMode = restoreOptions.tgSendMode;
+            if (typeof restoreOptions.telegraphTitle === 'string') this.telegraphTitle = restoreOptions.telegraphTitle;
+            if (typeof restoreOptions.tgShowLinkPreview === 'boolean') this.tgShowLinkPreview = restoreOptions.tgShowLinkPreview;
+        }
     }
 
     /**
@@ -73,7 +86,7 @@ class JournalSyncSendModal extends Modal {
                         filename: img.filename,
                         vaultPath: img.vaultPath || img.filename,
                         id: img.id || img.vaultPath || img.filename,
-                        token: `@图片${imgs.length + 1}`
+                        token: img.token || `@图片${imgs.length + 1}`
                     });
                 }
             }
@@ -1089,6 +1102,81 @@ class JournalSyncSendModal extends Modal {
         }, 5000);
     }
 
+    /**
+     * 采集当前正文引用的图片（用于发送日志快照）。
+     * vault 图读取失败时跳过该张，不影响其余采集。
+     */
+    async _collectLogImages(content, imagesSource = null) {
+        const text = String(content || '');
+        const referencedTokens = new Set(text.match(/@图片\d+/g) || []);
+        const collected = [];
+        const images = Array.isArray(imagesSource) ? imagesSource : (Array.isArray(this.images) ? this.images : []);
+        for (const img of images) {
+            if (!img || !referencedTokens.has(img.token)) continue;
+            let data = null;
+            try {
+                data = img.blob
+                    ? await img.blob.arrayBuffer()
+                    : await this.readImageFile(img.vaultPath);
+            } catch (e) {
+                continue; // 单张读取失败跳过，不让整条日志失败
+            }
+            if (!data) continue;
+            const filename = String(img.filename || '');
+            const extMatch = filename.match(/\.([A-Za-z0-9]+)$/);
+            const ext = extMatch ? extMatch[1].toLowerCase() : 'bin';
+            collected.push({
+                token: img.token,
+                filename,
+                originVaultPath: img.vaultPath,
+                pasted: Boolean(img.blob),
+                data,
+                cacheFile: `img-${collected.length + 1}.${ext}`
+            });
+        }
+        return collected;
+    }
+
+    /**
+     * 写入一条发送日志快照。失败仅 Notice，绝不 throw，不影响发送本身。
+     */
+    async _writeSendLog(entry) {
+        try {
+            const ok = await sendLog.writeSnapshot({ plugin: this.plugin }, entry);
+            if (!ok) {
+                new Notice('发送日志保存失败：无法写入快照', 10000);
+            }
+        } catch (err) {
+            new Notice('发送日志保存失败：' + (err?.message || err), 10000);
+        }
+    }
+
+    /**
+     * 组装发送日志快照的公共字段。
+     */
+    _buildLogEntryBase(extra) {
+        const presets = this.plugin.settings.publishPresets || [];
+        const presetId = this.plugin.settings.activePresetId || '';
+        const preset = presets.find(p => p.id === presetId);
+        return Object.assign({
+            version: 1,
+            sentAt: new Date().toISOString(),
+            dispatched: true,
+            failStage: null,
+            failReason: null,
+            pluginVersion: this.plugin.manifest?.version || '',
+            title: this.notionTitle || '',
+            content: this.content || '',
+            images: [],
+            presetId,
+            presetName: preset ? String(preset.name || '') : '',
+            tgSendMode: this.tgSendMode,
+            telegraphTitle: this.telegraphTitle || '',
+            tgShowLinkPreview: this.tgShowLinkPreview !== false,
+            diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+        }, extra || {});
+    }
+
 
     /**
      * 执行发送（即时关窗 + 后台无阻塞异步发送）
@@ -1137,6 +1225,13 @@ class JournalSyncSendModal extends Modal {
 
         if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
             new Notice('请至少选择一个发送目标');
+            await this._writeSendLog(this._buildLogEntryBase({
+                dispatched: false,
+                failStage: 'no-target',
+                failReason: '未选择任何发送目标',
+                images: await this._collectLogImages(this.content),
+                diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+            }));
             return;
         }
 
@@ -1170,6 +1265,13 @@ class JournalSyncSendModal extends Modal {
         );
         if (!hasSendableContent) {
             new Notice('没有可发送的内容，请保留文字或有效图片。');
+            await this._writeSendLog(this._buildLogEntryBase({
+                dispatched: false,
+                failStage: 'empty-content',
+                failReason: '没有可发送的内容',
+                images: await this._collectLogImages(this.content),
+                diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+            }));
             return;
         }
 
@@ -1189,6 +1291,13 @@ class JournalSyncSendModal extends Modal {
             capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
         } catch (error) {
             new Notice(`图片预检失败：${error.message || String(error)}`, 10000);
+            await this._writeSendLog(this._buildLogEntryBase({
+                dispatched: false,
+                failStage: 'attachment-warnings',
+                failReason: `图片预检失败：${error.message || String(error)}`,
+                images: await this._collectLogImages(this.content),
+                diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
+            }));
             return;
         }
         const warningMessages = capabilityWarnings.warnings || [];
@@ -1226,6 +1335,17 @@ class JournalSyncSendModal extends Modal {
             validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
             new Notice(`发送预检失败：${error.message || String(error)}`, 10000);
+            await this._writeSendLog(this._buildLogEntryBase({
+                dispatched: false,
+                failStage: 'validate-exception',
+                failReason: error.message || String(error),
+                images: await this._collectLogImages(this.content),
+                diagnostics: {
+                    targets: [],
+                    validationWarnings: [],
+                    attachmentWarnings: Array.isArray(warningMessages) ? warningMessages : []
+                }
+            }));
             return;
         }
         if (validation.warnings.length > 0) {
@@ -1233,12 +1353,26 @@ class JournalSyncSendModal extends Modal {
         }
         if (validation.errors.length > 0) {
             new Notice(`发送预检未通过：${validation.errors.join('；')}`, 10000);
+            await this._writeSendLog(this._buildLogEntryBase({
+                dispatched: false,
+                failStage: 'validate-errors',
+                failReason: validation.errors.join('；'),
+                images: await this._collectLogImages(this.content),
+                diagnostics: {
+                    targets: [],
+                    validationWarnings: Array.isArray(validation.warnings) ? validation.warnings : [],
+                    attachmentWarnings: Array.isArray(warningMessages) ? warningMessages : []
+                }
+            }));
             return;
         }
 
         // 1. 立即关闭弹窗，不阻塞用户操作
         this.close();
         new Notice('🚀 已提交后台发送中...', 3000);
+
+        // 记录点击发布的时间戳，供发送日志使用（发送完成时再取会偏晚）
+        const dispatchStartedAt = new Date().toISOString();
 
         // 2. 在独立异步任务中运行网络传输，保证关窗后进程绝不中断
         (async () => {
@@ -1289,10 +1423,66 @@ class JournalSyncSendModal extends Modal {
             }
             // 发送完成，在 Obsidian 弹出非阻塞结果 Notice 提示
             const anyFailure = Object.values(results).some(r => !r.success && !r.skipped);
+            // 写入发送日志快照（在 finally 释放 Blob 前完成图片缓存采集）
+            try {
+                const diagTargets = [];
+                for (const adapterId of targetAdapters) {
+                    if (adapterId === 'telegram' || adapterId === 'mastodon') continue;
+                    const result = results[adapterId];
+                    if (!result) continue;
+                    diagTargets.push({
+                        kind: 'adapter',
+                        id: adapterId,
+                        label: adapterId,
+                        success: Boolean(result.success) && !result.skipped,
+                        error: result.error || null,
+                        durationMs: null
+                    });
+                }
+                const tgResult = results['telegram'];
+                if (tgResult && Array.isArray(tgResult.results)) {
+                    for (const channel of tgResult.results) {
+                        diagTargets.push({
+                            kind: 'telegram-channel',
+                            id: channel.channelId,
+                            label: `telegram ${channel.channelId}`,
+                            success: Boolean(channel.success),
+                            error: channel.error || null,
+                            durationMs: null
+                        });
+                    }
+                }
+                for (const acctId of mstdAccountIds) {
+                    const result = results[`mastodon:${acctId}`];
+                    if (!result) continue;
+                    diagTargets.push({
+                        kind: 'mastodon-account',
+                        id: acctId,
+                        label: result.displayLabel || acctId,
+                        success: Boolean(result.success) && !result.skipped,
+                        error: result.error || null,
+                        durationMs: null
+                    });
+                }
+                await this._writeSendLog(this._buildLogEntryBase({
+                    dispatched: true,
+                    failStage: null,
+                    failReason: null,
+                    sentAt: dispatchStartedAt,
+                    images: await this._collectLogImages(rawContent, images),
+                    diagnostics: {
+                        targets: diagTargets,
+                        validationWarnings: Array.isArray(validation?.warnings) ? validation.warnings : [],
+                        attachmentWarnings: Array.isArray(warningMessages) ? warningMessages : []
+                    }
+                }));
+            } catch (e) {
+                // 日志写入绝不影响发送结果本身
+            }
             const summary = Object.entries(results)
                 .flatMap(([id, result]) => {
                     const channelResults = Array.isArray(result.results) ? result.results : null;
-                    if ((id === 'Telegram' || id === 'telegram') && channelResults) {
+                    if (id === 'telegram' && channelResults) {
                         return channelResults.map(channel => {
                             return `Telegram ${channel.channelId}: ${channel.success ? '成功' : `失败(${channel.error || '未知错误'})`}`;
                         });
@@ -1307,7 +1497,7 @@ class JournalSyncSendModal extends Modal {
                 .join('；\n');
 
             if (anyFailure) {
-                new Notice(`❌ 发送存在失败：${summary}`, 10000);
+                new Notice(`❌ 发送存在失败：${summary}`, 20000);
             } else {
                 new Notice(`✅ 发送成功：${summary}`, 6000);
             }

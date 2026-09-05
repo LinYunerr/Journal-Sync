@@ -3,7 +3,16 @@
 All notable changes to Journal Sync are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased]
+
+### Added
+
+- **发送日志（`JournalSync-Log`）**：每次发布都会在插件目录 `send-log/` 下保存一份快照（内容、图片、目标预设、诊断信息），最多保留最近 10 条。`JournalSync-Log` 命令打开日志弹窗，可对任意一条记录点「重新编辑」，恢复内容与图片后再次发布。派发前失败（未发出）也会记录。
+
+### Changed
+
+- **核心逻辑收拢到 `src/core/`**：统一 MIME 类型推断（图片+视频）到 `src/core/mime.js`，共享 multipart 表单构造到 `src/core/multipart.js`，消除 mastodon/missky/notion/telegram/payload 中重复的 `getMimeType` 与重复的表单构造。纯逻辑（日记文件名/标题、vault 路径、图片引用解析、富文本草稿、内容提取、设置合并）从 `src/main.js` 迁出到 `src/core/` 独立模块，`src/main.js` 只保留生命周期与调度。行为不变。
+- **核心规则补测试**：新增 `tests/core.test.js`，覆盖图片 token 匹配、设置深度合并、日记文件名/标题占位符、MIME、multipart。`npm test` 同时运行 Bluesky 与 core 两套测试。
 
 ## [1.0.8] - 2026-09-04
 
