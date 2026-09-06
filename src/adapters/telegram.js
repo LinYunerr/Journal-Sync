@@ -15,12 +15,7 @@ import { Setting, Notice } from 'obsidian';
 
 const TG_API_BASE = 'https://api.telegram.org';
 
-// 转义 Obsidian wikilink [[...]]，避免 Telegram Markdown 解析器将外层 [ ] 当作链接语法而静默剥离。
-// 将 [[text]] → \[text\]，保留内层内容，不影响合法的 [text](url) 链接。
-function escapeTelegramMarkdownWikilinks(text) {
-    return String(text || '').replace(/\[\[([^\]]+)\]\]/g, '\\[$1\\]');
-}
-
+const { convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT } = require('../core/telegram-markdown');
 const telegraph = require('../core/telegraph');
 const { getMimeType } = require('../core/mime');
 
@@ -171,17 +166,16 @@ export async function listChannels(botToken, existingChannels = [], requestUrlFn
     return Array.from(channelMap.values());
 }
 
-// ── 文本发送 ──────────────────────────────────
-
 async function sendSingleTextMessage(botToken, chatId, text, options, requestUrlFn) {
     if (!text || !text.trim()) return { success: true };
 
     const body = {
         chat_id: chatId,
-        text: escapeTelegramMarkdownWikilinks(text),
-        parse_mode: 'Markdown',
+        text: truncate(convertToTelegramHtml(text, { rich: false }), MESSAGE_LIMIT),
+        parse_mode: 'HTML',
         link_preview_options: { is_disabled: !options?.showLinkPreview }
     };
+
 
     const { status, result } = await tgApi(botToken, 'sendMessage', body, requestUrlFn);
 
@@ -193,18 +187,7 @@ async function sendSingleTextMessage(botToken, chatId, text, options, requestUrl
             if (retryRes.result.ok) return { success: true };
         }
 
-        delete body.parse_mode;
-        const { status: s2, result: r2 } = await tgApi(botToken, 'sendMessage', body, requestUrlFn);
-        if (!r2.ok) {
-            const errorDesc2 = String(r2.description || r2.result?.description || '').toUpperCase();
-            if (errorDesc2.includes('WEBPAGE_CURL_FAILED')) {
-                body.link_preview_options = { is_disabled: true };
-                const finalRes = await tgApi(botToken, 'sendMessage', body, requestUrlFn);
-                if (finalRes.result.ok) return { success: true };
-                return { success: false, error: finalRes.result.description || finalRes.description || `sendMessage 失败: HTTP ${finalRes.status}` };
-            }
-            return { success: false, error: r2.result?.description || r2.description || `sendMessage 失败: HTTP ${s2}` };
-        }
+        return { success: false, error: result.description || result.result?.description || `sendMessage 失败: HTTP ${status}` };
     }
 
     return { success: true };
@@ -264,12 +247,12 @@ async function sendPhotoByBuffer(botToken, chatId, arrayBuffer, filename, captio
     parts.push(encoder.encode('\r\n'));
 
     if (caption && caption.trim()) {
-        const safeCaption = escapeTelegramMarkdownWikilinks(caption.trim());
+        const safeCaption = truncate(convertToTelegramHtml(caption.trim(), { rich: false }), CAPTION_LIMIT);
         parts.push(encoder.encode(
             `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${safeCaption}\r\n`
         ));
         parts.push(encoder.encode(
-            `--${boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nMarkdown\r\n`
+            `--${boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nHTML\r\n`
         ));
     }
 
@@ -310,8 +293,8 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
     const mediaList = imageItems.map((item, idx) => {
         const entry = { type: 'photo', media: `attach://photo${idx}` };
         if (idx === 0 && caption && caption.trim()) {
-            entry.caption = escapeTelegramMarkdownWikilinks(caption.trim());
-            entry.parse_mode = 'Markdown';
+            entry.caption = truncate(convertToTelegramHtml(caption.trim(), { rich: false }), CAPTION_LIMIT);
+            entry.parse_mode = 'HTML';
         }
         return entry;
     });
@@ -360,37 +343,6 @@ async function sendMediaGroupByBuffer(botToken, chatId, imageItems, caption, req
 
 // ── 富文本发送 ────────────────────────────────
 
-function buildRichMarkdown(parts) {
-    const isPlainText = (block) => {
-        const firstLine = block.split('\n').map(line => line.trim()).filter(Boolean)[0] || '';
-        const patterns = [
-            /^#{1,6}\s+/, /^>/, /^([-*+]\s+|\d+[.)]\s+)/, /^- \[[ xX]\]\s+/,
-            /^```/, /^\|/, /^---+$/, /^!\[[^\]]*\]\((?:https?:\/\/|tg:\/\/photo\?id=)[^)]+\)$/,
-            /^<(\/?)(p|h[1-6]|blockquote|ul|ol|li|pre|hr|figure|img|video|audio|tg-)\b/
-        ];
-        return !patterns.some(pattern => pattern.test(firstLine));
-    };
-
-    let richText = '';
-    let previousIsPlainText = false;
-    for (const part of parts) {
-        const normalized = String(part || '').replace(/\r\n/g, '\n').trim();
-        if (!normalized) continue;
-        for (const block of normalized.split(/\n{2,}/)) {
-            const current = block.trim();
-            if (!current) continue;
-            const currentIsPlainText = isPlainText(current);
-            if (richText) {
-                richText += '\n\n';
-                if (previousIsPlainText && currentIsPlainText) richText += '<p>&nbsp;</p>\n\n';
-            }
-            richText += current;
-            previousIsPlainText = currentIsPlainText;
-        }
-    }
-    return richText;
-}
-
 async function sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers, requestUrlFn) {
     const boundary = `----TgBridgeRich${Date.now()}${Math.random().toString(16).slice(2)}`;
     const encoder = new TextEncoder();
@@ -413,7 +365,7 @@ async function sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers
         const mediaId = `image_${imageIndex + 1}`;
         const attachmentName = `file_${imageIndex + 1}`;
         const filename = seg.filename || `image_${imageIndex + 1}.jpg`;
-        richParts.push(`![](tg://photo?id=${mediaId})`);
+        richParts.push(`@图片${imageIndex + 1}`);
         media.push({
             id: mediaId,
             media: { type: 'photo', media: `attach://${attachmentName}` }
@@ -422,7 +374,7 @@ async function sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers
         imageIndex += 1;
     }
 
-    const markdown = buildRichMarkdown(richParts);
+    const markdown = restoreImageTokens(convertToTelegramHtml(richParts.join('\n\n'), { rich: true }), media.map(m => m.id));
     if (!markdown) return { success: false, error: '富文本内容为空，未发送 Telegram 消息' };
     if (richCharacterCount(markdown) > 32768) {
         return { success: false, error: 'Telegram 富文本超过 32768 字符限制' };

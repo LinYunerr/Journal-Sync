@@ -8,11 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **发送日志（`JournalSync-Log`）**：每次发布都会在插件目录 `send-log/` 下保存一份快照（内容、图片、目标预设、诊断信息），最多保留最近 10 条。`JournalSync-Log` 命令打开日志弹窗，可对任意一条记录点「重新编辑」，恢复内容与图片后再次发布。派发前失败（未发出）也会记录。
+- **Telegram Markdown→HTML 转换**：新增 `src/core/telegram-markdown.js`，基于 `@borodin/mdgram` 将 Obsidian Markdown 统一转换为 Telegram HTML（普通链路 classic HTML、富文本链路 Rich HTML），替代原先的 `parse_mode=Markdown` 与手写富文本拼装。
 
 ### Changed
 
 - **核心逻辑收拢到 `src/core/`**：统一 MIME 类型推断（图片+视频）到 `src/core/mime.js`，共享 multipart 表单构造到 `src/core/multipart.js`，消除 mastodon/missky/notion/telegram/payload 中重复的 `getMimeType` 与重复的表单构造。纯逻辑（日记文件名/标题、vault 路径、图片引用解析、富文本草稿、内容提取、设置合并）从 `src/main.js` 迁出到 `src/core/` 独立模块，`src/main.js` 只保留生命周期与调度。行为不变。
 - **核心规则补测试**：新增 `tests/core.test.js`，覆盖图片 token 匹配、设置深度合并、日记文件名/标题占位符、MIME、multipart。`npm test` 同时运行 Bluesky 与 core 两套测试。
+- **Telegram 发送改用 HTML 解析模式**：`sendMessage`、`sendPhoto` 与 `sendMediaGroup` 的文本与图片说明统一经 Markdown→HTML 转换后以 `parse_mode=HTML` 发送；标题/列表等 Markdown 块级语法在普通链路降级为加粗/圆点，富文本链路保留完整标签。新增 `tests/telegram-markdown.test.js` 覆盖行内格式、转义、引用、代码块与图片 token 还原。
+
+### Fixed
+
+- **Telegram 引用与代码块内容丢失**：修复 Markdown→HTML 转换中两个内容丢失缺陷——围栏代码块（```` ``` ```` / `~~~`）内以 `>` 开头的行被误当作引用提取而丢失；引用紧贴正文（无空行分隔）时占位符被解析器吞掉导致引用内容整体丢失。现在围栏感知 + 占位符空行隔离，引用与代码内容完整保留。
 
 ## [1.0.8] - 2026-09-04
 
