@@ -959,3 +959,59 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* 逐目标发送结果（diagnostics.targets） */
+.js-bridge-log-targets {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.js-bridge-log-target-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.js-bridge-log-target-success {
+  color: #16a34a;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.theme-dark .js-bridge-log-target-success {
+  color: #6ee7a0;
+}
+
+.js-bridge-log-target-fail {
+  color: rgb(239, 68, 68);
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.js-bridge-log-target-name {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.js-bridge-log-target-error {
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* 未发出条目的失败原因 */
+.js-bridge-log-fail-reason {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

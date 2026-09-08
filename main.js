@@ -1,6 +1,6 @@
 /*!
  * Journal Sync v1.0.8
- * Build: 2026-09-06 (production)
+ * Build: 2026-09-07 (production)
  * https://github.com/LinYunerr/Journal-Sync
  */
 var __defProp = Object.defineProperty;
@@ -38,10 +38,51 @@ var __copyProps = (to, from, except, desc) => {
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+// src/core/i18n.js
+var require_i18n = __commonJS({
+  "src/core/i18n.js"(exports2, module2) {
+    var currentLang = "zh";
+    var en = {};
+    function registerTranslations9(lang, dict) {
+      if (lang !== "en" || !dict || typeof dict !== "object") return;
+      for (const key of Object.keys(dict)) {
+        en[key] = dict[key];
+      }
+    }
+    function setLanguage2(lang) {
+      currentLang = lang === "en" ? "en" : "zh";
+    }
+    function getEffectiveLanguage() {
+      return currentLang;
+    }
+    function t9(key, vars) {
+      let str = key;
+      if (currentLang === "en" && Object.prototype.hasOwnProperty.call(en, key)) {
+        str = en[key];
+      }
+      if (vars) {
+        str = str.replace(/\{(\w+)\}/g, (match, name) => Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match);
+      }
+      return str;
+    }
+    module2.exports = { t: t9, setLanguage: setLanguage2, getEffectiveLanguage, registerTranslations: registerTranslations9 };
+  }
+});
+
 // src/core/adapter-registry.js
 var require_adapter_registry = __commonJS({
   "src/core/adapter-registry.js"(exports2, module2) {
     "use strict";
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "\u672A\u547D\u540D\u56FE\u7247": "Unnamed image",
+      "\u9002\u914D\u5668\u4E0D\u5B58\u5728": "Adapter not found",
+      "{name} \u56FE\u7247\u8D85\u8FC7 {max} \u5F20\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20\uFF0C\u786E\u8BA4\u53D1\u9001": "{name}: over {max} images; only the first {max} will be sent. Confirm to send",
+      "{name} \u56FE\u7247\u6587\u4EF6\u8D85\u8FC7 {size} MB\uFF1A{preview}{suffix}\uFF0C\u786E\u8BA4\u53D1\u9001": "{name}: image files exceed {size} MB: {preview}{suffix}. Confirm to send",
+      " \u7B49 {count} \u5F20": " ...and {count} more",
+      "{id}: \u9002\u914D\u5668\u4E0D\u5B58\u5728": "{id}: adapter not found",
+      "\u3001": ", "
+    });
     var AdapterRegistry2 = class {
       constructor() {
         this._adapters = /* @__PURE__ */ new Map();
@@ -88,10 +129,17 @@ var require_adapter_registry = __commonJS({
         const readSize = async (image) => {
           if (Number.isFinite(image == null ? void 0 : image.size)) return image.size;
           const key = (image == null ? void 0 : image.vaultPath) || (image == null ? void 0 : image.filename);
-          if (!key || typeof payload.readAttachment !== "function") return null;
+          if (!key) return null;
           if (sizeCache.has(key)) return sizeCache.get(key);
-          const pending = Promise.resolve().then(() => payload.readAttachment(key)).then((buffer) => {
-            const size = (buffer == null ? void 0 : buffer.byteLength) || 0;
+          const pending = Promise.resolve().then(() => {
+            if (typeof payload.statAttachment !== "function") return null;
+            return payload.statAttachment(key);
+          }).catch(() => null).then((statSize) => {
+            const bytes = Number(statSize);
+            if (Number.isFinite(bytes) && bytes > 0) return bytes;
+            if (typeof payload.readAttachment !== "function") return null;
+            return Promise.resolve().then(() => payload.readAttachment(key)).then((buffer) => (buffer == null ? void 0 : buffer.byteLength) || 0);
+          }).then((size) => {
             if (size > 0) image.size = size;
             return size || null;
           }).catch(() => null);
@@ -106,18 +154,21 @@ var require_adapter_registry = __commonJS({
           const maxAttachments = Number(capabilities.maxAttachments) || 0;
           const maxAttachmentSize = Number(capabilities.maxAttachmentSize) || 0;
           if (capabilities.warnOnAttachmentCount === true && maxAttachments > 0 && images.length > maxAttachments) {
-            adapterWarnings.push(`${name} \u56FE\u7247\u8D85\u8FC7 ${maxAttachments} \u5F20\uFF0C\u53EA\u53D1\u9001\u524D ${maxAttachments} \u5F20\uFF0C\u786E\u8BA4\u53D1\u9001`);
+            adapterWarnings.push(t9("{name} \u56FE\u7247\u8D85\u8FC7 {max} \u5F20\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20\uFF0C\u786E\u8BA4\u53D1\u9001", { name, max: maxAttachments }));
           }
           if (capabilities.warnOnAttachmentSize === true && maxAttachmentSize > 0) {
+            const sizes = await Promise.all(images.map((image) => readSize(image)));
             const oversized = [];
-            for (const image of images) {
-              const size = await readSize(image);
-              if (size > maxAttachmentSize) oversized.push(image.filename || image.vaultPath || "\u672A\u547D\u540D\u56FE\u7247");
+            for (let i = 0; i < images.length; i++) {
+              if (sizes[i] > maxAttachmentSize) {
+                const image = images[i];
+                oversized.push(image.filename || image.vaultPath || t9("\u672A\u547D\u540D\u56FE\u7247"));
+              }
             }
             if (oversized.length > 0) {
-              const preview = oversized.slice(0, 3).join("\u3001");
-              const suffix = oversized.length > 3 ? ` \u7B49 ${oversized.length} \u5F20` : "";
-              adapterWarnings.push(`${name} \u56FE\u7247\u6587\u4EF6\u8D85\u8FC7 ${Math.round(maxAttachmentSize / 1024 / 1024)} MB\uFF1A${preview}${suffix}\uFF0C\u786E\u8BA4\u53D1\u9001`);
+              const preview = oversized.slice(0, 3).join(t9("\u3001"));
+              const suffix = oversized.length > 3 ? t9(" \u7B49 {count} \u5F20", { count: oversized.length }) : "";
+              adapterWarnings.push(t9("{name} \u56FE\u7247\u6587\u4EF6\u8D85\u8FC7 {size} MB\uFF1A{preview}{suffix}\uFF0C\u786E\u8BA4\u53D1\u9001", { name, size: Math.round(maxAttachmentSize / 1024 / 1024), preview, suffix }));
             }
           }
           perAdapter[id] = adapterWarnings;
@@ -141,8 +192,8 @@ var require_adapter_registry = __commonJS({
         for (const id of targetIds) {
           const adapter = this.get(id);
           if (!adapter) {
-            perAdapter[id] = { warnings: [], errors: ["\u9002\u914D\u5668\u4E0D\u5B58\u5728"] };
-            errors.push(`${id}: \u9002\u914D\u5668\u4E0D\u5B58\u5728`);
+            perAdapter[id] = { warnings: [], errors: [t9("\u9002\u914D\u5668\u4E0D\u5B58\u5728")] };
+            errors.push(t9("{id}: \u9002\u914D\u5668\u4E0D\u5B58\u5728", { id }));
             continue;
           }
           const config = configs[id] || {};
@@ -164,6 +215,10 @@ var require_adapter_registry = __commonJS({
 var require_send_log = __commonJS({
   "src/core/send-log.js"(exports2, module2) {
     "use strict";
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "[\u56FE\u7247] \xD7{count}": "[Image] \xD7{count}"
+    });
     var SEND_LOG_DIR = "send-log";
     var MAX_ENTRIES = 10;
     function padNumber(v, size = 2) {
@@ -183,8 +238,8 @@ var require_send_log = __commonJS({
       return `${base}${offset}`;
     }
     function sentAtTime(value) {
-      const t = Date.parse(String(value || ""));
-      return Number.isNaN(t) ? 0 : t;
+      const t10 = Date.parse(String(value || ""));
+      return Number.isNaN(t10) ? 0 : t10;
     }
     function imageCacheExt(filename) {
       const name = String(filename || "");
@@ -212,7 +267,7 @@ var require_send_log = __commonJS({
       const firstLine = stripped.split("\n").map((l) => l.trim()).find((l) => l.length > 0) || "";
       if (firstLine) return firstLine.slice(0, 80);
       const count = Array.isArray(snapshot == null ? void 0 : snapshot.images) ? snapshot.images.length : 0;
-      return count > 0 ? `[\u56FE\u7247] \xD7${count}` : "";
+      return count > 0 ? t9("[\u56FE\u7247] \xD7{count}", { count }) : "";
     }
     async function writeSnapshot(ctx, entry) {
       try {
@@ -350,7 +405,7 @@ var require_payload = __commonJS({
   "src/core/payload.js"(exports2, module2) {
     "use strict";
     var { getMimeType: getMimeType5 } = require_mime();
-    function buildPayload({ content = "", richDraft, title = "", readAttachment } = {}) {
+    function buildPayload({ content = "", richDraft, title = "", readAttachment, statAttachment } = {}) {
       const plainText = String(content || "").replace(/@图片\d+/g, "").replace(/!\[\[[^\]]+\]\]/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
       const attachments = extractAttachments(richDraft, content);
       return {
@@ -358,7 +413,8 @@ var require_payload = __commonJS({
         plainText,
         title: String(title || ""),
         attachments,
-        readAttachment: typeof readAttachment === "function" ? readAttachment : null
+        readAttachment: typeof readAttachment === "function" ? readAttachment : null,
+        statAttachment: typeof statAttachment === "function" ? statAttachment : null
       };
     }
     function extractAttachments(richDraft, content) {
@@ -384,11 +440,217 @@ var require_payload = __commonJS({
   }
 });
 
+// src/core/send-dispatcher.js
+var require_send_dispatcher = __commonJS({
+  "src/core/send-dispatcher.js"(exports2, module2) {
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "Telegram {channel}: {result}": "Telegram {channel}: {result}",
+      "\u6210\u529F": "success",
+      "\u5931\u8D25({error})": "failed ({error})",
+      "\u53D1\u9001\u672A\u77E5\u9519\u8BEF": "unknown error",
+      "{id}: \u8DF3\u8FC7": "{id}: skipped",
+      "{id}: \u6210\u529F{warn}": "{id}: success{warn}",
+      "{id}: \u5931\u8D25({error})": "{id}: failed ({error})",
+      "\uFF1B": "; ",
+      "\uFF08{detail}\uFF09": " ({detail})"
+    });
+    function collectTargets({ selectedTargets, selectedTgChannels, selectedMastodonAccounts, plugin }) {
+      const targetAdapters = Array.from(selectedTargets || []).filter(
+        (adapterId) => adapterId !== "telegram" && adapterId !== "mastodon" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
+      );
+      let tgChannels = [];
+      let staleTgChannelIds = [];
+      if (plugin.adapterRegistry.has("telegram") && plugin.isAdapterEnabled("telegram")) {
+        const tgConfig = plugin.getAdapterConfig("telegram");
+        const validIds = new Set((Array.isArray(tgConfig.channels) ? tgConfig.channels : []).map((ch) => String(ch.id)));
+        staleTgChannelIds = Array.from(selectedTgChannels || []).filter((id) => !validIds.has(String(id)));
+        tgChannels = Array.from(selectedTgChannels || []).filter((id) => validIds.has(String(id)));
+      }
+      if (tgChannels.length > 0) {
+        targetAdapters.push("telegram");
+      }
+      const mstdAccountIds = plugin.isAdapterEnabled("mastodon") ? Array.from(selectedMastodonAccounts || []).filter((id) => plugin.getMastodonAccount(id)) : [];
+      if (mstdAccountIds.length > 0) {
+        targetAdapters.push("mastodon");
+      }
+      return { targetAdapters, tgChannels, mstdAccountIds, staleTgChannelIds };
+    }
+    async function dispatchSends({ plugin, payload, targetAdapters, tgChannels, mstdAccountIds, targetConfigOverrides }) {
+      const overrides = targetConfigOverrides || {};
+      const genericAdapters = (targetAdapters || []).filter(
+        (adapterId) => adapterId !== "telegram" && adapterId !== "mastodon"
+      );
+      const runGeneric = async (adapterId) => {
+        try {
+          const result = await plugin.executeAdapter(adapterId, payload, overrides[adapterId] || {});
+          return [adapterId, result];
+        } catch (error) {
+          return [adapterId, { success: false, error: error.message }];
+        }
+      };
+      const runTelegram = async () => {
+        if (!(tgChannels && tgChannels.length > 0)) return null;
+        try {
+          const result = await plugin.executeAdapter("telegram", payload, overrides.telegram);
+          return ["telegram", result];
+        } catch (error) {
+          return ["telegram", { success: false, error: error.message }];
+        }
+      };
+      const runMastodon = async () => {
+        const entries = [];
+        for (const acctId of mstdAccountIds || []) {
+          const acct = plugin.getMastodonAccount(acctId);
+          if (!acct) continue;
+          const displayLabel = acct.label || acct.serverUrl || acctId;
+          const key = `mastodon:${acctId}`;
+          try {
+            const result = await plugin.executeAdapter("mastodon", payload, {
+              serverUrl: acct.serverUrl,
+              accessToken: acct.accessToken,
+              visibility: acct.visibility || "public"
+            });
+            result.displayLabel = displayLabel;
+            entries.push([key, result]);
+          } catch (error) {
+            entries.push([key, { success: false, error: error.message, displayLabel }]);
+          }
+        }
+        return entries;
+      };
+      const [genericSettled, tgSettled, mstdSettled] = await Promise.all([
+        Promise.all(genericAdapters.map(runGeneric)),
+        runTelegram(),
+        runMastodon()
+      ]);
+      const results = {};
+      for (const entry of genericSettled) {
+        results[entry[0]] = entry[1];
+      }
+      const tgEntry = tgSettled;
+      if (Array.isArray(tgEntry)) {
+        results[tgEntry[0]] = tgEntry[1];
+      }
+      for (const entry of mstdSettled) {
+        results[entry[0]] = entry[1];
+      }
+      return results;
+    }
+    function buildDiagTargets({ targetAdapters, mstdAccountIds, results }) {
+      const diagTargets = [];
+      for (const adapterId of targetAdapters || []) {
+        if (adapterId === "telegram" || adapterId === "mastodon") continue;
+        const result = results[adapterId];
+        if (!result) continue;
+        diagTargets.push({
+          kind: "adapter",
+          id: adapterId,
+          label: adapterId,
+          success: Boolean(result.success) && !result.skipped,
+          error: result.error || null,
+          durationMs: null
+        });
+      }
+      const tgResult = results["telegram"];
+      if (tgResult && Array.isArray(tgResult.results)) {
+        for (const channel of tgResult.results) {
+          diagTargets.push({
+            kind: "telegram-channel",
+            id: channel.channelId,
+            label: `telegram ${channel.channelId}`,
+            success: Boolean(channel.success),
+            error: channel.error || null,
+            durationMs: null
+          });
+        }
+      }
+      for (const acctId of mstdAccountIds || []) {
+        const result = results[`mastodon:${acctId}`];
+        if (!result) continue;
+        diagTargets.push({
+          kind: "mastodon-account",
+          id: acctId,
+          label: result.displayLabel || acctId,
+          success: Boolean(result.success) && !result.skipped,
+          error: result.error || null,
+          durationMs: null
+        });
+      }
+      return diagTargets;
+    }
+    function buildSummary(results) {
+      return Object.entries(results || {}).flatMap(([id, result]) => {
+        const channelResults = Array.isArray(result.results) ? result.results : null;
+        if (id === "telegram" && channelResults) {
+          return channelResults.map((channel) => {
+            return t9("Telegram {channel}: {result}", { channel: channel.channelId, result: channel.success ? t9("\u6210\u529F") : t9("\u5931\u8D25({error})", { error: channel.error || t9("\u53D1\u9001\u672A\u77E5\u9519\u8BEF") }) });
+          });
+        }
+        const displayId = result.displayLabel || id;
+        const warn = Array.isArray(result.warnings) && result.warnings.length > 0 ? t9("\uFF08{detail}\uFF09", { detail: result.warnings.join(t9("\uFF1B")) }) : "";
+        return result.success ? result.skipped ? t9("{id}: \u8DF3\u8FC7", { id: displayId }) : t9("{id}: \u6210\u529F{warn}", { id: displayId, warn }) : t9("{id}: \u5931\u8D25({error})", { id: displayId, error: result.error || t9("\u53D1\u9001\u672A\u77E5\u9519\u8BEF") });
+      }).join(t9("\uFF1B") + "\n");
+    }
+    module2.exports = {
+      collectTargets,
+      dispatchSends,
+      buildDiagTargets,
+      buildSummary
+    };
+  }
+});
+
 // src/ui/send-modal.js
 var require_send_modal = __commonJS({
   "src/ui/send-modal.js"(exports2, module2) {
     var { Modal, Notice: Notice7 } = require("obsidian");
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "\u9ED8\u8BA4\u9884\u8BBE": "Default preset",
+      "\u9009\u62E9\u53D1\u5E03\u76EE\u6807": "Choose publish targets",
+      "\u53D1\u5E03": "Publish",
+      "\u53D1\u5E03\uFF08Ctrl/Cmd+Enter\uFF09": "Publish (Ctrl/Cmd+Enter)",
+      "\u9009\u62E9\u56FE\u7247\u5360\u4F4D\u7B26\uFF1A": "Choose an image placeholder:",
+      "\u9884\u8BBE{index}": "Preset {index}",
+      "\u70B9\u51FB\u5E94\u7528\u5206\u7EC4\uFF0C\u53CC\u51FB\u91CD\u547D\u540D": "Click to apply this preset; double-click to rename",
+      "\u65B0\u589E\u5F53\u524D\u9009\u62E9\u4E3A\u9884\u8BBE\u5206\u7EC4": "Save the current selection as a new preset",
+      "\u5220\u9664\u5F53\u524D\u9009\u4E2D\u9884\u8BBE": "Delete the selected preset",
+      "Telegram\uFF1A": "Telegram: ",
+      "Mastodon\uFF1A": "Mastodon: ",
+      "Telegraph\uFF1A": "Telegraph: ",
+      "\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001": "Click to send via Telegraph",
+      "\u9884\u89C8": "Preview",
+      "\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8": "Link preview is on; click to turn it off",
+      "\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8": "Link preview is off; click to turn it on",
+      "\u5BCC\u6587\u672C": "Rich text",
+      "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C": "Rich-text mode; click to switch to plain text",
+      "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C": "Plain-text mode; click to switch to rich text",
+      "\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u3002": "No channel list yet. Please fetch channels in the plugin settings first.",
+      "\u70B9\u51FB\u6B64\u5904\u5173\u95ED Telegraph \u53D1\u9001": "Click here to disable Telegraph sending",
+      "\u53CC\u51FB\u7F16\u8F91\u6807\u9898": "Double-click to edit the title",
+      "Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u53CC\u51FB\u6807\u9898\u7F16\u8F91": "Telegraph mode: click the prefix to disable; double-click the title to edit",
+      "\u26A0\uFE0F {count} \u9879\u9884\u8B66\uFF0C\u786E\u8BA4\u53D1\u9001": "\u26A0\uFE0F {count} warning(s). Confirm to send",
+      "\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A\u65E0\u6CD5\u5199\u5165\u5FEB\u7167": "Failed to save send log: cannot write snapshot",
+      "\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A{error}": "Failed to save send log: {error}",
+      "\u4EE5\u4E0B Telegram \u9891\u9053\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5DF2\u81EA\u52A8\u8DF3\u8FC7\uFF1A{channels}": "The following Telegram channels no longer exist and were skipped: {channels}",
+      "\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807": "Please select at least one publish target",
+      "\u672A\u9009\u62E9\u4EFB\u4F55\u53D1\u9001\u76EE\u6807": "No publish target selected",
+      "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002": "Nothing to send. Please keep some text or valid images.",
+      "\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A{error}": "Image pre-check failed: {error}",
+      "\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A{error}": "Send pre-check failed: {error}",
+      "\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A{detail}": "Send pre-check notice: {detail}",
+      "\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A{detail}": "Send pre-check failed: {detail}",
+      "\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...": "\u{1F680} Send dispatched in the background...",
+      "\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A{summary}": "\u274C Send completed with failures: {summary}",
+      "\u2705 \u53D1\u9001\u6210\u529F\uFF1A{summary}": "\u2705 Sent successfully: {summary}",
+      "\u5FAE\u535A": "Weibo",
+      "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9": "Nothing to send",
+      "\u3001": ", ",
+      "\uFF1B": "; "
+    });
     var { buildPayload, getMimeType: getMimeType5 } = require_payload();
+    var { collectTargets, dispatchSends, buildDiagTargets, buildSummary } = require_send_dispatcher();
     var sendLog2 = require_send_log();
     function hasRemoteImageReference(content) {
       return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ""));
@@ -520,7 +782,7 @@ ${tokenStr}` : tokenStr;
         if (!activePreset) {
           activePreset = {
             id: `preset-${Date.now()}`,
-            name: "\u9ED8\u8BA4\u9884\u8BBE",
+            name: t9("\u9ED8\u8BA4\u9884\u8BBE"),
             items: []
           };
           presets.push(activePreset);
@@ -550,7 +812,7 @@ ${tokenStr}` : tokenStr;
         }
         const publishPanel = contentEl.createDiv({ cls: "js-bridge-panel" });
         const publishTitleRow = publishPanel.createDiv({ cls: "js-bridge-panel-title-row" });
-        publishTitleRow.createEl("h4", { text: "\u9009\u62E9\u53D1\u5E03\u76EE\u6807", cls: "js-bridge-section-title" });
+        publishTitleRow.createEl("h4", { text: t9("\u9009\u62E9\u53D1\u5E03\u76EE\u6807"), cls: "js-bridge-section-title" });
         this.presetControlsEl = publishTitleRow.createDiv({ cls: "publish-preset-controls" });
         this.renderPresetControls();
         this.simpleTargetsEl = publishPanel.createDiv({ cls: "target-list" });
@@ -559,11 +821,11 @@ ${tokenStr}` : tokenStr;
         this.renderAllTargetSections();
         const btnArea = contentEl.createDiv({ cls: "js-bridge-btn-area" });
         this.sendBtn = btnArea.createEl("button", {
-          text: "\u53D1\u5E03",
+          text: t9("\u53D1\u5E03"),
           cls: "primary-btn simple-send-btn mod-cta"
         });
         this.sendBtn.addEventListener("click", () => this.doSend());
-        this.sendBtn.title = "\u53D1\u5E03\uFF08Ctrl/Cmd+Enter\uFF09";
+        this.sendBtn.title = t9("\u53D1\u5E03\uFF08Ctrl/Cmd+Enter\uFF09");
         this._sendKeyHandler = (e) => {
           if (e.key !== "Enter" || e.repeat) return;
           if (!(e.ctrlKey || e.metaKey)) return;
@@ -733,13 +995,55 @@ ${tokenStr}` : tokenStr;
               break;
             }
           }
-          if (!imageItem) return;
+          if (imageItem) {
+            e.preventDefault();
+            e.stopPropagation();
+            const file = imageItem.getAsFile();
+            if (file) {
+              this.addPastedImage(file, richDiv);
+            }
+            return;
+          }
           e.preventDefault();
-          e.stopPropagation();
-          const file = imageItem.getAsFile();
-          if (!file) return;
-          this.addPastedImage(file, richDiv);
+          const text = e.clipboardData.getData("text/plain");
+          if (!text) return;
+          this.insertTextAtCursor(richDiv, text);
         });
+      }
+      /**
+       * 在当前光标处插入纯文本。
+       * 换行统一规范为单个 \n 字符；编辑器为 pre-wrap，文本节点内的换行可直接渲染。
+       * 注意：execCommand('insertText') 会把 \n 转成 <div> 块级元素，而内容提取
+       * walk() 只认 textContent 和 <br>，会丢换行，因此逐段插入、段间用
+       * insertLineBreak（pre-wrap 下为 \n 文本节点，否则为 <br>，walk() 均识别）。
+       * execCommand 成功时自动触发 input 事件（同步 this.content）；
+       * 失败时兑底用 Range 插入文本节点，并手动 dispatch input 事件。
+       */
+      insertTextAtCursor(richDiv, rawText) {
+        const text = rawText.replace(/\r\n?/g, "\n");
+        const lines = text.split("\n");
+        let ok = true;
+        let insertedAny = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i]) {
+            ok = document.execCommand("insertText", false, lines[i]);
+            if (!ok) break;
+            insertedAny = true;
+          }
+          if (i < lines.length - 1) {
+            ok = document.execCommand("insertLineBreak");
+            if (!ok) break;
+            insertedAny = true;
+          }
+        }
+        if (ok || insertedAny) return;
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          sel.getRangeAt(0).insertNode(document.createTextNode(text));
+        } else {
+          richDiv.appendChild(document.createTextNode(text));
+        }
+        richDiv.dispatchEvent(new Event("input", { bubbles: true }));
       }
       showMentionDropdown(dropdownEl, richDiv, range, matchedText) {
         dropdownEl.empty();
@@ -748,7 +1052,7 @@ ${tokenStr}` : tokenStr;
         const editorRect = richDiv.getBoundingClientRect();
         dropdownEl.style.top = `${rect.bottom - editorRect.top + richDiv.offsetTop + 4}px`;
         dropdownEl.style.left = `${Math.min(Math.max(10, rect.left - editorRect.left + richDiv.offsetLeft), editorRect.width - 220)}px`;
-        dropdownEl.createDiv({ text: "\u9009\u62E9\u56FE\u7247\u5360\u4F4D\u7B26\uFF1A", cls: "mention-dropdown-title" });
+        dropdownEl.createDiv({ text: t9("\u9009\u62E9\u56FE\u7247\u5360\u4F4D\u7B26\uFF1A"), cls: "mention-dropdown-title" });
         this.images.forEach((img) => {
           const tokenName = img.token;
           const item = dropdownEl.createDiv({ cls: "mention-dropdown-item" });
@@ -941,7 +1245,7 @@ ${tokenStr}` : tokenStr;
               input.select();
             }, 20);
             const saveName = async () => {
-              const newName = input.value.trim() || `\u9884\u8BBE${index + 1}`;
+              const newName = input.value.trim() || t9("\u9884\u8BBE{index}", { index: index + 1 });
               preset.name = newName;
               this.editingPresetId = "";
               await this.plugin.saveSettings();
@@ -962,7 +1266,7 @@ ${tokenStr}` : tokenStr;
             text: preset.name,
             cls: `publish-preset-btn${preset.id === activeId ? " active" : ""}`
           });
-          btn.title = "\u70B9\u51FB\u5E94\u7528\u5206\u7EC4\uFF0C\u53CC\u51FB\u91CD\u547D\u540D";
+          btn.title = t9("\u70B9\u51FB\u5E94\u7528\u5206\u7EC4\uFF0C\u53CC\u51FB\u91CD\u547D\u540D");
           btn.addEventListener("click", async () => {
             if (this.editingPresetId) return;
             this.plugin.settings.activePresetId = preset.id;
@@ -984,11 +1288,11 @@ ${tokenStr}` : tokenStr;
             type: "button",
             cls: "publish-preset-action add"
           });
-          addBtn.title = "\u65B0\u589E\u5F53\u524D\u9009\u62E9\u4E3A\u9884\u8BBE\u5206\u7EC4";
+          addBtn.title = t9("\u65B0\u589E\u5F53\u524D\u9009\u62E9\u4E3A\u9884\u8BBE\u5206\u7EC4");
           addBtn.addEventListener("click", async () => {
             const newPreset = {
               id: `preset-${Date.now()}`,
-              name: `\u9884\u8BBE${presets.length + 1}`,
+              name: t9("\u9884\u8BBE{index}", { index: presets.length + 1 }),
               items: this.buildCurrentPresetItems()
             };
             presets.push(newPreset);
@@ -1003,7 +1307,7 @@ ${tokenStr}` : tokenStr;
             type: "button",
             cls: "publish-preset-action remove"
           });
-          removeBtn.title = "\u5220\u9664\u5F53\u524D\u9009\u4E2D\u9884\u8BBE";
+          removeBtn.title = t9("\u5220\u9664\u5F53\u524D\u9009\u4E2D\u9884\u8BBE");
           removeBtn.addEventListener("click", async () => {
             var _a;
             const currentPresets = this.plugin.settings.publishPresets || [];
@@ -1054,7 +1358,7 @@ ${tokenStr}` : tokenStr;
             type: "button",
             cls: `plugin-toggle-block${isSelected ? " active" : ""}`
           });
-          block.createSpan({ cls: "plugin-toggle-title", text: adapter.manifest.name });
+          block.createSpan({ cls: "plugin-toggle-title", text: t9(adapter.manifest.name) });
           block.addEventListener("click", async () => {
             if (this.selectedTargets.has(id)) {
               this.selectedTargets.delete(id);
@@ -1073,7 +1377,7 @@ ${tokenStr}` : tokenStr;
         const accounts = this.plugin.getMastodonAccounts();
         if (accounts.length === 0) return;
         const labelRow = this.mstdSectionEl.createDiv({ cls: "mstd-account-label-row" });
-        labelRow.createEl("div", { text: "Mastodon\uFF1A", cls: "target-sub-label" });
+        labelRow.createEl("div", { text: t9("Mastodon\uFF1A"), cls: "target-sub-label" });
         const accountGrid = this.mstdSectionEl.createDiv({ cls: "target-list mstd-account-list" });
         for (const acct of accounts) {
           const isSelected = this.selectedMastodonAccounts.has(acct.id);
@@ -1105,32 +1409,32 @@ ${tokenStr}` : tokenStr;
         const tgConfig = this.plugin.getAdapterConfig("telegram");
         const channels = Array.isArray(tgConfig == null ? void 0 : tgConfig.channels) ? tgConfig.channels : [];
         const tgLabelRow = this.tgSectionEl.createDiv({ cls: "tg-channel-label-row" });
-        tgLabelRow.createEl("div", { text: "Telegram\uFF1A", cls: "target-sub-label" });
+        tgLabelRow.createEl("div", { text: t9("Telegram\uFF1A"), cls: "target-sub-label" });
         const tgBtnGroup = tgLabelRow.createDiv({ cls: "tg-btn-group" });
         const telegraphBtn = tgBtnGroup.createEl("button", {
           type: "button",
           text: "Telegraph",
           cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === "telegraph" ? " active expanded" : ""}`
         });
-        telegraphBtn.title = "\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001";
+        telegraphBtn.title = t9("\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001");
         const previewToggleBtn = tgBtnGroup.createEl("button", {
           type: "button",
-          text: "\u9884\u89C8",
+          text: t9("\u9884\u89C8"),
           cls: `tg-input-mode-btn tg-preview-btn${this.tgShowLinkPreview ? " active" : ""}`
         });
-        previewToggleBtn.title = this.tgShowLinkPreview ? "\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8" : "\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8";
+        previewToggleBtn.title = this.tgShowLinkPreview ? t9("\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8") : t9("\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8");
         previewToggleBtn.addEventListener("click", () => {
           this.tgShowLinkPreview = !this.tgShowLinkPreview;
           previewToggleBtn.classList.toggle("active", this.tgShowLinkPreview);
-          previewToggleBtn.title = this.tgShowLinkPreview ? "\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8" : "\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8";
+          previewToggleBtn.title = this.tgShowLinkPreview ? t9("\u5F53\u524D\u4E3A\u663E\u793A\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u5173\u95ED\u9884\u89C8") : t9("\u5F53\u524D\u4E3A\u5173\u95ED\u7F51\u5740\u9884\u89C8\uFF0C\u70B9\u51FB\u663E\u793A\u9884\u89C8");
         });
         if (tgConfig.richTextEnabled !== false) {
           const richToggleBtn = tgBtnGroup.createEl("button", {
             type: "button",
-            text: "\u5BCC\u6587\u672C",
+            text: t9("\u5BCC\u6587\u672C"),
             cls: `tg-input-mode-btn${this.tgSendMode === "rich" ? " active" : ""}`
           });
-          richToggleBtn.title = this.tgSendMode === "rich" ? "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C" : "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C";
+          richToggleBtn.title = this.tgSendMode === "rich" ? t9("\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C") : t9("\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C");
           richToggleBtn.addEventListener("click", () => {
             if (this.tgSendMode === "rich") {
               this.tgSendMode = "plain";
@@ -1138,7 +1442,7 @@ ${tokenStr}` : tokenStr;
               this.tgSendMode = "rich";
             }
             richToggleBtn.classList.toggle("active", this.tgSendMode === "rich");
-            richToggleBtn.title = this.tgSendMode === "rich" ? "\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C" : "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C";
+            richToggleBtn.title = this.tgSendMode === "rich" ? t9("\u5F53\u524D\u4E3A\u5BCC\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u7EAF\u6587\u672C") : t9("\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C");
             telegraphBtn.classList.remove("active", "expanded");
             this._collapseTelegraphBtn(telegraphBtn);
           });
@@ -1169,7 +1473,7 @@ ${tokenStr}` : tokenStr;
         if (channels.length === 0) {
           this.tgSectionEl.createDiv({
             cls: "target-sub",
-            text: "\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u3002"
+            text: t9("\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u3002")
           });
           return;
         }
@@ -1220,11 +1524,11 @@ ${tokenStr}` : tokenStr;
           this.telegraphTitle = this._getDefaultTelegraphTitle();
         }
         btn.empty();
-        const prefix = btn.createSpan({ cls: "tg-telegraph-prefix", text: "Telegraph\uFF1A" });
-        prefix.title = "\u70B9\u51FB\u6B64\u5904\u5173\u95ED Telegraph \u53D1\u9001";
+        const prefix = btn.createSpan({ cls: "tg-telegraph-prefix", text: t9("Telegraph\uFF1A") });
+        prefix.title = t9("\u70B9\u51FB\u6B64\u5904\u5173\u95ED Telegraph \u53D1\u9001");
         const titleSpan = btn.createSpan({ cls: "tg-telegraph-title", text: this.telegraphTitle });
-        titleSpan.title = "\u53CC\u51FB\u7F16\u8F91\u6807\u9898";
-        btn.title = "Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u53CC\u51FB\u6807\u9898\u7F16\u8F91";
+        titleSpan.title = t9("\u53CC\u51FB\u7F16\u8F91\u6807\u9898");
+        btn.title = t9("Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u53CC\u51FB\u6807\u9898\u7F16\u8F91");
       }
       /**
        * 收起 Telegraph 按钮：恢复为 "Telegraph"
@@ -1232,7 +1536,7 @@ ${tokenStr}` : tokenStr;
       _collapseTelegraphBtn(btn) {
         btn.empty();
         btn.textContent = "Telegraph";
-        btn.title = "\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001";
+        btn.title = t9("\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001");
       }
       /**
        * 双击编辑 Telegraph 标题
@@ -1271,7 +1575,7 @@ ${tokenStr}` : tokenStr;
       }
       _resetSendButton() {
         if (!this.sendBtn) return;
-        this.sendBtn.textContent = "\u53D1\u5E03";
+        this.sendBtn.textContent = t9("\u53D1\u5E03");
         this.sendBtn.classList.remove("mod-warning");
         this.sendBtn.removeAttribute("title");
       }
@@ -1289,7 +1593,7 @@ ${tokenStr}` : tokenStr;
         this._warningConfirmActive = true;
         this._warningKey = messages.join("\n");
         if (this.sendBtn) {
-          this.sendBtn.textContent = messages.length === 1 ? `\u26A0\uFE0F ${messages[0]}` : `\u26A0\uFE0F ${messages.length} \u9879\u9884\u8B66\uFF0C\u786E\u8BA4\u53D1\u9001`;
+          this.sendBtn.textContent = messages.length === 1 ? `\u26A0\uFE0F ${messages[0]}` : t9("\u26A0\uFE0F {count} \u9879\u9884\u8B66\uFF0C\u786E\u8BA4\u53D1\u9001", { count: messages.length });
           this.sendBtn.title = messages.join("\n");
           this.sendBtn.classList.add("mod-warning");
         }
@@ -1336,10 +1640,10 @@ ${tokenStr}` : tokenStr;
         try {
           const ok = await sendLog2.writeSnapshot({ plugin: this.plugin }, entry);
           if (!ok) {
-            new Notice7("\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A\u65E0\u6CD5\u5199\u5165\u5FEB\u7167", 1e4);
+            new Notice7(t9("\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A\u65E0\u6CD5\u5199\u5165\u5FEB\u7167"), 1e4);
           }
         } catch (err) {
-          new Notice7("\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A" + ((err == null ? void 0 : err.message) || err), 1e4);
+          new Notice7(t9("\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A{error}", { error: (err == null ? void 0 : err.message) || err }), 1e4);
         }
       }
       /**
@@ -1383,32 +1687,21 @@ ${tokenStr}` : tokenStr;
       }
       async _doSendInternal() {
         const plugin = this.plugin;
-        const targetAdapters = Array.from(this.selectedTargets).filter(
-          (adapterId) => adapterId !== "telegram" && adapterId !== "mastodon" && plugin.adapterRegistry.has(adapterId) && plugin.isAdapterEnabled(adapterId)
-        );
-        let tgChannels = [];
-        if (plugin.adapterRegistry.has("telegram") && plugin.isAdapterEnabled("telegram")) {
-          const tgConfig = plugin.getAdapterConfig("telegram");
-          const validIds = new Set((Array.isArray(tgConfig.channels) ? tgConfig.channels : []).map((ch) => String(ch.id)));
-          const staleIds = Array.from(this.selectedTgChannels).filter((id) => !validIds.has(String(id)));
-          if (staleIds.length > 0) {
-            new Notice7(`\u4EE5\u4E0B Telegram \u9891\u9053\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5DF2\u81EA\u52A8\u8DF3\u8FC7\uFF1A${staleIds.join("\u3001")}`, 8e3);
-          }
-          tgChannels = Array.from(this.selectedTgChannels).filter((id) => validIds.has(String(id)));
-        }
-        if (tgChannels.length > 0) {
-          targetAdapters.push("telegram");
-        }
-        const mstdAccountIds = plugin.isAdapterEnabled("mastodon") ? Array.from(this.selectedMastodonAccounts).filter((id) => plugin.getMastodonAccount(id)) : [];
-        if (mstdAccountIds.length > 0) {
-          targetAdapters.push("mastodon");
+        const { targetAdapters, tgChannels, mstdAccountIds, staleTgChannelIds } = collectTargets({
+          selectedTargets: this.selectedTargets,
+          selectedTgChannels: this.selectedTgChannels,
+          selectedMastodonAccounts: this.selectedMastodonAccounts,
+          plugin
+        });
+        if (staleTgChannelIds.length > 0) {
+          new Notice7(t9("\u4EE5\u4E0B Telegram \u9891\u9053\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5DF2\u81EA\u52A8\u8DF3\u8FC7\uFF1A{channels}", { channels: staleTgChannelIds.join(t9("\u3001")) }), 8e3);
         }
         if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
-          new Notice7("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807");
+          new Notice7(t9("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u53D1\u9001\u76EE\u6807"));
           await this._writeSendLog(this._buildLogEntryBase({
             dispatched: false,
             failStage: "no-target",
-            failReason: "\u672A\u9009\u62E9\u4EFB\u4F55\u53D1\u9001\u76EE\u6807",
+            failReason: t9("\u672A\u9009\u62E9\u4EFB\u4F55\u53D1\u9001\u76EE\u6807"),
             images: await this._collectLogImages(this.content),
             diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
           }));
@@ -1423,21 +1716,31 @@ ${tokenStr}` : tokenStr;
           if (img && img.blob) return Promise.resolve(img.blob.arrayBuffer());
           return vaultReadImageFile(vaultPath);
         };
+        const statAttachment = (vaultPath) => {
+          var _a;
+          const img = images.find((i) => i.vaultPath === vaultPath && i.blob);
+          if (img && img.blob) return img.blob.size || null;
+          const file = plugin.app.vault.getAbstractFileByPath(vaultPath);
+          if (!file || Array.isArray(file.children)) return null;
+          const size = Number((_a = file.stat) == null ? void 0 : _a.size);
+          return Number.isFinite(size) && size > 0 ? size : null;
+        };
         const payload = buildPayload({
           content: rawContent,
           richDraft: { ...this.richDraft, images },
           title: this.notionTitle || "",
-          readAttachment
+          readAttachment,
+          statAttachment
         });
         const hasSendableContent = Boolean(
           payload.plainText.trim() || payload.attachments.length > 0 || hasRemoteImageReference(payload.content)
         );
         if (!hasSendableContent) {
-          new Notice7("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002");
+          new Notice7(t9("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF0C\u8BF7\u4FDD\u7559\u6587\u5B57\u6216\u6709\u6548\u56FE\u7247\u3002"));
           await this._writeSendLog(this._buildLogEntryBase({
             dispatched: false,
             failStage: "empty-content",
-            failReason: "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9",
+            failReason: t9("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9"),
             images: await this._collectLogImages(this.content),
             diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
           }));
@@ -1456,11 +1759,11 @@ ${tokenStr}` : tokenStr;
         try {
           capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
         } catch (error) {
-          new Notice7(`\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          new Notice7(t9("\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }), 1e4);
           await this._writeSendLog(this._buildLogEntryBase({
             dispatched: false,
             failStage: "attachment-warnings",
-            failReason: `\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`,
+            failReason: t9("\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }),
             images: await this._collectLogImages(this.content),
             diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
           }));
@@ -1498,7 +1801,7 @@ ${tokenStr}` : tokenStr;
           }
           validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
-          new Notice7(`\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A${error.message || String(error)}`, 1e4);
+          new Notice7(t9("\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }), 1e4);
           await this._writeSendLog(this._buildLogEntryBase({
             dispatched: false,
             failStage: "validate-exception",
@@ -1513,14 +1816,14 @@ ${tokenStr}` : tokenStr;
           return;
         }
         if (validation.warnings.length > 0) {
-          new Notice7(`\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A${validation.warnings.join("\uFF1B")}`, 1e4);
+          new Notice7(t9("\u53D1\u9001\u9884\u68C0\u63D0\u793A\uFF1A{detail}", { detail: validation.warnings.join(t9("\uFF1B")) }), 1e4);
         }
         if (validation.errors.length > 0) {
-          new Notice7(`\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A${validation.errors.join("\uFF1B")}`, 1e4);
+          new Notice7(t9("\u53D1\u9001\u9884\u68C0\u672A\u901A\u8FC7\uFF1A{detail}", { detail: validation.errors.join(t9("\uFF1B")) }), 1e4);
           await this._writeSendLog(this._buildLogEntryBase({
             dispatched: false,
             failStage: "validate-errors",
-            failReason: validation.errors.join("\uFF1B"),
+            failReason: validation.errors.join(t9("\uFF1B")),
             images: await this._collectLogImages(this.content),
             diagnostics: {
               targets: [],
@@ -1531,90 +1834,20 @@ ${tokenStr}` : tokenStr;
           return;
         }
         this.close();
-        new Notice7("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D...", 3e3);
+        new Notice7(t9("\u{1F680} \u5DF2\u63D0\u4EA4\u540E\u53F0\u53D1\u9001\u4E2D..."), 3e3);
         const dispatchStartedAt = (/* @__PURE__ */ new Date()).toISOString();
         (async () => {
-          const results = {};
-          for (const adapterId of targetAdapters) {
-            if (adapterId === "telegram") continue;
-            if (adapterId === "mastodon") continue;
-            try {
-              const result = await plugin.executeAdapter(
-                adapterId,
-                payload,
-                targetConfigOverrides[adapterId] || {}
-              );
-              results[adapterId] = result;
-            } catch (error) {
-              results[adapterId] = { success: false, error: error.message };
-            }
-          }
-          if (tgChannels.length > 0) {
-            try {
-              const result = await plugin.executeAdapter("telegram", payload, targetConfigOverrides.telegram);
-              results["telegram"] = result;
-            } catch (error) {
-              results["telegram"] = { success: false, error: error.message };
-            }
-          }
-          for (const acctId of mstdAccountIds) {
-            const acct = plugin.getMastodonAccount(acctId);
-            if (!acct) continue;
-            const displayLabel = acct.label || acct.serverUrl || acctId;
-            const key = `mastodon:${acctId}`;
-            try {
-              const result = await plugin.executeAdapter("mastodon", payload, {
-                serverUrl: acct.serverUrl,
-                accessToken: acct.accessToken,
-                visibility: acct.visibility || "public"
-              });
-              result.displayLabel = displayLabel;
-              results[key] = result;
-            } catch (error) {
-              results[key] = { success: false, error: error.message, displayLabel };
-            }
-          }
+          const results = await dispatchSends({
+            plugin,
+            payload,
+            targetAdapters,
+            tgChannels,
+            mstdAccountIds,
+            targetConfigOverrides
+          });
           const anyFailure = Object.values(results).some((r) => !r.success && !r.skipped);
           try {
-            const diagTargets = [];
-            for (const adapterId of targetAdapters) {
-              if (adapterId === "telegram" || adapterId === "mastodon") continue;
-              const result = results[adapterId];
-              if (!result) continue;
-              diagTargets.push({
-                kind: "adapter",
-                id: adapterId,
-                label: adapterId,
-                success: Boolean(result.success) && !result.skipped,
-                error: result.error || null,
-                durationMs: null
-              });
-            }
-            const tgResult = results["telegram"];
-            if (tgResult && Array.isArray(tgResult.results)) {
-              for (const channel of tgResult.results) {
-                diagTargets.push({
-                  kind: "telegram-channel",
-                  id: channel.channelId,
-                  label: `telegram ${channel.channelId}`,
-                  success: Boolean(channel.success),
-                  error: channel.error || null,
-                  durationMs: null
-                });
-              }
-            }
-            for (const acctId of mstdAccountIds) {
-              const result = results[`mastodon:${acctId}`];
-              if (!result) continue;
-              diagTargets.push({
-                kind: "mastodon-account",
-                id: acctId,
-                label: result.displayLabel || acctId,
-                success: Boolean(result.success) && !result.skipped,
-                error: result.error || null,
-                durationMs: null
-              });
-            }
+            const diagTargets = buildDiagTargets({ targetAdapters, mstdAccountIds, results });
             await this._writeSendLog(this._buildLogEntryBase({
               dispatched: true,
               failStage: null,
@@ -1629,21 +1862,11 @@ ${tokenStr}` : tokenStr;
             }));
           } catch (e) {
           }
-          const summary = Object.entries(results).flatMap(([id, result]) => {
-            const channelResults = Array.isArray(result.results) ? result.results : null;
-            if (id === "telegram" && channelResults) {
-              return channelResults.map((channel) => {
-                return `Telegram ${channel.channelId}: ${channel.success ? "\u6210\u529F" : `\u5931\u8D25(${channel.error || "\u672A\u77E5\u9519\u8BEF"})`}`;
-              });
-            }
-            const displayId = result.displayLabel || id;
-            const warn = Array.isArray(result.warnings) && result.warnings.length > 0 ? `\uFF08${result.warnings.join("\uFF1B")}\uFF09` : "";
-            return result.success ? result.skipped ? `${displayId}: \u8DF3\u8FC7` : `${displayId}: \u6210\u529F${warn}` : `${displayId}: \u5931\u8D25(${result.error || "\u672A\u77E5\u9519\u8BEF"})`;
-          }).join("\uFF1B\n");
+          const summary = buildSummary(results);
           if (anyFailure) {
-            new Notice7(`\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A${summary}`, 2e4);
+            new Notice7(t9("\u274C \u53D1\u9001\u5B58\u5728\u5931\u8D25\uFF1A{summary}", { summary }), 2e4);
           } else {
-            new Notice7(`\u2705 \u53D1\u9001\u6210\u529F\uFF1A${summary}`, 6e3);
+            new Notice7(t9("\u2705 \u53D1\u9001\u6210\u529F\uFF1A{summary}", { summary }), 6e3);
           }
         })().finally(() => {
           for (const image of images) {
@@ -1654,16 +1877,16 @@ ${tokenStr}` : tokenStr;
         });
       }
       onClose() {
-        this._clearAttachmentWarningState();
-        if (this._sendKeyHandler) {
-          this.modalEl.removeEventListener("keydown", this._sendKeyHandler);
-          this._sendKeyHandler = null;
-        }
         this.hideImagePreview();
         this._imageGridRenderId += 1;
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
         this.images = [];
+        this._clearAttachmentWarningState();
+        if (this._sendKeyHandler) {
+          this.modalEl.removeEventListener("keydown", this._sendKeyHandler);
+          this._sendKeyHandler = null;
+        }
         this.contentEl.empty();
       }
     };
@@ -1675,6 +1898,56 @@ ${tokenStr}` : tokenStr;
 var require_settings_tab = __commonJS({
   "src/ui/settings-tab.js"(exports2, module2) {
     var { PluginSettingTab, Setting: Setting6, Notice: Notice7, Platform: Platform3, requestUrl: requestUrl2 } = require("obsidian");
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A{error}": "Failed to save settings: {error}",
+      "{action}\u5931\u8D25\uFF1A{error}": "{action} failed: {error}",
+      "Journal Sync": "Journal Sync",
+      "\u4E00\u952E\u5C06\u7B14\u8BB0\u53D1\u9001\u81F3\u5176\u5B83\u5E73\u53F0": "Send notes to other platforms in one click",
+      "\u4E3B\u8BBE\u7F6E": "Main settings",
+      "\u63D2\u4EF6\u8BBE\u7F6E": "Plugin settings",
+      "\u7BA1\u7406\u65E5\u8BB0\u521B\u5EFA\u548C\u53D1\u9001\u65F6\u901A\u7528\u7684\u884C\u4E3A\u3002": "Manage behaviors shared by journal creation and sending.",
+      "\u754C\u9762\u8BED\u8A00": "Interface language",
+      "\u9009\u62E9\u63D2\u4EF6\u754C\u9762\u8BED\u8A00\uFF1B\u8DDF\u968F Obsidian \u65F6\u81EA\u52A8\u5339\u914D\u5E94\u7528\u8BED\u8A00\u3002": 'Choose the interface language. "Follow Obsidian" matches the app language automatically.',
+      "\u8DDF\u968F Obsidian\uFF08\u81EA\u52A8\uFF09": "Follow Obsidian (auto)",
+      "\u4E2D\u6587": "Chinese",
+      "\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84": "Journal folder path",
+      "Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09": "Relative path inside the Obsidian vault (e.g. Journal/2024)",
+      "\u65E5\u8BB0": "Journal",
+      "\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219": "Journal filename rule",
+      "\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0": "Supports YYYY MM DD placeholders, e.g. YYYY-MM-DD Journal",
+      "YYYY-MM-DD \u65E5\u8BB0": "YYYY-MM-DD Journal",
+      "\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247": "Auto-upload local images",
+      "\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002": "Automatically read and send local images referenced in the vault when publishing.",
+      "\u53D1\u9001\u8303\u56F4\uFF08\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF09": "Send scope (when no text is selected)",
+      "\u4F7F\u7528\u53D1\u9001\u547D\u4EE4\u4E14\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF0C\u53D1\u9001\u5149\u6807\u6240\u5728\u4F4D\u7F6E\u7684\u5185\u5BB9\u8303\u56F4\u3002\u9009\u62E9\u4EFB\u610F\u6807\u9898\u7EA7\u522B\u65F6\uFF0C\u4E0D\u5305\u542B\u6807\u9898\u672C\u8EAB\u3002": "What to send when the send command runs with no selection. Heading levels exclude the heading itself.",
+      "\u6574\u4E2A\u9875\u9762": "Entire page",
+      "\u65B0\u5EFA\u6807\u9898\u7EA7\u522B": "New-entry heading level",
+      "\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002": "Heading level used for the timestamp entry created by the new-journal command.",
+      "\u65B0\u5EFA\u6807\u9898\u683C\u5F0F": "New-entry heading format",
+      "\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM": "Supports H M S placeholders (H=hour, M=minute, S=second), e.g. HH:MM:SS or HH:MM",
+      "\u9009\u62E9\u53D1\u5E03\u5E73\u53F0\uFF0C\u914D\u7F6E\u8FDE\u63A5\u4FE1\u606F\u4E0E\u53D1\u9001\u884C\u4E3A\u3002": "Choose publish platforms and configure connection info and send behavior.",
+      "{name} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A{error}": "Failed to render {name} settings: {error}",
+      "\u542F\u7528{label}": "Enable {label}",
+      "\u6267\u884C": "Run",
+      "\u64CD\u4F5C\u5B8C\u6210": "Action completed",
+      "\u64CD\u4F5C": "Action",
+      "{name}\u7EA7\u6807\u9898": "Heading level {name}",
+      "\u4E00": "1",
+      "\u4E8C": "2",
+      "\u4E09": "3",
+      "\u56DB": "4",
+      "\u4E94": "5",
+      "\u516D": "6",
+      "\u5FAE\u535A": "Weibo",
+      "Flomo": "Flomo",
+      "Telegram": "Telegram",
+      "Mastodon": "Mastodon",
+      "Misskey": "Misskey",
+      "Bluesky": "Bluesky",
+      "Threads": "Threads",
+      "Notion": "Notion"
+    });
     var JournalSyncSettingTab2 = class extends PluginSettingTab {
       constructor(app, plugin) {
         super(app, plugin);
@@ -1690,16 +1963,16 @@ var require_settings_tab = __commonJS({
         const { containerEl } = this;
         containerEl.empty();
         containerEl.addClass("js-bridge-settings");
-        containerEl.createEl("h2", { text: "Journal Sync" });
+        containerEl.createEl("h2", { text: t9("Journal Sync") });
         containerEl.createEl("p", {
           cls: "js-bridge-settings-desc",
-          text: "\u4E00\u952E\u5C06\u7B14\u8BB0\u53D1\u9001\u81F3\u5176\u5B83\u5E73\u53F0"
+          text: t9("\u4E00\u952E\u5C06\u7B14\u8BB0\u53D1\u9001\u81F3\u5176\u5B83\u5E73\u53F0")
         });
         const layoutEl = containerEl.createDiv({ cls: "js-bridge-settings-layout" });
         const navEl = layoutEl.createDiv({ cls: "js-bridge-settings-nav" });
         const contentEl = layoutEl.createDiv({ cls: "js-bridge-settings-content" });
-        this._addNavButton(navEl, "main", "\u4E3B\u8BBE\u7F6E");
-        this._addNavButton(navEl, "plugins", "\u63D2\u4EF6\u8BBE\u7F6E");
+        this._addNavButton(navEl, "main", t9("\u4E3B\u8BBE\u7F6E"));
+        this._addNavButton(navEl, "plugins", t9("\u63D2\u4EF6\u8BBE\u7F6E"));
         if (this.activeSection === "main") {
           this._renderMainSettings(contentEl);
         } else {
@@ -1740,7 +2013,7 @@ var require_settings_tab = __commonJS({
         if (!this._savePending) return;
         this._savePending = false;
         this._savePromise = this.plugin.saveSettings().catch((error) => {
-          new Notice7(`\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A${error.message || String(error)}`);
+          new Notice7(t9("\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }));
         });
         await this._savePromise;
         this._savePromise = null;
@@ -1756,28 +2029,39 @@ var require_settings_tab = __commonJS({
         });
       }
       _renderMainSettings(containerEl) {
-        containerEl.createEl("h3", { text: "\u4E3B\u8BBE\u7F6E", cls: "js-bridge-section-heading" });
+        containerEl.createEl("h3", { text: t9("\u4E3B\u8BBE\u7F6E"), cls: "js-bridge-section-heading" });
         containerEl.createEl("p", {
-          text: "\u7BA1\u7406\u65E5\u8BB0\u521B\u5EFA\u548C\u53D1\u9001\u65F6\u901A\u7528\u7684\u884C\u4E3A\u3002",
+          text: t9("\u7BA1\u7406\u65E5\u8BB0\u521B\u5EFA\u548C\u53D1\u9001\u65F6\u901A\u7528\u7684\u884C\u4E3A\u3002"),
           cls: "js-bridge-settings-section-desc"
         });
-        new Setting6(containerEl).setName("\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84").setDesc("Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09").addText((text) => text.setPlaceholder("\u65E5\u8BB0").setValue(this.plugin.settings.diaryPath || "").onChange((value) => {
+        new Setting6(containerEl).setName(t9("\u754C\u9762\u8BED\u8A00")).setDesc(t9("\u9009\u62E9\u63D2\u4EF6\u754C\u9762\u8BED\u8A00\uFF1B\u8DDF\u968F Obsidian \u65F6\u81EA\u52A8\u5339\u914D\u5E94\u7528\u8BED\u8A00\u3002")).addDropdown((dropdown) => {
+          dropdown.addOption("auto", t9("\u8DDF\u968F Obsidian\uFF08\u81EA\u52A8\uFF09"));
+          dropdown.addOption("zh", t9("\u4E2D\u6587"));
+          dropdown.addOption("en", t9("English"));
+          dropdown.setValue(this.plugin.settings.uiLanguage || "auto").onChange(async (value) => {
+            this.plugin.settings.uiLanguage = value;
+            await this.plugin.saveSettings();
+            this.plugin._applyLanguage();
+            await this.display();
+          });
+        });
+        new Setting6(containerEl).setName(t9("\u65E5\u8BB0\u5B58\u653E\u8DEF\u5F84")).setDesc(t9("Obsidian Vault \u5185\u7684\u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 \u65E5\u8BB0/2024\uFF09")).addText((text) => text.setPlaceholder(t9("\u65E5\u8BB0")).setValue(this.plugin.settings.diaryPath || "").onChange((value) => {
           this._scheduleSettingsSave(() => {
             this.plugin.settings.diaryPath = value.trim();
           });
         }));
-        new Setting6(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219").setDesc("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0").addText((text) => text.setPlaceholder("YYYY-MM-DD \u65E5\u8BB0").setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange((value) => {
+        new Setting6(containerEl).setName(t9("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219")).setDesc(t9("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0")).addText((text) => text.setPlaceholder(t9("YYYY-MM-DD \u65E5\u8BB0")).setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange((value) => {
           this._scheduleSettingsSave(() => {
             this.plugin.settings.filenameRule = value.trim() || "YYYY-MM-DD \u65E5\u8BB0";
           });
         }));
-        new Setting6(containerEl).setName("\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247").setDesc("\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async (value) => {
+        new Setting6(containerEl).setName(t9("\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247")).setDesc(t9("\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002")).addToggle((toggle) => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async (value) => {
           this.plugin.settings.autoUploadImages = value;
           await this.plugin.saveSettings();
         }));
-        new Setting6(containerEl).setName("\u53D1\u9001\u8303\u56F4\uFF08\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF09").setDesc("\u4F7F\u7528\u53D1\u9001\u547D\u4EE4\u4E14\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF0C\u53D1\u9001\u5149\u6807\u6240\u5728\u4F4D\u7F6E\u7684\u5185\u5BB9\u8303\u56F4\u3002\u9009\u62E9\u4EFB\u610F\u6807\u9898\u7EA7\u522B\u65F6\uFF0C\u4E0D\u5305\u542B\u6807\u9898\u672C\u8EAB\u3002").addDropdown((dropdown) => {
+        new Setting6(containerEl).setName(t9("\u53D1\u9001\u8303\u56F4\uFF08\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF09")).setDesc(t9("\u4F7F\u7528\u53D1\u9001\u547D\u4EE4\u4E14\u672A\u9009\u4E2D\u6587\u672C\u65F6\uFF0C\u53D1\u9001\u5149\u6807\u6240\u5728\u4F4D\u7F6E\u7684\u5185\u5BB9\u8303\u56F4\u3002\u9009\u62E9\u4EFB\u610F\u6807\u9898\u7EA7\u522B\u65F6\uFF0C\u4E0D\u5305\u542B\u6807\u9898\u672C\u8EAB\u3002")).addDropdown((dropdown) => {
           var _a;
-          dropdown.addOption("0", "\u6574\u4E2A\u9875\u9762");
+          dropdown.addOption("0", t9("\u6574\u4E2A\u9875\u9762"));
           for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
           dropdown.setValue(String((_a = this.plugin.settings.sendScope) != null ? _a : 2)).onChange(async (value) => {
             this.plugin.settings.sendScope = Number(value);
@@ -1793,7 +2077,7 @@ var require_settings_tab = __commonJS({
             await this.display();
           });
         });
-        new Setting6(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u7EA7\u522B").setDesc("\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002").addDropdown((dropdown) => {
+        new Setting6(containerEl).setName(t9("\u65B0\u5EFA\u6807\u9898\u7EA7\u522B")).setDesc(t9("\u4F7F\u7528\u65B0\u5EFA\u65E5\u8BB0\u547D\u4EE4\u65F6\uFF0C\u65F6\u95F4\u6233\u8BB0\u5F55\u4F7F\u7528\u7684\u6807\u9898\u7EA7\u522B\u3002")).addDropdown((dropdown) => {
           var _a;
           for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
           dropdown.setValue(String((_a = this.plugin.settings.diaryTimestampLevel) != null ? _a : 2)).onChange(async (value) => {
@@ -1801,7 +2085,7 @@ var require_settings_tab = __commonJS({
             await this.plugin.saveSettings();
           });
         });
-        new Setting6(containerEl).setName("\u65B0\u5EFA\u6807\u9898\u683C\u5F0F").setDesc("\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM").addText((text) => text.setPlaceholder("HH:MM:SS").setValue(this.plugin.settings.diaryHeadingRule || "HH:MM:SS").onChange((value) => {
+        new Setting6(containerEl).setName(t9("\u65B0\u5EFA\u6807\u9898\u683C\u5F0F")).setDesc(t9("\u652F\u6301 H M S \u5360\u4F4D\u7B26\uFF08H=\u65F6\u3001M=\u5206\u3001S=\u79D2\uFF09\uFF0C\u4F8B\u5982 HH:MM:SS \u6216 HH:MM")).addText((text) => text.setPlaceholder("HH:MM:SS").setValue(this.plugin.settings.diaryHeadingRule || "HH:MM:SS").onChange((value) => {
           this._scheduleSettingsSave(() => {
             this.plugin.settings.diaryHeadingRule = value.trim() || "HH:MM:SS";
           });
@@ -1822,9 +2106,9 @@ var require_settings_tab = __commonJS({
         return adapters.slice().sort((a, b) => orderOf(a) - orderOf(b));
       }
       _renderPluginSettings(containerEl) {
-        containerEl.createEl("h3", { text: "\u63D2\u4EF6\u8BBE\u7F6E", cls: "js-bridge-section-heading" });
+        containerEl.createEl("h3", { text: t9("\u63D2\u4EF6\u8BBE\u7F6E"), cls: "js-bridge-section-heading" });
         containerEl.createEl("p", {
-          text: "\u9009\u62E9\u53D1\u5E03\u5E73\u53F0\uFF0C\u914D\u7F6E\u8FDE\u63A5\u4FE1\u606F\u4E0E\u53D1\u9001\u884C\u4E3A\u3002",
+          text: t9("\u9009\u62E9\u53D1\u5E03\u5E73\u53F0\uFF0C\u914D\u7F6E\u8FDE\u63A5\u4FE1\u606F\u4E0E\u53D1\u9001\u884C\u4E3A\u3002"),
           cls: "js-bridge-settings-section-desc"
         });
         const adapters = this._getSortedAdapters();
@@ -1837,7 +2121,7 @@ var require_settings_tab = __commonJS({
         const tabsEl = containerEl.createDiv({ cls: "js-bridge-plugin-tabs" });
         for (const adapter2 of adapters) {
           const id = adapter2.manifest.id;
-          const button = tabsEl.createEl("button", { text: adapter2.manifest.name || id, cls: "js-bridge-plugin-tab" });
+          const button = tabsEl.createEl("button", { text: t9(adapter2.manifest.name) || id, cls: "js-bridge-plugin-tab" });
           button.toggleClass("is-active", this.activePlugin === id);
           button.addEventListener("click", () => {
             this.activePlugin = id;
@@ -1851,7 +2135,7 @@ var require_settings_tab = __commonJS({
           return ((_a = item == null ? void 0 : item.manifest) == null ? void 0 : _a.id) === this.activePlugin;
         });
         if (!adapter) return;
-        this._addEnabledToggle(panelEl, adapter.manifest.id, adapter.manifest.name || adapter.manifest.id);
+        this._addEnabledToggle(panelEl, adapter.manifest.id, t9(adapter.manifest.name) || adapter.manifest.id);
         if (!this.plugin.isAdapterEnabled(adapter.manifest.id)) return;
         try {
           if (typeof adapter.renderSettings === "function") {
@@ -1860,11 +2144,14 @@ var require_settings_tab = __commonJS({
             this._renderGenericAdapterSettings(panelEl, adapter);
           }
         } catch (error) {
-          new Notice7(`${adapter.manifest.name || adapter.manifest.id} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
+          new Notice7(t9("{name} \u8BBE\u7F6E\u6E32\u67D3\u5931\u8D25\uFF1A{error}", {
+            name: t9(adapter.manifest.name || adapter.manifest.id),
+            error: (error == null ? void 0 : error.message) || String(error)
+          }));
         }
       }
       _addEnabledToggle(containerEl, id, label) {
-        new Setting6(containerEl).setName(`\u542F\u7528 ${label}`).addToggle((toggle) => toggle.setValue(this.plugin.isAdapterEnabled(id)).onChange(async (value) => {
+        new Setting6(containerEl).setName(t9("\u542F\u7528{label}", { label })).addToggle((toggle) => toggle.setValue(this.plugin.isAdapterEnabled(id)).onChange(async (value) => {
           this.plugin.setAdapterEnabled(id, value);
           await this.plugin.saveSettings();
           void this.display().catch(() => {
@@ -1926,13 +2213,13 @@ var require_settings_tab = __commonJS({
         var _a;
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
-        const setting = new Setting6(panelEl).setName(field.label || field.key);
+        const setting = new Setting6(panelEl).setName(t9(field.label || field.key));
         const desc = (_a = field.desc) != null ? _a : field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t9(desc));
         setting.addText((text) => {
           var _a2;
           if (isPassword) text.inputEl.type = "password";
-          if (field.placeholder) text.setPlaceholder(field.placeholder);
+          if (field.placeholder) text.setPlaceholder(t9(field.placeholder));
           text.setValue(String((_a2 = current != null ? current : field.default) != null ? _a2 : "")).onChange((value) => {
             ctx.scheduleConfigSave({ [field.key]: value.trim() });
           });
@@ -1942,9 +2229,9 @@ var require_settings_tab = __commonJS({
         var _a;
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
-        const setting = new Setting6(panelEl).setName(field.label || field.key);
+        const setting = new Setting6(panelEl).setName(t9(field.label || field.key));
         const desc = (_a = field.desc) != null ? _a : field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t9(desc));
         setting.addToggle((toggle) => {
           var _a2;
           return toggle.setValue(Boolean((_a2 = current != null ? current : field.default) != null ? _a2 : false)).onChange(async (value) => {
@@ -1957,14 +2244,14 @@ var require_settings_tab = __commonJS({
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
         const options = Array.isArray(field.options) ? field.options : [];
-        const setting = new Setting6(panelEl).setName(field.label || field.key);
+        const setting = new Setting6(panelEl).setName(t9(field.label || field.key));
         const desc = (_a = field.desc) != null ? _a : field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t9(desc));
         setting.addDropdown((dropdown) => {
           var _a2, _b;
           for (const option of options) {
             if (!option) continue;
-            dropdown.addOption(option.value, (_a2 = option.label) != null ? _a2 : option.value);
+            dropdown.addOption(option.value, t9((_a2 = option.label) != null ? _a2 : option.value));
           }
           dropdown.setValue(String((_b = current != null ? current : field.default) != null ? _b : "")).onChange(async (value) => {
             await ctx.saveConfig({ [field.key]: value });
@@ -1974,22 +2261,22 @@ var require_settings_tab = __commonJS({
       _renderGenericAction(panelEl, id, adapter, field, ctx) {
         var _a;
         if (!field.action || typeof adapter.runAction !== "function") return;
-        const buttonText = field.buttonLabel || field.label;
-        const setting = new Setting6(panelEl).setName(field.label || "");
+        const buttonText = t9(field.buttonLabel || field.label);
+        const setting = new Setting6(panelEl).setName(t9(field.label || ""));
         const desc = (_a = field.desc) != null ? _a : field.description;
-        if (desc) setting.setDesc(desc);
-        setting.addButton((btn) => btn.setButtonText(buttonText || "\u6267\u884C").onClick(async () => {
-          if (field.busyLabel) btn.setButtonText(field.busyLabel);
+        if (desc) setting.setDesc(t9(desc));
+        setting.addButton((btn) => btn.setButtonText(buttonText || t9("\u6267\u884C")).onClick(async () => {
+          if (field.busyLabel) btn.setButtonText(t9(field.busyLabel));
           btn.disabled = true;
           try {
             const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl, { mobile: Platform3.isMobile });
-            new Notice7((result == null ? void 0 : result.message) || field.successMessage || "\u64CD\u4F5C\u5B8C\u6210");
+            new Notice7((result == null ? void 0 : result.message) || t9("\u64CD\u4F5C\u5B8C\u6210"));
             void this.display().catch(() => {
             });
           } catch (error) {
-            new Notice7(`${buttonText || "\u64CD\u4F5C"}\u5931\u8D25\uFF1A${(error == null ? void 0 : error.message) || String(error)}`);
+            new Notice7(t9("{action}\u5931\u8D25\uFF1A{error}", { action: buttonText || t9("\u64CD\u4F5C"), error: (error == null ? void 0 : error.message) || String(error) }));
           } finally {
-            btn.setButtonText(buttonText || "\u6267\u884C");
+            btn.setButtonText(buttonText || t9("\u6267\u884C"));
             btn.disabled = false;
           }
         }));
@@ -1998,13 +2285,13 @@ var require_settings_tab = __commonJS({
         var _a;
         const desc = (_a = field.desc) != null ? _a : field.description;
         if (!field.label && !desc) return;
-        const setting = new Setting6(panelEl).setName(field.label || "");
-        if (desc) setting.setDesc(desc);
+        const setting = new Setting6(panelEl).setName(t9(field.label || ""));
+        if (desc) setting.setDesc(t9(desc));
       }
       _headingLevelLabel(level) {
         const names = ["\u4E00", "\u4E8C", "\u4E09", "\u56DB", "\u4E94", "\u516D"];
         const n = Math.min(6, Math.max(1, Number(level) || 1));
-        return `${names[n - 1]}\u7EA7\u6807\u9898`;
+        return t9("{name}\u7EA7\u6807\u9898", { name: t9(names[n - 1]) });
       }
     };
     module2.exports = JournalSyncSettingTab2;
@@ -2016,12 +2303,62 @@ var require_log_modal = __commonJS({
   "src/ui/log-modal.js"(exports2, module2) {
     "use strict";
     var { Modal, Notice: Notice7 } = require("obsidian");
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "\u53D1\u9001\u65E5\u5FD7": "Send log",
+      "\u52A0\u8F7D\u4E2D\u2026": "Loading\u2026",
+      "\u65E5\u5FD7\u8BFB\u53D6\u5931\u8D25": "Failed to read log",
+      "\u6682\u65E0\u53D1\u9001\u8BB0\u5F55": "No send records yet",
+      "\u672A\u53D1\u51FA": "Not sent",
+      "\u91CD\u65B0\u7F16\u8F91": "Re-edit",
+      "\u6253\u5F00\u53D1\u9001\u9762\u677F\u5931\u8D25\uFF1A{error}": "Failed to open send panel: {error}",
+      "Telegram \u9891\u9053": "Telegram channel",
+      "Mastodon \u8D26\u53F7": "Mastodon account"
+    });
     var sendLog2 = require_send_log();
     function formatLogTime(sentAt) {
       const d = new Date(sentAt);
       if (isNaN(d.getTime())) return "";
       const pad = (v) => String(v).padStart(2, "0");
       return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    function targetKindLabel(plugin, kind, id) {
+      var _a, _b, _c, _d;
+      if (kind === "adapter") {
+        const name = (_d = (_c = (_b = (_a = plugin == null ? void 0 : plugin.adapterRegistry) == null ? void 0 : _a.get) == null ? void 0 : _b.call(_a, id)) == null ? void 0 : _c.manifest) == null ? void 0 : _d.name;
+        return t9(name) || id;
+      }
+      if (kind === "telegram-channel") return t9("Telegram \u9891\u9053");
+      if (kind === "mastodon-account") return t9("Mastodon \u8D26\u53F7");
+      return kind;
+    }
+    function truncateError(message) {
+      const text = String(message || "").trim();
+      if (!text) return "";
+      return text.length > 120 ? text.slice(0, 120) + "\u2026" : text;
+    }
+    function renderTargetResults(infoEl, plugin, targets) {
+      const listEl = infoEl.createDiv({ cls: "js-bridge-log-targets" });
+      for (const target of targets) {
+        if (!target || typeof target !== "object") continue;
+        const rowEl = listEl.createDiv({ cls: "js-bridge-log-target-row" });
+        const success = Boolean(target.success);
+        rowEl.createSpan({
+          text: success ? "\u2713" : "\u2717",
+          cls: success ? "js-bridge-log-target-success" : "js-bridge-log-target-fail"
+        });
+        const kindName = targetKindLabel(plugin, target.kind, target.id);
+        let label = String(target.label || target.id || "");
+        if (target.kind === "telegram-channel") label = label.replace(/^telegram\s+/i, "");
+        const nameText = label && label.toLowerCase() !== String(kindName).toLowerCase() ? `${kindName} \xB7 ${label}` : kindName;
+        rowEl.createSpan({ text: nameText, cls: "js-bridge-log-target-name" });
+        if (!success) {
+          const errorText = truncateError(target.error);
+          if (errorText) {
+            rowEl.createSpan({ text: errorText, cls: "js-bridge-log-target-error" });
+          }
+        }
+      }
     }
     var JournalSyncLogModal2 = class extends Modal {
       /**
@@ -2034,24 +2371,25 @@ var require_log_modal = __commonJS({
         this._restoreInFlight = false;
       }
       async onOpen() {
+        var _a, _b, _c;
         const { contentEl, modalEl } = this;
         contentEl.empty();
         contentEl.addClass("js-bridge-log-modal");
         modalEl.style.width = "560px";
         modalEl.style.maxWidth = "92vw";
-        contentEl.createEl("h2", { text: "\u53D1\u9001\u65E5\u5FD7", cls: "js-bridge-send-title" });
+        contentEl.createEl("h2", { text: t9("\u53D1\u9001\u65E5\u5FD7"), cls: "js-bridge-send-title" });
         const listEl = contentEl.createDiv({ cls: "js-bridge-log-list" });
-        listEl.setText("\u52A0\u8F7D\u4E2D\u2026");
+        listEl.setText(t9("\u52A0\u8F7D\u4E2D\u2026"));
         let entries;
         try {
           entries = await sendLog2.listEntries({ plugin: this.plugin });
         } catch (e) {
-          listEl.setText("\u65E5\u5FD7\u8BFB\u53D6\u5931\u8D25");
+          listEl.setText(t9("\u65E5\u5FD7\u8BFB\u53D6\u5931\u8D25"));
           return;
         }
         listEl.empty();
         if (!Array.isArray(entries) || entries.length === 0) {
-          listEl.setText("\u6682\u65E0\u53D1\u9001\u8BB0\u5F55");
+          listEl.setText(t9("\u6682\u65E0\u53D1\u9001\u8BB0\u5F55"));
           return;
         }
         for (const entry of entries) {
@@ -2060,12 +2398,21 @@ var require_log_modal = __commonJS({
           const metaRow = info.createDiv({ cls: "js-bridge-log-meta" });
           metaRow.createSpan({ text: formatLogTime(entry.sentAt), cls: "js-bridge-log-time" });
           if (entry.dispatched === false) {
-            metaRow.createSpan({ text: "\u672A\u53D1\u51FA", cls: "js-bridge-log-badge" });
+            metaRow.createSpan({ text: t9("\u672A\u53D1\u51FA"), cls: "js-bridge-log-badge" });
           }
           info.createDiv({ text: entry.preview || "", cls: "js-bridge-log-preview" });
+          const diagTargets = (_b = (_a = entry.snapshot) == null ? void 0 : _a.diagnostics) == null ? void 0 : _b.targets;
+          if (entry.dispatched === false) {
+            const failReason = (_c = entry.snapshot) == null ? void 0 : _c.failReason;
+            if (failReason) {
+              info.createDiv({ text: truncateError(failReason), cls: "js-bridge-log-fail-reason" });
+            }
+          } else if (Array.isArray(diagTargets) && diagTargets.length > 0) {
+            renderTargetResults(info, this.plugin, diagTargets);
+          }
           const btn = row.createEl("button", {
             type: "button",
-            text: "\u91CD\u65B0\u7F16\u8F91",
+            text: t9("\u91CD\u65B0\u7F16\u8F91"),
             cls: "js-bridge-log-restore-btn"
           });
           btn.addEventListener("click", async () => {
@@ -2083,7 +2430,7 @@ var require_log_modal = __commonJS({
             } catch (e) {
               this._restoreInFlight = false;
               btn.disabled = false;
-              new Notice7("\u6253\u5F00\u53D1\u9001\u9762\u677F\u5931\u8D25\uFF1A" + ((e == null ? void 0 : e.message) || e), 1e4);
+              new Notice7(t9("\u6253\u5F00\u53D1\u9001\u9762\u677F\u5931\u8D25\uFF1A{error}", { error: (e == null ? void 0 : e.message) || e }), 1e4);
             }
           });
         }
@@ -2204,24 +2551,24 @@ var require_image_refs = __commonJS({
       const bare = /(^|\n)([^\n]+?\.(?:png|jpe?g|gif|webp|svg))(?=\n|$)/gi;
       let m;
       while ((m = wiki.exec(markdown)) !== null) {
-        const t = String(m[1] || "").split("|")[0].trim();
-        if (!t) continue;
-        refs.push({ raw: m[0], target: t, type: "wiki", index: m.index, end: m.index + m[0].length });
+        const t9 = String(m[1] || "").split("|")[0].trim();
+        if (!t9) continue;
+        refs.push({ raw: m[0], target: t9, type: "wiki", index: m.index, end: m.index + m[0].length });
       }
       while ((m = md.exec(markdown)) !== null) {
-        const t = String(m[1] || "").trim().replace(/^<|>$/g, "");
-        if (!t) continue;
+        const t9 = String(m[1] || "").trim().replace(/^<|>$/g, "");
+        if (!t9) continue;
         try {
-          refs.push({ raw: m[0], target: decodeURIComponent(t), type: "markdown", index: m.index, end: m.index + m[0].length });
+          refs.push({ raw: m[0], target: decodeURIComponent(t9), type: "markdown", index: m.index, end: m.index + m[0].length });
         } catch (e) {
-          refs.push({ raw: m[0], target: t, type: "markdown", index: m.index, end: m.index + m[0].length });
+          refs.push({ raw: m[0], target: t9, type: "markdown", index: m.index, end: m.index + m[0].length });
         }
       }
       while ((m = bare.exec(markdown)) !== null) {
-        const t = String(m[2] || "").trim();
-        if (!t || /[\[\]()]/.test(t)) continue;
+        const t9 = String(m[2] || "").trim();
+        if (!t9 || /[\[\]()]/.test(t9)) continue;
         const idx = m.index + m[1].length;
-        refs.push({ raw: m[2], target: t, type: "bare", index: idx, end: idx + m[2].length });
+        refs.push({ raw: m[2], target: t9, type: "bare", index: idx, end: idx + m[2].length });
       }
       const codeRanges = [];
       const fenceRe = /```[^\n]*[\s\S]*?```/g;
@@ -2383,7 +2730,7 @@ async function validate({ payload }) {
   const warnings = [];
   const errors = [];
   if (!payload.plainText && extractRemoteImageUrls(payload.content).length === 0) {
-    errors.push("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9");
+    errors.push(t("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9"));
   }
   return { warnings, errors };
 }
@@ -2392,13 +2739,13 @@ async function execute({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
   const apiUrl = String(config.apiUrl || "").trim();
   const content = String(payload.content || "");
   if (!apiUrl) {
-    return { success: false, error: "Flomo API URL \u672A\u914D\u7F6E" };
+    return { success: false, error: t("Flomo API URL \u672A\u914D\u7F6E") };
   }
   const imageUrls = extractRemoteImageUrls(content);
   const textContent = String((_a = payload.plainText) != null ? _a : content).replace(/@图片\d+/g, "").trim();
   const warnings = [];
   if (!textContent && imageUrls.length === 0) {
-    return { success: true, skipped: true, message: "\u6CA1\u6709\u53EF\u53D1\u9001\u5230 flomo \u7684\u5185\u5BB9", warnings };
+    return { success: true, skipped: true, message: t("\u6CA1\u6709\u53EF\u53D1\u9001\u5230 flomo \u7684\u5185\u5BB9"), warnings };
   }
   try {
     const response = await requestUrl2({
@@ -2436,10 +2783,10 @@ async function execute({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
 }
 async function runAction(actionId, config = {}, requestUrlFn) {
   if (actionId !== "testConnection") {
-    throw new Error(`Flomo \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+    throw new Error(t("Flomo \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}", { action: actionId }));
   }
   const apiUrl = String(config.apiUrl || "").trim();
-  if (!apiUrl) throw new Error("\u8BF7\u5148\u914D\u7F6E Flomo API URL");
+  if (!apiUrl) throw new Error(t("\u8BF7\u5148\u914D\u7F6E Flomo API URL"));
   const response = await requestUrlFn({
     url: apiUrl,
     method: "POST",
@@ -2456,17 +2803,29 @@ async function runAction(actionId, config = {}, requestUrlFn) {
   if (!isSuccess) {
     throw new Error(result.message || `HTTP ${response.status}`);
   }
-  return { success: true, message: "Flomo \u8FDE\u63A5\u6210\u529F" };
+  return { success: true, message: t("Flomo \u8FDE\u63A5\u6210\u529F") };
 }
-var MAX_FLOMO_IMAGES, manifest, flomo_default;
+var t, registerTranslations, MAX_FLOMO_IMAGES, manifest, flomo_default;
 var init_flomo = __esm({
   "src/adapters/flomo.js"() {
+    ({ t, registerTranslations } = require_i18n());
+    registerTranslations("en", {
+      "\u5728 flomo \u7F51\u9875\u7248\u201CAPI\u201D\u9875\u9762\u83B7\u53D6": 'Get it from the "API" page on flomo web',
+      "\u6D4B\u8BD5\u8FDE\u63A5\uFF08\u4F1A\u53D1\u4E00\u6761\u7B14\u8BB0\uFF09": "Test connection (sends a note)",
+      "\u53D1\u9001\u4E2D...": "Sending...",
+      "\u4F1A\u5411 flomo \u53D1\u9001\u4E00\u6761\u300CJournal Sync \u6D4B\u8BD5\u8FDE\u63A5 \u2713\u300D\u7B14\u8BB0\u6765\u9A8C\u8BC1 Webhook\u3002\u8FD9\u6761\u7B14\u8BB0\u4F1A\u7559\u5728\u4F60\u7684 flomo \u91CC\u3002": 'Sends a "Journal Sync test connection \u2713" note to flomo to verify the Webhook. This note will remain in your flomo.',
+      "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9": "Nothing to send",
+      "Flomo API URL \u672A\u914D\u7F6E": "Flomo API URL is not configured",
+      "\u6CA1\u6709\u53EF\u53D1\u9001\u5230 flomo \u7684\u5185\u5BB9": "Nothing to send to flomo",
+      "Flomo \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}": "Flomo adapter does not support action: {action}",
+      "\u8BF7\u5148\u914D\u7F6E Flomo API URL": "Please configure the Flomo API URL first",
+      "Flomo \u8FDE\u63A5\u6210\u529F": "Flomo connection successful"
+    });
     MAX_FLOMO_IMAGES = 9;
     manifest = {
       id: "flomo",
       version: "1.0.0",
       name: "Flomo",
-      description: "\u540C\u6B65\u5185\u5BB9\u5230 flomo",
       enabledByDefault: true,
       displayOrder: 10,
       capabilities: {
@@ -3084,7 +3443,7 @@ ${currentText}` : currentText;
             }
             raw = cap[0];
             src = src.substring(raw.length);
-            let line = cap[2].split("\n", 1)[0].replace(this.rules.other.listReplaceTabs, (t) => " ".repeat(3 * t.length));
+            let line = cap[2].split("\n", 1)[0].replace(this.rules.other.listReplaceTabs, (t9) => " ".repeat(3 * t9.length));
             let nextLine = src.split("\n", 1)[0];
             let blankLine = !line.trim();
             let indent = 0;
@@ -3202,8 +3561,8 @@ ${currentText}` : currentText;
             this.lexer.state.top = false;
             list2.items[i].tokens = this.lexer.blockTokens(list2.items[i].text, []);
             if (!list2.loose) {
-              const spacers = list2.items[i].tokens.filter((t) => t.type === "space");
-              const hasMultipleLineBreaks = spacers.length > 0 && spacers.some((t) => this.rules.other.anyLine.test(t.raw));
+              const spacers = list2.items[i].tokens.filter((t9) => t9.type === "space");
+              const hasMultipleLineBreaks = spacers.length > 0 && spacers.some((t9) => this.rules.other.anyLine.test(t9.raw));
               list2.loose = hasMultipleLineBreaks;
             }
           }
@@ -4777,12 +5136,12 @@ var require_dist = __commonJS({
     };
     var g = (n, r) => {
       let e = false, i = false;
-      for (let t = 0; t < n.length && t < r; t += 1) {
-        if (n[t] === "\\" && n[t + 1] === "$") {
-          t += 1;
+      for (let t9 = 0; t9 < n.length && t9 < r; t9 += 1) {
+        if (n[t9] === "\\" && n[t9 + 1] === "$") {
+          t9 += 1;
           continue;
         }
-        n[t] === "$" && (n[t + 1] === "$" ? (i = !i, t += 1, e = false) : i || (e = !e));
+        n[t9] === "$" && (n[t9 + 1] === "$" ? (i = !i, t9 += 1, e = false) : i || (e = !e));
       }
       return e || i;
     };
@@ -4810,13 +5169,13 @@ var require_dist = __commonJS({
         i = s + 1;
         break;
       }
-      let t = n.length;
+      let t9 = n.length;
       for (let s = r; s < n.length; s += 1) if (n[s] === `
 `) {
-        t = s;
+        t9 = s;
         break;
       }
-      let o = n.substring(i, t), a = 0, l = false;
+      let o = n.substring(i, t9), a = 0, l = false;
       for (let s of o) if (s === e) a += 1;
       else if (s !== " " && s !== "	") {
         l = true;
@@ -4827,12 +5186,12 @@ var require_dist = __commonJS({
     var an = (n, r, e) => {
       if (e !== " " && e !== "	") return false;
       let i = 0;
-      for (let t = r - 1; t >= 0; t -= 1) if (n[t] === `
+      for (let t9 = r - 1; t9 >= 0; t9 -= 1) if (n[t9] === `
 `) {
-        i = t + 1;
+        i = t9 + 1;
         break;
       }
-      for (let t = i; t < r; t += 1) if (n[t] !== " " && n[t] !== "	") return false;
+      for (let t9 = i; t9 < r; t9 += 1) if (n[t9] !== " " && n[t9] !== "	") return false;
       return true;
     };
     var cn = (n, r, e, i) => e === "\\" || n.includes("$") && g(n, r) ? true : e !== "*" && i === "*" ? (r < n.length - 2 ? n[r + 2] : "") !== "*" : !!(e === "*" || e && i && f(e) && f(i) || an(n, r, i));
@@ -4840,8 +5199,8 @@ var require_dist = __commonJS({
       let r = 0, e = n.length;
       for (let i = 0; i < e; i += 1) {
         if (n[i] !== "*") continue;
-        let t = i > 0 ? n[i - 1] : "", o = i < e - 1 ? n[i + 1] : "";
-        cn(n, i, t, o) || (r += 1);
+        let t9 = i > 0 ? n[i - 1] : "", o = i < e - 1 ? n[i + 1] : "";
+        cn(n, i, t9, o) || (r += 1);
       }
       return r;
     };
@@ -4850,8 +5209,8 @@ var require_dist = __commonJS({
       let r = 0, e = n.length;
       for (let i = 0; i < e; i += 1) {
         if (n[i] !== "_") continue;
-        let t = i > 0 ? n[i - 1] : "", o = i < e - 1 ? n[i + 1] : "";
-        un(n, i, t, o) || (r += 1);
+        let t9 = i > 0 ? n[i - 1] : "", o = i < e - 1 ? n[i + 1] : "";
+        un(n, i, t9, o) || (r += 1);
       }
       return r;
     };
@@ -4862,8 +5221,8 @@ var require_dist = __commonJS({
     };
     var gn = (n, r, e) => {
       if (!r || u.test(r)) return true;
-      let t = n.substring(0, e).lastIndexOf(`
-`), o = t === -1 ? 0 : t + 1, a = n.substring(o, e);
+      let t9 = n.substring(0, e).lastIndexOf(`
+`), o = t9 === -1 ? 0 : t9 + 1, a = n.substring(o, e);
       return A.test(a) && r.includes(`
 `) ? true : k(n, e, "*");
     };
@@ -4875,8 +5234,8 @@ var require_dist = __commonJS({
     };
     var hn = (n, r, e) => {
       if (!r || u.test(r)) return true;
-      let t = n.substring(0, e).lastIndexOf(`
-`), o = t === -1 ? 0 : t + 1, a = n.substring(o, e);
+      let t9 = n.substring(0, e).lastIndexOf(`
+`), o = t9 === -1 ? 0 : t9 + 1, a = n.substring(o, e);
       return A.test(a) && r.includes(`
 `) ? true : k(n, e, "_");
     };
@@ -4930,8 +5289,8 @@ var require_dist = __commonJS({
       if (!n.endsWith("**")) return null;
       let r = n.slice(0, -2);
       if ((r.match(/\*\*/g) || []).length % 2 !== 1) return null;
-      let i = r.indexOf("**"), t = j(r);
-      return i !== -1 && t !== -1 && i < t ? `${r}_**` : null;
+      let i = r.indexOf("**"), t9 = j(r);
+      return i !== -1 && t9 !== -1 && i < t9 ? `${r}_**` : null;
     };
     var z = (n) => {
       if (!n.match(U)) return n;
@@ -4959,18 +5318,18 @@ var require_dist = __commonJS({
     };
     var h = (n, r) => {
       let e = false, i = false;
-      for (let t = 0; t < r; t += 1) {
-        if (n.substring(t, t + 3) === "```") {
-          i = !i, t += 2;
+      for (let t9 = 0; t9 < r; t9 += 1) {
+        if (n.substring(t9, t9 + 3) === "```") {
+          i = !i, t9 += 2;
           continue;
         }
-        !i && n[t] === "`" && (e = !e);
+        !i && n[t9] === "`" && (e = !e);
       }
       return e || i;
     };
     var An = (n, r) => {
-      let e = n.substring(r, r + 3) === "```", i = r > 0 && n.substring(r - 1, r + 2) === "```", t = r > 1 && n.substring(r - 2, r + 1) === "```";
-      return e || i || t;
+      let e = n.substring(r, r + 3) === "```", i = r > 0 && n.substring(r - 1, r + 2) === "```", t9 = r > 1 && n.substring(r - 2, r + 1) === "```";
+      return e || i || t9;
     };
     var q = (n) => {
       let r = 0;
@@ -5007,11 +5366,11 @@ $$` : `${n}$$`;
     var V = (n) => $n(n) % 2 === 0 ? n : Mn(n);
     var Tn = (n, r, e) => {
       if (n.substring(r + 2).includes(")")) return null;
-      let t = G(n, r);
-      if (t === -1 || h(n, t)) return null;
-      let o = t > 0 && n[t - 1] === "!", a = o ? t - 1 : t, l = n.substring(0, a);
+      let t9 = G(n, r);
+      if (t9 === -1 || h(n, t9)) return null;
+      let o = t9 > 0 && n[t9 - 1] === "!", a = o ? t9 - 1 : t9, l = n.substring(0, a);
       if (o) return l;
-      let s = n.substring(t + 1, r);
+      let s = n.substring(t9 + 1, r);
       return e === "text-only" ? `${l}${s}` : `${l}[${s}](streamdown:incomplete-link)`;
     };
     var Z = (n, r) => {
@@ -5020,16 +5379,16 @@ $$` : `${n}$$`;
         let i = B(n, e);
         if (i === -1) return e;
         if (i + 1 < n.length && n[i + 1] === "(") {
-          let t = n.indexOf(")", i + 2);
-          t !== -1 && (e = t);
+          let t9 = n.indexOf(")", i + 2);
+          t9 !== -1 && (e = t9);
         }
       }
       return -1;
     };
     var Sn = (n, r, e) => {
-      let i = r > 0 && n[r - 1] === "!", t = i ? r - 1 : r, o = n.substring(r + 1);
+      let i = r > 0 && n[r - 1] === "!", t9 = i ? r - 1 : r, o = n.substring(r + 1);
       if (!o.includes("]")) {
-        let l = n.substring(0, t);
+        let l = n.substring(0, t9);
         if (i) return l;
         if (e === "text-only") {
           let s = Z(n, r);
@@ -5038,7 +5397,7 @@ $$` : `${n}$$`;
         return `${n}](streamdown:incomplete-link)`;
       }
       if (B(n, r) === -1) {
-        let l = n.substring(0, t);
+        let l = n.substring(0, t9);
         if (i) return l;
         if (e === "text-only") {
           let s = Z(n, r);
@@ -5057,8 +5416,8 @@ $$` : `${n}$$`;
         if (i !== null) return i;
       }
       for (let i = n.length - 1; i >= 0; i -= 1) if (n[i] === "[" && !h(n, i)) {
-        let t = Sn(n, i, r);
-        if (t !== null) return t;
+        let t9 = Sn(n, i, r);
+        if (t9 !== null) return t9;
       }
       return n;
     };
@@ -5071,13 +5430,13 @@ $$` : `${n}$$`;
       let r = n.lastIndexOf(`
 `);
       if (r === -1) return n;
-      let e = n.substring(r + 1), i = n.substring(0, r), t = e.trim();
-      if (_n.test(t) && !e.match(Ln)) {
+      let e = n.substring(r + 1), i = n.substring(0, r), t9 = e.trim();
+      if (_n.test(t9) && !e.match(Ln)) {
         let a = i.split(`
 `).at(-1);
         if (a && a.trim().length > 0) return `${n}\u200B`;
       }
-      if (En.test(t) && !e.match(On)) {
+      if (En.test(t9) && !e.match(On)) {
         let a = i.split(`
 `).at(-1);
         if (a && a.trim().length > 0) return `${n}\u200B`;
@@ -5099,15 +5458,15 @@ $$` : `${n}$$`;
     var yn = (n) => {
       var e;
       let r = (e = n == null ? void 0 : n.linkMode) != null ? e : "protocol";
-      return Un.filter(({ handler: i, optionKey: t }) => i.name === "links" ? $(n == null ? void 0 : n.links) || $(n == null ? void 0 : n.images) : $(n == null ? void 0 : n[t])).map(({ handler: i, earlyReturn: t }) => i.name === "links" ? { handler: I(b({}, i), { handle: (o) => C(o, r) }), earlyReturn: r === "protocol" ? t : void 0 } : { handler: i, earlyReturn: t });
+      return Un.filter(({ handler: i, optionKey: t9 }) => i.name === "links" ? $(n == null ? void 0 : n.links) || $(n == null ? void 0 : n.images) : $(n == null ? void 0 : n[t9])).map(({ handler: i, earlyReturn: t9 }) => i.name === "links" ? { handler: I(b({}, i), { handle: (o) => C(o, r) }), earlyReturn: r === "protocol" ? t9 : void 0 } : { handler: i, earlyReturn: t9 });
     };
     var Nn = (n, r) => {
       var a;
       if (!n || typeof n != "string") return n;
-      let e = n.endsWith(" ") && !n.endsWith("  ") ? n.slice(0, -1) : n, i = yn(r), t = ((a = r == null ? void 0 : r.handlers) != null ? a : []).map((l) => {
+      let e = n.endsWith(" ") && !n.endsWith("  ") ? n.slice(0, -1) : n, i = yn(r), t9 = ((a = r == null ? void 0 : r.handlers) != null ? a : []).map((l) => {
         var s;
         return { handler: I(b({}, l), { priority: (s = l.priority) != null ? s : c.DEFAULT }), earlyReturn: void 0 };
-      }), o = [...i, ...t].sort((l, s) => {
+      }), o = [...i, ...t9].sort((l, s) => {
         var m, M;
         return ((m = l.handler.priority) != null ? m : c.DEFAULT) - ((M = s.handler.priority) != null ? M : c.DEFAULT);
       });
@@ -5204,7 +5563,7 @@ $$` : `${n}$$`;
           return text + " ".repeat(gap);
         }
         const lines = texts.map((row, ri) => {
-          const cells = row.map((t, ci) => pad(t, colWidths[ci], token.align[ci]));
+          const cells = row.map((t9, ci) => pad(t9, colWidths[ci], token.align[ci]));
           const line = cells.join(" | ");
           if (ri === 0) {
             const sep = colWidths.map((w2) => "-".repeat(w2)).join("-+-");
@@ -5737,7 +6096,7 @@ var require_telegram_markdown = __commonJS({
     }
     function convertToTelegramHtml2(markdown, { rich = false } = {}) {
       const { text, quotes } = extractQuotes(String(markdown || ""));
-      let html = rich ? mdgramRich(decodeHtmlEntities(text)) : mdgram(decodeHtmlEntities(text));
+      let html = rich ? mdgramRich(decodeHtmlEntities(text), { paragraphMode: "br" }) : mdgram(decodeHtmlEntities(text));
       quotes.forEach((content, idx) => {
         const inner = rich ? mdgramRich(decodeHtmlEntities(content), { paragraphMode: "br" }) : mdgram(decodeHtmlEntities(content));
         const tag = "blockquote";
@@ -5773,6 +6132,12 @@ var require_telegram_markdown = __commonJS({
 var require_telegraph = __commonJS({
   "src/core/telegraph.js"(exports2, module2) {
     "use strict";
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "\u4E0A\u4F20\u5931\u8D25": "Upload failed",
+      "Telegraph \u56FE\u7247\u4E0A\u4F20\u5931\u8D25: {error}": "Telegraph image upload failed: {error}",
+      "Telegraph API {method} \u5931\u8D25 (HTTP {status})": "Telegraph API {method} failed (HTTP {status})"
+    });
     var TELEGRAPH_API_BASE = "https://api.telegra.ph";
     var TELEGRAPH_UPLOAD_URL = "https://telegra.ph/upload";
     async function telegraphApi(method, params, requestUrlFn) {
@@ -5787,7 +6152,7 @@ var require_telegraph = __commonJS({
       });
       const data = response.json;
       if (!data || data.ok !== true) {
-        throw new Error((data == null ? void 0 : data.error) || `Telegraph API ${method} \u5931\u8D25 (HTTP ${response.status})`);
+        throw new Error((data == null ? void 0 : data.error) || t9("Telegraph API {method} \u5931\u8D25 (HTTP {status})", { method, status: response.status }));
       }
       return data.result;
     }
@@ -5822,8 +6187,8 @@ var require_telegraph = __commonJS({
       });
       const data = response.json;
       if (!Array.isArray(data) || data.length === 0 || !data[0].src) {
-        const errMsg = Array.isArray(data) && ((_a = data[0]) == null ? void 0 : _a.error) ? data[0].error : "\u4E0A\u4F20\u5931\u8D25";
-        throw new Error(`Telegraph \u56FE\u7247\u4E0A\u4F20\u5931\u8D25: ${errMsg}`);
+        const errMsg = Array.isArray(data) && ((_a = data[0]) == null ? void 0 : _a.error) ? data[0].error : t9("\u4E0A\u4F20\u5931\u8D25");
+        throw new Error(t9("Telegraph \u56FE\u7247\u4E0A\u4F20\u5931\u8D25: {error}", { error: errMsg }));
       }
       return `https://telegra.ph${data[0].src}`;
     }
@@ -6114,7 +6479,7 @@ async function tgApi(botToken, method, body, requestUrlFn) {
 }
 async function listChannels(botToken, existingChannels = [], requestUrlFn) {
   var _a, _b, _c;
-  if (!botToken) throw new Error("Bot Token \u672A\u914D\u7F6E");
+  if (!botToken) throw new Error(t2("Bot Token \u672A\u914D\u7F6E"));
   const channelMap = /* @__PURE__ */ new Map();
   const initialChannels = Array.isArray(existingChannels) ? existingChannels : [];
   for (const ch of initialChannels) {
@@ -6184,7 +6549,7 @@ async function sendSingleTextMessage(botToken, chatId, text, options, requestUrl
       const retryRes = await tgApi(botToken, "sendMessage", body, requestUrlFn);
       if (retryRes.result.ok) return { success: true };
     }
-    return { success: false, error: result.description || ((_b = result.result) == null ? void 0 : _b.description) || `sendMessage \u5931\u8D25: HTTP ${status}` };
+    return { success: false, error: result.description || ((_b = result.result) == null ? void 0 : _b.description) || t2("sendMessage \u5931\u8D25: HTTP {status}", { status }) };
   }
   return { success: true };
 }
@@ -6375,12 +6740,12 @@ async function sendRichMessageWithMedia(botToken, chatId, segments, imageBuffers
     imageIndex += 1;
   }
   const markdown = restoreImageTokens(convertToTelegramHtml(richParts.join("\n\n"), { rich: true }), media.map((m) => m.id));
-  if (!markdown) return { success: false, error: "\u5BCC\u6587\u672C\u5185\u5BB9\u4E3A\u7A7A\uFF0C\u672A\u53D1\u9001 Telegram \u6D88\u606F" };
+  if (!markdown) return { success: false, error: t2("\u5BCC\u6587\u672C\u5185\u5BB9\u4E3A\u7A7A\uFF0C\u672A\u53D1\u9001 Telegram \u6D88\u606F") };
   if (richCharacterCount(markdown) > 32768) {
-    return { success: false, error: "Telegram \u5BCC\u6587\u672C\u8D85\u8FC7 32768 \u5B57\u7B26\u9650\u5236" };
+    return { success: false, error: t2("Telegram \u5BCC\u6587\u672C\u8D85\u8FC7 32768 \u5B57\u7B26\u9650\u5236") };
   }
   if (media.length > 50) {
-    return { success: false, error: "Telegram \u5BCC\u6587\u672C\u8D85\u8FC7 50 \u4E2A\u5A92\u4F53\u9644\u4EF6\u9650\u5236" };
+    return { success: false, error: t2("Telegram \u5BCC\u6587\u672C\u8D85\u8FC7 50 \u4E2A\u5A92\u4F53\u9644\u4EF6\u9650\u5236") };
   }
   const formParts = [];
   formParts.push(encoder.encode(`--${boundary}\r
@@ -6435,17 +6800,17 @@ async function sendRichContent(botToken, chatId, segments, imageBuffers, config,
       if (nativeResult.success) return { success: true };
       return {
         success: false,
-        error: ((_a = nativeResult.result) == null ? void 0 : _a.description) || ((_c = (_b = nativeResult.result) == null ? void 0 : _b.result) == null ? void 0 : _c.description) || `sendRichMessage \u5931\u8D25: HTTP ${nativeResult.status}`
+        error: ((_a = nativeResult.result) == null ? void 0 : _a.description) || ((_c = (_b = nativeResult.result) == null ? void 0 : _b.result) == null ? void 0 : _c.description) || t2("sendRichMessage \u5931\u8D25: HTTP {status}", { status: nativeResult.status })
       };
     }
     let textPart = "";
     const imageItems = [];
     for (const seg of segments) {
       if (seg.type === "richText" || seg.type === "text") {
-        const t = String(seg.markdown || seg.text || "").trim();
-        if (t) textPart = textPart ? `${textPart}
+        const t9 = String(seg.markdown || seg.text || "").trim();
+        if (t9) textPart = textPart ? `${textPart}
 
-${t}` : t;
+${t9}` : t9;
       } else if (seg.type === "image" && seg.filename) {
         const buf = imageBuffers.get(seg.imageKey || seg.vaultPath || seg.filename);
         if (buf) {
@@ -6492,7 +6857,7 @@ ${t}` : t;
       }
       if (!(result == null ? void 0 : result.ok)) {
         const method = chunk.length === 1 ? "sendPhoto" : "sendMediaGroup";
-        return { success: false, error: (result == null ? void 0 : result.description) || `${method} \u5931\u8D25: HTTP ${status}` };
+        return { success: false, error: (result == null ? void 0 : result.description) || t2("{method} \u5931\u8D25: HTTP {status}", { method, status }) };
       }
     }
     if (textToSendSeparately) {
@@ -6545,7 +6910,7 @@ async function executeTelegraphSend({ botToken, config, payload, requestUrl: req
   try {
     accessToken = await ensureTelegraphToken(config, requestUrl2, saveConfig);
   } catch (error) {
-    return { success: false, error: `Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: ${error.message}` };
+    return { success: false, error: t2("Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: {error}", { error: error.message }) };
   }
   const authorName = config.telegraphAuthorName || "";
   const imageUrls = /* @__PURE__ */ new Map();
@@ -6561,12 +6926,12 @@ async function executeTelegraphSend({ botToken, config, payload, requestUrl: req
     try {
       const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(vaultPath) : null;
       if (!buffer) {
-        return { success: false, error: `\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247: ${img.filename || vaultPath}` };
+        return { success: false, error: t2("\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247: {name}", { name: img.filename || vaultPath }) };
       }
       const url = await telegraph.uploadImage(buffer, img.filename || "image.jpg", requestUrl2);
       imageUrls.set(token, url);
     } catch (error) {
-      return { success: false, error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25 (${img.filename || vaultPath}): ${error.message}` };
+      return { success: false, error: t2("\u56FE\u7247\u4E0A\u4F20\u5931\u8D25 ({name}): {error}", { name: img.filename || vaultPath, error: error.message }) };
     }
   }
   const titleLevelNum = Math.max(1, Math.min(6, Number(titleLevel) || 1));
@@ -6577,14 +6942,14 @@ async function executeTelegraphSend({ botToken, config, payload, requestUrl: req
     const page = await telegraph.createPage(accessToken, finalTitle, nodes, authorName, "", requestUrl2);
     pageUrl = page.url;
   } catch (error) {
-    return { success: false, error: `Telegraph \u521B\u5EFA\u9875\u9762\u5931\u8D25: ${error.message}` };
+    return { success: false, error: t2("Telegraph \u521B\u5EFA\u9875\u9762\u5931\u8D25: {error}", { error: error.message }) };
   }
   if (!botToken) {
-    return { success: false, error: "Telegram Bot Token \u672A\u914D\u7F6E", url: pageUrl };
+    return { success: false, error: t2("Telegram Bot Token \u672A\u914D\u7F6E"), url: pageUrl };
   }
   const targets = Array.isArray(channelIds) && channelIds.length > 0 ? channelIds.map(String) : [];
   if (targets.length === 0) {
-    return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E", url: pageUrl };
+    return { success: false, error: t2("Telegram \u9891\u9053\u672A\u914D\u7F6E"), url: pageUrl };
   }
   const linkPreviewEnabled = showLinkPreview !== void 0 ? showLinkPreview : config.showLinkPreview !== false;
   const linkText = `${finalTitle}
@@ -6604,7 +6969,7 @@ ${pageUrl}`;
       });
       const data = response.json;
       if (!data || !data.ok) {
-        return { success: false, channelId: targetCh, error: (data == null ? void 0 : data.description) || "\u53D1\u9001\u5931\u8D25" };
+        return { success: false, channelId: targetCh, error: (data == null ? void 0 : data.description) || t2("\u53D1\u9001\u5931\u8D25") };
       }
       return { success: true, channelId: targetCh };
     } catch (error) {
@@ -6612,7 +6977,7 @@ ${pageUrl}`;
     }
   }));
   const allOk = results.every((r) => r.success);
-  const errors = results.filter((r) => !r.success).map((r) => `${r.channelId}: ${r.error}`).join("; ");
+  const errors = results.filter((r) => !r.success).map((r) => `${r.channelId}: ${r.error || t2("Telegram \u672A\u77E5\u9519\u8BEF")}`).join(t2("\uFF1B"));
   return {
     success: allOk,
     error: allOk ? void 0 : errors,
@@ -6625,7 +6990,7 @@ async function validate2({ payload, config }) {
   const errors = [];
   const channelIds = Array.isArray(config.channelIds) ? config.channelIds : [];
   if (channelIds.length === 0 && !(Array.isArray(config.homeChannels) && config.homeChannels.length > 0)) {
-    warnings.push("Telegram \u9891\u9053\u672A\u9009\u62E9");
+    warnings.push(t2("Telegram \u9891\u9053\u672A\u9009\u62E9"));
   }
   return { warnings, errors };
 }
@@ -6633,7 +6998,7 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
   var _a;
   const botToken = config.botToken;
   if (!botToken) {
-    return { success: false, error: "Telegram Bot Token \u672A\u914D\u7F6E" };
+    return { success: false, error: t2("Telegram Bot Token \u672A\u914D\u7F6E") };
   }
   const warnings = [];
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
@@ -6647,7 +7012,7 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
       return keptImages <= MAX_TELEGRAM_IMAGES;
     });
     effectivePayload = { ...payload, attachments: limitedAttachments };
-    warnings.push(`\u8D85\u8FC7 ${MAX_TELEGRAM_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_TELEGRAM_IMAGES} \u5F20`);
+    warnings.push(t2("Telegram \u8D85\u8FC7 {max} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20", { max: MAX_TELEGRAM_IMAGES }));
   }
   const tgSendMode = config.tgSendMode || "plain";
   const isRich = tgSendMode === "rich";
@@ -6663,7 +7028,7 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
     }
   }
   if (channelIds.length === 0) {
-    return { success: false, error: "Telegram \u9891\u9053\u672A\u914D\u7F6E\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u5217\u8868" };
+    return { success: false, error: t2("Telegram \u9891\u9053\u672A\u914D\u7F6E\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u5217\u8868") };
   }
   if (isTelegraph) {
     const result = await executeTelegraphSend({
@@ -6700,7 +7065,7 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
   if (missingImages.size > 0) {
     return {
       success: false,
-      error: `\u65E0\u6CD5\u8BFB\u53D6 Telegram \u56FE\u7247\uFF1A${Array.from(missingImages).join("\u3001")}`
+      error: t2("\u65E0\u6CD5\u8BFB\u53D6 Telegram \u56FE\u7247\uFF1A{names}", { names: Array.from(missingImages).join(t2("\u3001")) })
     };
   }
   const resolvedSegments = segments.map((segment) => {
@@ -6717,7 +7082,7 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
     }
   }));
   const allOk = results.every((result) => result.success);
-  const errors = results.filter((result) => !result.success).map((result) => `${result.channelId}: ${result.error || result.message || "\u672A\u77E5\u9519\u8BEF"}`).join("; ");
+  const errors = results.filter((result) => !result.success).map((result) => `${result.channelId}: ${result.error || result.message || t2("Telegram \u672A\u77E5\u9519\u8BEF")}`).join(t2("\uFF1B"));
   return {
     success: allOk,
     error: allOk ? void 0 : errors,
@@ -6727,26 +7092,26 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
 }
 async function runAction2(actionId, config, requestUrlFn) {
   if (actionId === "discoverChannels" || actionId === "testConnection") {
-    if (!(config == null ? void 0 : config.botToken)) throw new Error("Bot Token \u672A\u914D\u7F6E");
+    if (!(config == null ? void 0 : config.botToken)) throw new Error(t2("Bot Token \u672A\u914D\u7F6E"));
     const channels = await listChannels(config.botToken, config.channels || [], requestUrlFn);
     return {
       success: true,
-      message: channels.length > 0 ? `\u627E\u5230 ${channels.length} \u4E2A\u53EF\u7528\u9891\u9053` : "\u8FDE\u63A5\u6210\u529F\uFF0C\u4F46\u6682\u672A\u53D1\u73B0\u53EF\u7528\u9891\u9053",
+      message: channels.length > 0 ? t2("\u627E\u5230 {count} \u4E2A\u53EF\u7528\u9891\u9053", { count: channels.length }) : t2("\u8FDE\u63A5\u6210\u529F\uFF0C\u4F46\u6682\u672A\u53D1\u73B0\u53EF\u7528\u9891\u9053"),
       data: { channels }
     };
   }
-  throw new Error(`\u672A\u77E5\u64CD\u4F5C: ${actionId}`);
+  throw new Error(t2("\u672A\u77E5\u64CD\u4F5C: {action}", { action: actionId }));
 }
 function buildChannelDesc(tgConfig) {
   const channels = Array.isArray(tgConfig == null ? void 0 : tgConfig.channels) ? tgConfig.channels : [];
-  if (channels.length === 0) return "\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u70B9\u51FB\u53F3\u4FA7\u6309\u94AE\u83B7\u53D6";
-  return `\u5DF2\u53D1\u73B0 ${channels.length} \u4E2A\u9891\u9053\uFF1A${channels.map((channel) => channel.title || channel.id).join("\u3001")}`;
+  if (channels.length === 0) return t2("\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u70B9\u51FB\u53F3\u4FA7\u6309\u94AE\u83B7\u53D6");
+  return t2("\u5DF2\u53D1\u73B0 {count} \u4E2A\u9891\u9053\uFF1A{names}", { count: channels.length, names: channels.map((channel) => channel.title || channel.id).join(t2("\u3001")) });
 }
 function renderChannelSelection(containerEl, tgConfig, ctx) {
   const channels = Array.isArray(tgConfig.channels) ? tgConfig.channels : [];
   if (channels.length === 0) return;
   const groupEl = containerEl.createDiv({ cls: "js-bridge-channel-group" });
-  groupEl.createEl("p", { text: "\u9ED8\u8BA4\u53D1\u9001\u9891\u9053\uFF1A", cls: "js-bridge-channel-group-label" });
+  groupEl.createEl("p", { text: t2("\u9ED8\u8BA4\u53D1\u9001\u9891\u9053\uFF1A"), cls: "js-bridge-channel-group-label" });
   const homeChannels = Array.isArray(tgConfig.homeChannels) ? tgConfig.homeChannels.map(String) : [];
   for (const channel of channels) {
     const channelId = String(channel.id);
@@ -6767,42 +7132,45 @@ function renderChannelSelection(containerEl, tgConfig, ctx) {
 function renderSettings(containerEl, ctx) {
   let telegraphTokenInput = null;
   const tgConfig = ctx.plugin.getAdapterConfig("telegram") || {};
-  new import_obsidian.Setting(containerEl).setName("Bot Token").setDesc("\u4ECE @BotFather \u83B7\u53D6").addText((text) => {
+  new import_obsidian.Setting(containerEl).setName("Bot Token").setDesc(t2("\u4ECE @BotFather \u83B7\u53D6")).addText((text) => {
     text.inputEl.type = "password";
     text.setPlaceholder("123456789:ABCdef...").setValue(tgConfig.botToken || "").onChange((value) => {
       ctx.scheduleConfigSave({ botToken: value.trim() });
     });
   });
-  new import_obsidian.Setting(containerEl).setName("\u9891\u9053\u5217\u8868").setDesc(buildChannelDesc(tgConfig)).addButton((btn) => btn.setButtonText("\u83B7\u53D6\u9891\u9053\u5217\u8868").onClick(async () => {
+  new import_obsidian.Setting(containerEl).setName(t2("\u9891\u9053\u5217\u8868")).setDesc(buildChannelDesc(tgConfig)).addButton((btn) => btn.setButtonText(t2("\u83B7\u53D6\u9891\u9053\u5217\u8868")).onClick(async () => {
     var _a;
     try {
-      btn.setButtonText("\u83B7\u53D6\u4E2D...");
+      btn.setButtonText(t2("\u83B7\u53D6\u4E2D..."));
       btn.disabled = true;
       const result = await ctx.plugin.adapterRegistry.get("telegram").runAction("discoverChannels", ctx.plugin.getAdapterConfig("telegram"), ctx.requestUrl);
       const channels = ((_a = result.data) == null ? void 0 : _a.channels) || [];
       await ctx.saveConfig({ channels, homeChannels: channels.map((channel) => String(channel.id)) });
-      new import_obsidian.Notice(result.message || "\u83B7\u53D6\u6210\u529F");
+      new import_obsidian.Notice(result.message || t2("\u83B7\u53D6\u6210\u529F"));
       ctx.refresh();
     } catch (error) {
-      new import_obsidian.Notice(`\u83B7\u53D6\u9891\u9053\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian.Notice(t2("\u83B7\u53D6\u9891\u9053\u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u83B7\u53D6\u9891\u9053\u5217\u8868");
+      btn.setButtonText(t2("\u83B7\u53D6\u9891\u9053\u5217\u8868"));
       btn.disabled = false;
     }
   }));
   renderChannelSelection(containerEl, tgConfig, ctx);
-  new import_obsidian.Setting(containerEl).setName("\u542F\u7528\u5BCC\u6587\u672C\u53D1\u9001").setDesc("\u5F00\u542F\u540E\u4F7F\u7528 Telegram \u539F\u751F\u5A92\u4F53\u4E0A\u4F20\u53D1\u9001\u56FE\u6587\u6DF7\u6392\u5185\u5BB9\u3002\u5173\u95ED\u540E\u4EE5\u666E\u901A\u9644\u4EF6\u65B9\u5F0F\u53D1\u9001\u56FE\u7247\u3002").addToggle((toggle) => toggle.setValue(tgConfig.richTextEnabled !== false).onChange(async (value) => {
+  new import_obsidian.Setting(containerEl).setName(t2("\u542F\u7528\u5BCC\u6587\u672C\u53D1\u9001")).setDesc(t2("\u5F00\u542F\u540E\u4F7F\u7528 Telegram \u539F\u751F\u5A92\u4F53\u4E0A\u4F20\u53D1\u9001\u56FE\u6587\u6DF7\u6392\u5185\u5BB9\u3002\u5173\u95ED\u540E\u4EE5\u666E\u901A\u9644\u4EF6\u65B9\u5F0F\u53D1\u9001\u56FE\u7247\u3002")).addToggle((toggle) => toggle.setValue(tgConfig.richTextEnabled !== false).onChange(async (value) => {
     await ctx.saveConfig({ richTextEnabled: value });
   }));
-  new import_obsidian.Setting(containerEl).setName("Telegraph \u4F5C\u8005\u540D").setDesc("\u663E\u793A\u5728 Telegraph \u9875\u9762\u4E0A\u7684\u4F5C\u8005\u540D\u79F0\uFF0C\u53EF\u7559\u7A7A\u3002").addText((text) => {
+  new import_obsidian.Setting(containerEl).setName(t2("Telegraph \u4F5C\u8005\u540D")).setDesc(t2("\u663E\u793A\u5728 Telegraph \u9875\u9762\u4E0A\u7684\u4F5C\u8005\u540D\u79F0\uFF0C\u53EF\u7559\u7A7A\u3002")).addText((text) => {
     text.setPlaceholder("Journal Sync").setValue(tgConfig.telegraphAuthorName || "").onChange((value) => {
       ctx.scheduleConfigSave({ telegraphAuthorName: value.trim() });
     });
   });
   const sendScope = ctx.plugin.settings.sendScope || 2;
   const maxTitleLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
-  const titleLevelDesc = maxTitleLevel === 1 ? "\u5F53\u524D\u53D1\u9001\u5C42\u7EA7\u4E3A 1\uFF0C\u4EC5\u53EF\u4F7F\u7528\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u6807\u9898\u3002" : `\u9009\u62E9\u54EA\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u9875\u9762\u6807\u9898\uFF081-${maxTitleLevel}\uFF09\u3002\u6B63\u6587\u4E2D\u7684\u6807\u9898\u4F1A\u76F8\u5E94\u504F\u79FB\u3002\u7ED1\u5B9A\u53D1\u9001\u5C42\u7EA7\uFF08\u5F53\u524D: ${sendScope === 0 ? "\u6574\u9875" : sendScope}\uFF09\u3002`;
-  new import_obsidian.Setting(containerEl).setName("Telegraph \u6807\u9898\u5C42\u7EA7").setDesc(titleLevelDesc).addDropdown((dropdown) => {
+  const titleLevelDesc = maxTitleLevel === 1 ? t2("\u5F53\u524D\u53D1\u9001\u5C42\u7EA7\u4E3A 1\uFF0C\u4EC5\u53EF\u4F7F\u7528\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u6807\u9898\u3002") : t2("\u9009\u62E9\u54EA\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u9875\u9762\u6807\u9898\uFF081-{max}\uFF09\u3002\u6B63\u6587\u4E2D\u7684\u6807\u9898\u4F1A\u76F8\u5E94\u504F\u79FB\u3002\u7ED1\u5B9A\u53D1\u9001\u5C42\u7EA7\uFF08\u5F53\u524D: {scope}\uFF09\u3002", {
+    max: maxTitleLevel,
+    scope: sendScope === 0 ? t2("\u6574\u9875") : String(sendScope)
+  });
+  new import_obsidian.Setting(containerEl).setName(t2("Telegraph \u6807\u9898\u5C42\u7EA7")).setDesc(titleLevelDesc).addDropdown((dropdown) => {
     const currentLevel = tgConfig.telegraphTitleLevel || 1;
     for (let lv = 1; lv <= maxTitleLevel; lv++) {
       dropdown.addOption(String(lv), `H${lv}`);
@@ -6811,67 +7179,134 @@ function renderSettings(containerEl, ctx) {
       await ctx.saveConfig({ telegraphTitleLevel: Number(value) });
     });
   });
-  new import_obsidian.Setting(containerEl).setName("Telegraph \u8D26\u53F7").setDesc(tgConfig.telegraphAccessToken ? "\u5DF2\u8FDE\u63A5\u3002\u53EF\u9A8C\u8BC1\u65B0 token\u3001\u521B\u5EFA\u65B0\u8D26\u53F7\u6216\u590D\u5236\u5F53\u524D token\u3002" : '\u8F93\u5165\u5DF2\u6709 Telegraph token\uFF0C\u6216\u70B9\u51FB"\u521B\u5EFA\u65B0\u8D26\u53F7"\u83B7\u53D6\u3002\u9996\u6B21\u53D1\u9001\u65F6\u4E5F\u4F1A\u81EA\u52A8\u521B\u5EFA\u3002').addText((text) => {
+  new import_obsidian.Setting(containerEl).setName(t2("Telegraph \u8D26\u53F7")).setDesc(tgConfig.telegraphAccessToken ? t2("\u5DF2\u8FDE\u63A5\u3002\u53EF\u9A8C\u8BC1\u65B0 token\u3001\u521B\u5EFA\u65B0\u8D26\u53F7\u6216\u590D\u5236\u5F53\u524D token\u3002") : t2('\u8F93\u5165\u5DF2\u6709 Telegraph token\uFF0C\u6216\u70B9\u51FB"\u521B\u5EFA\u65B0\u8D26\u53F7"\u83B7\u53D6\u3002\u9996\u6B21\u53D1\u9001\u65F6\u4E5F\u4F1A\u81EA\u52A8\u521B\u5EFA\u3002')).addText((text) => {
     text.inputEl.type = "password";
-    text.setPlaceholder("\u8F93\u5165 Telegraph access_token");
+    text.setPlaceholder(t2("\u8F93\u5165 Telegraph access_token"));
     text.setValue(tgConfig.telegraphAccessToken || "");
     telegraphTokenInput = text.inputEl;
-  }).addButton((btn) => btn.setButtonText("\u9A8C\u8BC1\u5E76\u4FDD\u5B58").onClick(async () => {
+  }).addButton((btn) => btn.setButtonText(t2("\u9A8C\u8BC1\u5E76\u4FDD\u5B58")).onClick(async () => {
     const token = ((telegraphTokenInput == null ? void 0 : telegraphTokenInput.value) || "").trim();
     if (!token) {
-      new import_obsidian.Notice("\u8BF7\u5148\u8F93\u5165 token");
+      new import_obsidian.Notice(t2("\u8BF7\u5148\u8F93\u5165 token"));
       return;
     }
     try {
-      btn.setButtonText("\u9A8C\u8BC1\u4E2D...");
+      btn.setButtonText(t2("\u9A8C\u8BC1\u4E2D..."));
       btn.disabled = true;
       await telegraph.getAccountInfo(token, ctx.requestUrl);
       await ctx.saveConfig({ telegraphAccessToken: token });
-      new import_obsidian.Notice("Telegraph token \u9A8C\u8BC1\u6210\u529F");
+      new import_obsidian.Notice(t2("Telegraph token \u9A8C\u8BC1\u6210\u529F"));
       ctx.refresh();
     } catch (error) {
-      new import_obsidian.Notice(`Token \u9A8C\u8BC1\u5931\u8D25: ${error.message}`);
+      new import_obsidian.Notice(t2("Token \u9A8C\u8BC1\u5931\u8D25: {error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u9A8C\u8BC1\u5E76\u4FDD\u5B58");
+      btn.setButtonText(t2("\u9A8C\u8BC1\u5E76\u4FDD\u5B58"));
       btn.disabled = false;
     }
-  })).addButton((btn) => btn.setButtonText("\u521B\u5EFA\u65B0\u8D26\u53F7").onClick(async () => {
+  })).addButton((btn) => btn.setButtonText(t2("\u521B\u5EFA\u65B0\u8D26\u53F7")).onClick(async () => {
     var _a;
     if (tgConfig.telegraphAccessToken) {
-      if (!confirm("\u5DF2\u6709\u8D26\u53F7\u8FDE\u63A5\uFF0C\u521B\u5EFA\u65B0\u8D26\u53F7\u540E\u5C06\u65E0\u6CD5\u7528\u65B0 token \u7F16\u8F91\u65E7\u9875\u9762\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F")) return;
+      if (!confirm(t2("\u5DF2\u6709\u8D26\u53F7\u8FDE\u63A5\uFF0C\u521B\u5EFA\u65B0\u8D26\u53F7\u540E\u5C06\u65E0\u6CD5\u7528\u65B0 token \u7F16\u8F91\u65E7\u9875\u9762\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F"))) return;
     }
     try {
-      btn.setButtonText("\u521B\u5EFA\u4E2D...");
+      btn.setButtonText(t2("\u521B\u5EFA\u4E2D..."));
       btn.disabled = true;
       const authorName = ((_a = ctx.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a.telegraphAuthorName) || "";
       const account = await telegraph.createAccount("JournalSync", authorName, ctx.requestUrl);
       await ctx.saveConfig({ telegraphAccessToken: account.access_token });
-      new import_obsidian.Notice("Telegraph \u8D26\u53F7\u521B\u5EFA\u6210\u529F");
+      new import_obsidian.Notice(t2("Telegraph \u8D26\u53F7\u521B\u5EFA\u6210\u529F"));
       ctx.refresh();
     } catch (error) {
-      new import_obsidian.Notice(`Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: ${error.message}`);
+      new import_obsidian.Notice(t2("Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: {error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u521B\u5EFA\u65B0\u8D26\u53F7");
+      btn.setButtonText(t2("\u521B\u5EFA\u65B0\u8D26\u53F7"));
       btn.disabled = false;
     }
-  })).addButton((btn) => btn.setButtonText("\u590D\u5236 token").setDisabled(!tgConfig.telegraphAccessToken).onClick(() => {
+  })).addButton((btn) => btn.setButtonText(t2("\u590D\u5236 token")).setDisabled(!tgConfig.telegraphAccessToken).onClick(() => {
     var _a;
     const token = ((_a = ctx.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a.telegraphAccessToken) || "";
     if (!token) {
-      new import_obsidian.Notice("\u6682\u65E0 token \u53EF\u590D\u5236");
+      new import_obsidian.Notice(t2("\u6682\u65E0 token \u53EF\u590D\u5236"));
       return;
     }
     navigator.clipboard.writeText(token).then(() => {
-      new import_obsidian.Notice("Token \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+      new import_obsidian.Notice(t2("Token \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F"));
     }).catch(() => {
-      new import_obsidian.Notice("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236");
+      new import_obsidian.Notice(t2("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236"));
     });
   }));
 }
-var import_obsidian, TG_API_BASE, convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT, telegraph, getMimeType, manifest2, MAX_TELEGRAM_IMAGES, defaultConfig, telegram_default;
+var import_obsidian, t2, registerTranslations2, TG_API_BASE, convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT, telegraph, getMimeType, manifest2, MAX_TELEGRAM_IMAGES, defaultConfig, telegram_default;
 var init_telegram = __esm({
   "src/adapters/telegram.js"() {
     import_obsidian = require("obsidian");
+    ({ t: t2, registerTranslations: registerTranslations2 } = require_i18n());
+    registerTranslations2("en", {
+      "\uFF1B": "; ",
+      "\u8F93\u5165\u4F60\u7684 Telegram Bot Token": "Enter your Telegram Bot Token",
+      "\u9891\u9053\u5217\u8868": "Channels",
+      "\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u70B9\u51FB\u300C\u83B7\u53D6\u9891\u9053\u5217\u8868\u300D\u6309\u94AE\u81EA\u52A8\u53D1\u73B0": 'Click the "Get channels" button in plugin settings to auto-discover',
+      "\u9ED8\u8BA4\u53D1\u9001\u9891\u9053": "Default send channels",
+      "\u52FE\u9009\u5728\u53D1\u9001\u9762\u677F\u4E2D\u9ED8\u8BA4\u51FA\u73B0\u7684\u9891\u9053": "Check channels that appear by default in the send panel",
+      "\u666E\u901A\u53D1\u9001\u65F6\u663E\u793A\u7F51\u5740\u9884\u89C8": "Show link preview on plain sends",
+      "\u5173\u95ED\u540E\uFF0CTelegram \u666E\u901A\u6587\u672C\u6D88\u606F\u4E0D\u4F1A\u5C55\u5F00\u7F51\u5740\u9884\u89C8\u3002": "When off, Telegram plain text messages will not expand link previews.",
+      "Bot Token \u672A\u914D\u7F6E": "Bot Token is not configured",
+      "\u5BCC\u6587\u672C\u5185\u5BB9\u4E3A\u7A7A\uFF0C\u672A\u53D1\u9001 Telegram \u6D88\u606F": "Rich content is empty; no Telegram message sent",
+      "Telegram \u5BCC\u6587\u672C\u8D85\u8FC7 32768 \u5B57\u7B26\u9650\u5236": "Telegram rich text exceeds the 32768 character limit",
+      "Telegram \u5BCC\u6587\u672C\u8D85\u8FC7 50 \u4E2A\u5A92\u4F53\u9644\u4EF6\u9650\u5236": "Telegram rich text exceeds the 50 media attachment limit",
+      "sendMessage \u5931\u8D25: HTTP {status}": "sendMessage failed: HTTP {status}",
+      "sendRichMessage \u5931\u8D25: HTTP {status}": "sendRichMessage failed: HTTP {status}",
+      "{method} \u5931\u8D25: HTTP {status}": "{method} failed: HTTP {status}",
+      "Telegraph \u8D26\u53F7\u521B\u5EFA\u5931\u8D25: {error}": "Telegraph account creation failed: {error}",
+      "\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247: {name}": "Unable to read image: {name}",
+      "\u56FE\u7247\u4E0A\u4F20\u5931\u8D25 ({name}): {error}": "Image upload failed ({name}): {error}",
+      "Telegraph \u521B\u5EFA\u9875\u9762\u5931\u8D25: {error}": "Telegraph page creation failed: {error}",
+      "Telegram Bot Token \u672A\u914D\u7F6E": "Telegram Bot Token is not configured",
+      "Telegram \u9891\u9053\u672A\u914D\u7F6E": "Telegram channel is not configured",
+      "\u53D1\u9001\u5931\u8D25": "Send failed",
+      "Telegram \u9891\u9053\u672A\u9009\u62E9": "Telegram channel not selected",
+      "Telegram \u9891\u9053\u672A\u914D\u7F6E\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u5217\u8868": "Telegram channel is not configured; please get the channel list in settings first",
+      "Telegram \u672A\u77E5\u9519\u8BEF": "Unknown error",
+      "Telegram \u8D85\u8FC7 {max} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20": "More than {max} images; only sending the first {max}",
+      "\u65E0\u6CD5\u8BFB\u53D6 Telegram \u56FE\u7247\uFF1A{names}": "Unable to read Telegram images: {names}",
+      "\u627E\u5230 {count} \u4E2A\u53EF\u7528\u9891\u9053": "Found {count} available channels",
+      "\u8FDE\u63A5\u6210\u529F\uFF0C\u4F46\u6682\u672A\u53D1\u73B0\u53EF\u7528\u9891\u9053": "Connected, but no available channels found yet",
+      "\u672A\u77E5\u64CD\u4F5C: {action}": "Unknown action: {action}",
+      "\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u70B9\u51FB\u53F3\u4FA7\u6309\u94AE\u83B7\u53D6": "No channel list yet; click the button on the right to fetch",
+      "\u5DF2\u53D1\u73B0 {count} \u4E2A\u9891\u9053\uFF1A{names}": "Found {count} channels: {names}",
+      "\u9ED8\u8BA4\u53D1\u9001\u9891\u9053\uFF1A": "Default send channels:",
+      "\u4ECE @BotFather \u83B7\u53D6": "Get from @BotFather",
+      "\u83B7\u53D6\u9891\u9053\u5217\u8868": "Get channels",
+      "\u83B7\u53D6\u4E2D...": "Fetching...",
+      "\u83B7\u53D6\u6210\u529F": "Fetched successfully",
+      "\u83B7\u53D6\u9891\u9053\u5931\u8D25\uFF1A{error}": "Failed to get channels: {error}",
+      "\u542F\u7528\u5BCC\u6587\u672C\u53D1\u9001": "Enable rich text sending",
+      "\u5F00\u542F\u540E\u4F7F\u7528 Telegram \u539F\u751F\u5A92\u4F53\u4E0A\u4F20\u53D1\u9001\u56FE\u6587\u6DF7\u6392\u5185\u5BB9\u3002\u5173\u95ED\u540E\u4EE5\u666E\u901A\u9644\u4EF6\u65B9\u5F0F\u53D1\u9001\u56FE\u7247\u3002": "When on, sends mixed text-and-image content using Telegram native media upload. When off, sends images as regular attachments.",
+      "Telegraph \u4F5C\u8005\u540D": "Telegraph author name",
+      "\u663E\u793A\u5728 Telegraph \u9875\u9762\u4E0A\u7684\u4F5C\u8005\u540D\u79F0\uFF0C\u53EF\u7559\u7A7A\u3002": "Author name shown on the Telegraph page; can be left empty.",
+      "Telegraph \u6807\u9898\u5C42\u7EA7": "Telegraph title level",
+      "\u5F53\u524D\u53D1\u9001\u5C42\u7EA7\u4E3A 1\uFF0C\u4EC5\u53EF\u4F7F\u7528\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u6807\u9898\u3002": "Current send scope is 1; only H1 can be used as the Telegraph title.",
+      "\u9009\u62E9\u54EA\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u9875\u9762\u6807\u9898\uFF081-{max}\uFF09\u3002\u6B63\u6587\u4E2D\u7684\u6807\u9898\u4F1A\u76F8\u5E94\u504F\u79FB\u3002\u7ED1\u5B9A\u53D1\u9001\u5C42\u7EA7\uFF08\u5F53\u524D: {scope}\uFF09\u3002": "Choose which heading level becomes the Telegraph page title (1-{max}). Headings in the body shift accordingly. Bound to send scope (current: {scope}).",
+      "\u6574\u9875": "Whole page",
+      "Telegraph \u8D26\u53F7": "Telegraph account",
+      "\u5DF2\u8FDE\u63A5\u3002\u53EF\u9A8C\u8BC1\u65B0 token\u3001\u521B\u5EFA\u65B0\u8D26\u53F7\u6216\u590D\u5236\u5F53\u524D token\u3002": "Connected. You can verify a new token, create a new account, or copy the current token.",
+      '\u8F93\u5165\u5DF2\u6709 Telegraph token\uFF0C\u6216\u70B9\u51FB"\u521B\u5EFA\u65B0\u8D26\u53F7"\u83B7\u53D6\u3002\u9996\u6B21\u53D1\u9001\u65F6\u4E5F\u4F1A\u81EA\u52A8\u521B\u5EFA\u3002': 'Enter an existing Telegraph token, or click "Create new account" to get one. It is also created automatically on first send.',
+      "\u8F93\u5165 Telegraph access_token": "Enter Telegraph access_token",
+      "\u9A8C\u8BC1\u5E76\u4FDD\u5B58": "Verify and save",
+      "\u8BF7\u5148\u8F93\u5165 token": "Please enter a token first",
+      "\u9A8C\u8BC1\u4E2D...": "Verifying...",
+      "Telegraph token \u9A8C\u8BC1\u6210\u529F": "Telegraph token verified successfully",
+      "Token \u9A8C\u8BC1\u5931\u8D25: {error}": "Token verification failed: {error}",
+      "\u521B\u5EFA\u65B0\u8D26\u53F7": "Create new account",
+      "\u5DF2\u6709\u8D26\u53F7\u8FDE\u63A5\uFF0C\u521B\u5EFA\u65B0\u8D26\u53F7\u540E\u5C06\u65E0\u6CD5\u7528\u65B0 token \u7F16\u8F91\u65E7\u9875\u9762\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F": "An account is already connected; after creating a new one you will not be able to edit old pages with the new token. Continue?",
+      "\u521B\u5EFA\u4E2D...": "Creating...",
+      "Telegraph \u8D26\u53F7\u521B\u5EFA\u6210\u529F": "Telegraph account created successfully",
+      "\u590D\u5236 token": "Copy token",
+      "\u6682\u65E0 token \u53EF\u590D\u5236": "No token to copy",
+      "Token \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F": "Token copied to clipboard",
+      "\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236": "Copy failed; please copy manually",
+      "\u3001": ", "
+    });
     TG_API_BASE = "https://api.telegram.org";
     ({ convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT } = require_telegram_markdown());
     telegraph = require_telegraph();
@@ -6880,7 +7315,6 @@ var init_telegram = __esm({
       id: "telegram",
       version: "2.0.0",
       name: "Telegram",
-      description: "\u53D1\u9001\u5185\u5BB9\u5230 Telegram \u9891\u9053",
       displayOrder: 20,
       enabledByDefault: false,
       capabilities: {
@@ -7019,7 +7453,7 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
     return { id: null, error: `HTTP ${response.status}: ${result.error || response.text || ""}` };
   }
   if (!result.id) {
-    return { id: null, error: "Mastodon \u672A\u8FD4\u56DE\u5A92\u4F53 ID" };
+    return { id: null, error: t3("Mastodon \u672A\u8FD4\u56DE\u5A92\u4F53 ID") };
   }
   return { id: result.id, error: "" };
 }
@@ -7029,7 +7463,7 @@ async function validate3({ payload }) {
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   const images = attachments.filter((a) => a.kind === "image");
   if (!payload.plainText && images.length === 0) {
-    errors.push("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+    errors.push(t3("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"));
   }
   return { warnings, errors };
 }
@@ -7039,7 +7473,7 @@ async function execute3({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
   const accessToken = String(config.accessToken || "").trim();
   const visibility = config.visibility || "public";
   if (!serverUrl || !accessToken) {
-    return { success: false, error: "Mastodon \u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E" };
+    return { success: false, error: t3("Mastodon \u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E") };
   }
   const textContent = String(payload.plainText || "").trim();
   const baseUrl = serverUrl.replace(/\/+$/, "");
@@ -7050,28 +7484,31 @@ async function execute3({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
     const allImages = attachments.filter((a) => a.kind === "image");
     const images = allImages.slice(0, MAX_MASTODON_IMAGES);
     if (allImages.length > MAX_MASTODON_IMAGES) {
-      warnings.push(`\u8D85\u8FC7 ${MAX_MASTODON_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_MASTODON_IMAGES} \u5F20`);
+      warnings.push(t3("Mastodon \u8D85\u8FC7 {max} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20", { max: MAX_MASTODON_IMAGES }));
     }
     for (const img of images) {
       try {
         const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(img.vaultPath) : null;
         if (!buffer) {
-          return { success: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${img.filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002` };
+          return { success: false, error: t3("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", { filename: img.filename }) };
         }
         const uploadResult = await uploadImageToMastodon(buffer, img.filename, baseUrl, accessToken, requestUrl2);
         if (!uploadResult.id) {
           return {
             success: false,
-            error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A${img.filename}${uploadResult.error ? `\uFF08${uploadResult.error}\uFF09` : ""}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`
+            error: t3("\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A{filename}{detail}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", {
+              filename: img.filename,
+              detail: uploadResult.error ? t3("\uFF08{detail}\uFF09", { detail: uploadResult.error }) : ""
+            })
           };
         }
         mediaIds.push(uploadResult.id);
       } catch (error) {
-        return { success: false, error: `\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A${img.filename}\uFF08${error.message || String(error)}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002` };
+        return { success: false, error: t3("\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A{filename}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", { filename: img.filename, error: error.message || String(error) }) };
       }
     }
     if (!textContent && mediaIds.length === 0) {
-      return { success: false, error: "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A" };
+      return { success: false, error: t3("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A") };
     }
     const response = await requestUrl2({
       url: `${baseUrl}/api/v1/statuses`,
@@ -7081,7 +7518,7 @@ async function execute3({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        status: textContent || "\u{1F4F7}",
+        ...textContent ? { status: textContent } : {},
         visibility,
         ...mediaIds.length > 0 ? { media_ids: mediaIds } : {}
       }),
@@ -7114,7 +7551,7 @@ function renderSettings2(containerEl, ctx) {
     const acct = accounts[i];
     renderMastodonAccountCard(containerEl, ctx, acct, i);
   }
-  new import_obsidian2.Setting(containerEl).setName("\u6DFB\u52A0\u8D26\u53F7").setDesc("\u6DFB\u52A0\u4E00\u4E2A\u65B0\u7684 Mastodon \u5B9E\u4F8B\u8D26\u53F7").addButton((btn) => btn.setButtonText("+ \u6DFB\u52A0").onClick(async () => {
+  new import_obsidian2.Setting(containerEl).setName(t3("\u6DFB\u52A0\u8D26\u53F7")).setDesc(t3("\u6DFB\u52A0\u4E00\u4E2A\u65B0\u7684 Mastodon \u5B9E\u4F8B\u8D26\u53F7")).addButton((btn) => btn.setButtonText(t3("+ \u6DFB\u52A0")).onClick(async () => {
     const newAcct = {
       id: `mstd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       label: "",
@@ -7131,47 +7568,47 @@ function renderSettings2(containerEl, ctx) {
 function renderMastodonAccountCard(containerEl, ctx, acct, index) {
   const cardEl = containerEl.createDiv({ cls: "js-bridge-mstd-card" });
   const headerEl = cardEl.createDiv({ cls: "js-bridge-mstd-card-header" });
-  const titleText = acct.label || acct.serverUrl || `\u8D26\u53F7 ${index + 1}`;
+  const titleText = acct.label || acct.serverUrl || t3("\u8D26\u53F7 {index}", { index: index + 1 });
   headerEl.createEl("span", { text: titleText, cls: "js-bridge-mstd-card-title" });
-  headerEl.createEl("span", { text: acct.serverUrl || "\u672A\u914D\u7F6E", cls: "js-bridge-mstd-card-url" });
+  headerEl.createEl("span", { text: acct.serverUrl || t3("\u672A\u914D\u7F6E"), cls: "js-bridge-mstd-card-url" });
   const deleteBtn = headerEl.createEl("button", {
     type: "button",
-    text: "\u5220\u9664",
+    text: t3("\u5220\u9664"),
     cls: "js-bridge-mstd-card-delete"
   });
   deleteBtn.addEventListener("click", async () => {
-    if (!confirm(`\u786E\u5B9A\u5220\u9664\u8D26\u53F7\u300C${titleText}\u300D\uFF1F`)) return;
+    if (!confirm(t3("\u786E\u5B9A\u5220\u9664\u8D26\u53F7\u300C{title}\u300D\uFF1F", { title: titleText }))) return;
     const freshAccounts = ctx.plugin.getMastodonAccounts();
     const updated = freshAccounts.filter((a) => a.id !== acct.id);
     await ctx.saveConfig({ accounts: updated });
     cleanupMastodonPresets(ctx, acct.id);
     ctx.refresh();
   });
-  new import_obsidian2.Setting(cardEl).setName("\u663E\u793A\u540D\u79F0").setDesc("\u5728\u53D1\u9001\u9762\u677F\u4E2D\u663E\u793A\u7684\u6587\u5B57\uFF0C\u5982\u300C\u4E3B\u8D26\u53F7\u300D\u300C\u957F\u6BDB\u8C61\u300D").addText((text) => text.setPlaceholder("\u4E3B\u8D26\u53F7").setValue(acct.label || "").onChange((value) => {
+  new import_obsidian2.Setting(cardEl).setName(t3("\u663E\u793A\u540D\u79F0")).setDesc(t3("\u5728\u53D1\u9001\u9762\u677F\u4E2D\u663E\u793A\u7684\u6587\u5B57\uFF0C\u5982\u300C\u4E3B\u8D26\u53F7\u300D\u300C\u957F\u6BDB\u8C61\u300D")).addText((text) => text.setPlaceholder(t3("\u4E3B\u8D26\u53F7")).setValue(acct.label || "").onChange((value) => {
     updateMastodonAccount(ctx, acct.id, { label: value.trim() });
   }));
-  new import_obsidian2.Setting(cardEl).setName("\u5B9E\u4F8B\u5730\u5740").setDesc("\u4F8B\u5982 https://mastodon.social").addText((text) => text.setPlaceholder("https://mastodon.social").setValue(acct.serverUrl || "").onChange((value) => {
+  new import_obsidian2.Setting(cardEl).setName(t3("\u5B9E\u4F8B\u5730\u5740")).setDesc(t3("\u4F8B\u5982 https://mastodon.social")).addText((text) => text.setPlaceholder("https://mastodon.social").setValue(acct.serverUrl || "").onChange((value) => {
     updateMastodonAccount(ctx, acct.id, { serverUrl: value.trim() });
   }));
   new import_obsidian2.Setting(cardEl).setName("Access Token").addText((text) => {
     text.inputEl.type = "password";
-    text.setPlaceholder("\u4F60\u7684 Mastodon Access Token").setValue(acct.accessToken || "").onChange((value) => {
+    text.setPlaceholder(t3("\u4F60\u7684 Mastodon Access Token")).setValue(acct.accessToken || "").onChange((value) => {
       updateMastodonAccount(ctx, acct.id, { accessToken: value.trim() });
     });
   });
-  new import_obsidian2.Setting(cardEl).setName("\u53EF\u89C1\u6027").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("unlisted", "\u4E0D\u5217\u51FA").addOption("private", "\u4EC5\u5173\u6CE8\u8005").addOption("direct", "\u79C1\u4FE1").setValue(acct.visibility || "public").onChange((value) => {
+  new import_obsidian2.Setting(cardEl).setName(t3("\u53EF\u89C1\u6027")).addDropdown((dropdown) => dropdown.addOption("public", t3("\u516C\u5F00")).addOption("unlisted", t3("\u4E0D\u5217\u51FA")).addOption("private", t3("\u4EC5\u5173\u6CE8\u8005")).addOption("direct", t3("\u79C1\u4FE1")).setValue(acct.visibility || "public").onChange((value) => {
     updateMastodonAccount(ctx, acct.id, { visibility: value });
   }));
-  new import_obsidian2.Setting(cardEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u9A8C\u8BC1\u5F53\u524D\u8D26\u53F7\u7684\u5B9E\u4F8B\u5730\u5740\u548C Access Token \u662F\u5426\u6709\u6548\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+  new import_obsidian2.Setting(cardEl).setName(t3("\u6D4B\u8BD5\u8FDE\u63A5")).setDesc(t3("\u9A8C\u8BC1\u5F53\u524D\u8D26\u53F7\u7684\u5B9E\u4F8B\u5730\u5740\u548C Access Token \u662F\u5426\u6709\u6548\u3002")).addButton((btn) => btn.setButtonText(t3("\u6D4B\u8BD5\u8FDE\u63A5")).onClick(async () => {
     var _a;
     const currentConfig = ctx.plugin.getMastodonAccount(acct.id) || {};
     const serverUrl = String(currentConfig.serverUrl || "").trim();
     const accessToken = String(currentConfig.accessToken || "").trim();
     if (!serverUrl || !accessToken) {
-      new import_obsidian2.Notice("\u8BF7\u5148\u914D\u7F6E\u5B9E\u4F8B\u5730\u5740\u548C Access Token");
+      new import_obsidian2.Notice(t3("\u8BF7\u5148\u914D\u7F6E\u5B9E\u4F8B\u5730\u5740\u548C Access Token"));
       return;
     }
-    btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+    btn.setButtonText(t3("\u8FDE\u63A5\u4E2D..."));
     btn.disabled = true;
     try {
       const baseUrl = serverUrl.replace(/\/+$/, "");
@@ -7183,8 +7620,8 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
       });
       if (response.status >= 200 && response.status < 300) {
         const result = response.json || {};
-        const display = result.display_name || result.username || "\u672A\u77E5";
-        new import_obsidian2.Notice(`Mastodon \u8FDE\u63A5\u6210\u529F\uFF08${display}\uFF09`);
+        const display = result.display_name || result.username || t3("\u672A\u77E5");
+        new import_obsidian2.Notice(t3("Mastodon \u8FDE\u63A5\u6210\u529F\uFF08{display}\uFF09", { display }));
       } else {
         let errMsg = "";
         try {
@@ -7192,12 +7629,12 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
         } catch (e) {
           errMsg = `HTTP ${response.status}`;
         }
-        new import_obsidian2.Notice(`Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A${errMsg}`);
+        new import_obsidian2.Notice(t3("Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A{error}", { error: errMsg }));
       }
     } catch (error) {
-      new import_obsidian2.Notice(`Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A${error.message || String(error)}`);
+      new import_obsidian2.Notice(t3("Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }));
     } finally {
-      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.setButtonText(t3("\u6D4B\u8BD5\u8FDE\u63A5"));
       btn.disabled = false;
     }
   }));
@@ -7223,17 +7660,53 @@ function cleanupMastodonPresets(ctx, accountId) {
     ctx.plugin.saveSettings();
   }
 }
-var import_obsidian2, getMimeType2, buildMultipartBody, manifest3, defaultConfig2, MAX_MASTODON_IMAGES, mastodon_default;
+var import_obsidian2, getMimeType2, buildMultipartBody, t3, registerTranslations3, manifest3, defaultConfig2, MAX_MASTODON_IMAGES, mastodon_default;
 var init_mastodon = __esm({
   "src/adapters/mastodon.js"() {
     import_obsidian2 = require("obsidian");
     ({ getMimeType: getMimeType2 } = require_mime());
     ({ buildMultipartBody } = require_multipart());
+    ({ t: t3, registerTranslations: registerTranslations3 } = require_i18n());
+    registerTranslations3("en", {
+      "\uFF08{detail}\uFF09": " ({detail})",
+      "Mastodon \u5B9E\u4F8B\u5730\u5740": "Mastodon instance URL",
+      "\u4F60\u7684 Mastodon Access Token": "Your Mastodon Access Token",
+      "\u53EF\u89C1\u6027": "Visibility",
+      "\u516C\u5F00": "Public",
+      "\u4E0D\u5217\u51FA": "Unlisted",
+      "\u4EC5\u5173\u6CE8\u8005": "Followers only",
+      "\u79C1\u4FE1": "Direct message",
+      "Mastodon \u672A\u8FD4\u56DE\u5A92\u4F53 ID": "Mastodon did not return a media ID",
+      "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A": "Content cannot be empty",
+      "Mastodon \u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E": "Mastodon instance URL or Access Token is not configured",
+      "Mastodon \u8D85\u8FC7 {max} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20": "Over {max} images; only the first {max} will be sent",
+      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Failed to read image: {filename}; nothing was sent.",
+      "\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A{filename}{detail}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Image upload failed: {filename}{detail}; nothing was sent.",
+      "\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A{filename}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Image processing failed: {filename} ({error}); nothing was sent.",
+      "\u6DFB\u52A0\u8D26\u53F7": "Add account",
+      "\u6DFB\u52A0\u4E00\u4E2A\u65B0\u7684 Mastodon \u5B9E\u4F8B\u8D26\u53F7": "Add a new Mastodon instance account",
+      "+ \u6DFB\u52A0": "+ Add",
+      "\u8D26\u53F7 {index}": "Account {index}",
+      "\u672A\u914D\u7F6E": "Not configured",
+      "\u5220\u9664": "Delete",
+      "\u786E\u5B9A\u5220\u9664\u8D26\u53F7\u300C{title}\u300D\uFF1F": 'Delete account "{title}"?',
+      "\u663E\u793A\u540D\u79F0": "Display name",
+      "\u5728\u53D1\u9001\u9762\u677F\u4E2D\u663E\u793A\u7684\u6587\u5B57\uFF0C\u5982\u300C\u4E3B\u8D26\u53F7\u300D\u300C\u957F\u6BDB\u8C61\u300D": 'Text shown in the send panel, e.g. "Main account" or "Mastodon"',
+      "\u4E3B\u8D26\u53F7": "Main account",
+      "\u5B9E\u4F8B\u5730\u5740": "Instance URL",
+      "\u4F8B\u5982 https://mastodon.social": "e.g. https://mastodon.social",
+      "\u6D4B\u8BD5\u8FDE\u63A5": "Test connection",
+      "\u9A8C\u8BC1\u5F53\u524D\u8D26\u53F7\u7684\u5B9E\u4F8B\u5730\u5740\u548C Access Token \u662F\u5426\u6709\u6548\u3002": "Verify that the current account's instance URL and Access Token are valid.",
+      "\u8BF7\u5148\u914D\u7F6E\u5B9E\u4F8B\u5730\u5740\u548C Access Token": "Please configure the instance URL and Access Token first",
+      "\u8FDE\u63A5\u4E2D...": "Connecting...",
+      "\u672A\u77E5": "Unknown",
+      "Mastodon \u8FDE\u63A5\u6210\u529F\uFF08{display}\uFF09": "Mastodon connection successful ({display})",
+      "Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A{error}": "Mastodon connection failed: {error}"
+    });
     manifest3 = {
       id: "mastodon",
       version: "1.0.0",
       name: "Mastodon",
-      description: "\u53D1\u5E03\u5185\u5BB9\u5230 Mastodon",
       displayOrder: 30,
       enabledByDefault: false,
       capabilities: {
@@ -7318,7 +7791,7 @@ async function validate4({ payload }) {
   const errors = [];
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   if (!payload.plainText && attachments.length === 0) {
-    errors.push("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+    errors.push(t4("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"));
   }
   return { warnings, errors };
 }
@@ -7328,7 +7801,7 @@ async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
   const apiToken = String(config.apiToken || "").trim();
   const visibility = ["public", "home", "followers"].includes(config.visibility) ? config.visibility : "public";
   if (!serverUrl || !apiToken) {
-    return { success: false, error: "Misskey \u5B9E\u4F8B\u5730\u5740\u6216 API Token \u672A\u914D\u7F6E" };
+    return { success: false, error: t4("Misskey \u5B9E\u4F8B\u5730\u5740\u6216 API Token \u672A\u914D\u7F6E") };
   }
   const textContent = String(payload.plainText || "").trim();
   const baseUrl = serverUrl.replace(/\/+$/, "");
@@ -7339,27 +7812,27 @@ async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
     const allImages = attachments.filter((a) => a.kind === "image");
     const images = allImages.slice(0, MAX_MISSKEY_IMAGES);
     if (allImages.length > MAX_MISSKEY_IMAGES) {
-      warnings.push(`\u8D85\u8FC7 ${MAX_MISSKEY_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_MISSKEY_IMAGES} \u5F20`);
+      warnings.push(t4("\u8D85\u8FC7 {count} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {count} \u5F20", { count: MAX_MISSKEY_IMAGES }));
     }
     for (const img of images) {
       try {
         const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(img.vaultPath) : null;
         if (!buffer) {
-          warnings.push(`\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${img.filename}`);
+          warnings.push(t4("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}", { name: img.filename }));
           continue;
         }
         const fileId = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl2);
         if (fileId) {
           fileIds.push(fileId);
         } else {
-          warnings.push(`\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${img.filename}`);
+          warnings.push(t4("\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}", { name: img.filename }));
         }
       } catch (error) {
-        warnings.push(`\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${img.filename}`);
+        warnings.push(t4("\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}", { name: img.filename }));
       }
     }
     if (!textContent && fileIds.length === 0) {
-      return { success: false, error: "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A" };
+      return { success: false, error: t4("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A") };
     }
     const response = await requestUrl2({
       url: `${baseUrl}/api/notes/create`,
@@ -7396,11 +7869,11 @@ async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
 async function runAction3(actionId, config = {}, requestUrlFn) {
   var _a, _b;
   if (actionId !== "testConnection") {
-    throw new Error(`Misskey \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+    throw new Error(t4("Misskey \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}", { action: actionId }));
   }
   const serverUrl = String(config.serverUrl || "").trim();
   const apiToken = String(config.apiToken || "").trim();
-  if (!serverUrl || !apiToken) throw new Error("\u8BF7\u5148\u914D\u7F6E Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token");
+  if (!serverUrl || !apiToken) throw new Error(t4("\u8BF7\u5148\u914D\u7F6E Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token"));
   const baseUrl = serverUrl.replace(/\/+$/, "");
   const response = await requestUrlFn({
     url: `${baseUrl}/api/i`,
@@ -7423,19 +7896,40 @@ async function runAction3(actionId, config = {}, requestUrlFn) {
     result = response.json || {};
   } catch (e) {
   }
-  const username = result.username || result.name || "\u672A\u77E5";
-  return { success: true, message: `Misskey \u8FDE\u63A5\u6210\u529F\uFF08\u7528\u6237\uFF1A${username}\uFF09` };
+  const username = result.username || result.name || t4("\u672A\u77E5");
+  return { success: true, message: t4("Misskey \u8FDE\u63A5\u6210\u529F\uFF08\u7528\u6237\uFF1A{name}\uFF09", { name: username }) };
 }
-var getMimeType3, buildMultipartBody2, manifest4, MAX_MISSKEY_IMAGES, missky_default;
+var getMimeType3, buildMultipartBody2, t4, registerTranslations4, manifest4, MAX_MISSKEY_IMAGES, missky_default;
 var init_missky = __esm({
   "src/adapters/missky.js"() {
     ({ getMimeType: getMimeType3 } = require_mime());
     ({ buildMultipartBody: buildMultipartBody2 } = require_multipart());
+    ({ t: t4, registerTranslations: registerTranslations4 } = require_i18n());
+    registerTranslations4("en", {
+      "Misskey \u5B9E\u4F8B\u5730\u5740": "Misskey instance URL",
+      "\u4F60\u7684 Misskey API Token": "Your Misskey API Token",
+      "\u53EF\u89C1\u6027": "Visibility",
+      "\u516C\u5F00": "Public",
+      "\u4E3B\u9875": "Home",
+      "\u4EC5\u5173\u6CE8\u8005": "Followers only",
+      "\u6D4B\u8BD5\u8FDE\u63A5": "Test connection",
+      "\u8FDE\u63A5\u4E2D...": "Connecting...",
+      "\u9A8C\u8BC1 Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token \u662F\u5426\u6709\u6548\u3002": "Verify that the Misskey instance URL and API Token are valid.",
+      "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A": "Content cannot be empty",
+      "Misskey \u5B9E\u4F8B\u5730\u5740\u6216 API Token \u672A\u914D\u7F6E": "Misskey instance URL or API Token is not configured",
+      "\u8D85\u8FC7 {count} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {count} \u5F20": "Over {count} images, only sending the first {count}",
+      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}": "Failed to read image, skipped: {name}",
+      "\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}": "Failed to upload image, skipped: {name}",
+      "\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}": "Failed to process image, skipped: {name}",
+      "Misskey \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}": "Misskey adapter does not support action: {action}",
+      "\u8BF7\u5148\u914D\u7F6E Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token": "Please configure the Misskey instance URL and API Token first",
+      "\u672A\u77E5": "Unknown",
+      "Misskey \u8FDE\u63A5\u6210\u529F\uFF08\u7528\u6237\uFF1A{name}\uFF09": "Misskey connection successful (user: {name})"
+    });
     manifest4 = {
       id: "missky",
       version: "1.0.0",
       name: "Misskey",
-      description: "\u53D1\u5E03\u5185\u5BB9\u5230 Misskey / Calckey / Firefish \u5B9E\u4F8B",
       enabledByDefault: false,
       displayOrder: 40,
       capabilities: {
@@ -7504,7 +7998,7 @@ __export(notion_exports, {
 });
 function getResponseError(response) {
   const json = (response == null ? void 0 : response.json) || {};
-  return json.message || json.error || (response == null ? void 0 : response.text) || `HTTP ${(response == null ? void 0 : response.status) || "\u672A\u77E5"}`;
+  return json.message || json.error || (response == null ? void 0 : response.text) || `HTTP ${(response == null ? void 0 : response.status) || t5("\u672A\u77E5")}`;
 }
 function getHeader(response, name) {
   const headers = response == null ? void 0 : response.headers;
@@ -7714,9 +8208,9 @@ async function uploadFile(requestUrl2, token, file) {
     body: JSON.stringify({ mode: "single_part", filename: file.filename, content_type: file.mimeType }),
     throw: false
   });
-  if (createResponse.status < 200 || createResponse.status >= 300) throw new Error(`\u56FE\u7247 ${file.filename} \u521B\u5EFA\u4E0A\u4F20\u5931\u8D25\uFF1A${getResponseError(createResponse)}`);
+  if (createResponse.status < 200 || createResponse.status >= 300) throw new Error(t5("\u56FE\u7247 {filename} \u521B\u5EFA\u4E0A\u4F20\u5931\u8D25\uFF1A{error}", { filename: file.filename, error: getResponseError(createResponse) }));
   const fileUploadId = (_a = createResponse.json) == null ? void 0 : _a.id;
-  if (!fileUploadId) throw new Error(`\u56FE\u7247 ${file.filename} \u521B\u5EFA\u4E0A\u4F20\u5931\u8D25\uFF1A\u672A\u8FD4\u56DE\u4E0A\u4F20 ID`);
+  if (!fileUploadId) throw new Error(t5("\u56FE\u7247 {filename} \u521B\u5EFA\u4E0A\u4F20\u5931\u8D25\uFF1A\u672A\u8FD4\u56DE\u4E0A\u4F20 ID", { filename: file.filename }));
   const boundary = `----JournalSyncNotion${Date.now()}${Math.random().toString(16).slice(2)}`;
   const safeFilename = String(file.filename || "image").replace(/[\"\r\n]/g, "_");
   const mimeType = file.mimeType || "application/octet-stream";
@@ -7743,7 +8237,7 @@ Content-Type: ${mimeType}\r
     body: body.buffer,
     throw: false
   });
-  if (sendResponse.status < 200 || sendResponse.status >= 300) throw new Error(`\u56FE\u7247 ${file.filename} \u4E0A\u4F20\u5931\u8D25\uFF1A${getResponseError(sendResponse)}`);
+  if (sendResponse.status < 200 || sendResponse.status >= 300) throw new Error(t5("\u56FE\u7247 {filename} \u4E0A\u4F20\u5931\u8D25\uFF1A{error}", { filename: file.filename, error: getResponseError(sendResponse) }));
   return fileUploadId;
 }
 async function prepareImages({ requestUrl: requestUrl2, token, localImages = [], externalImages = [] }) {
@@ -7787,7 +8281,7 @@ async function findDailyPage(requestUrl2, token, parentPageId, dateTitle) {
     }
     cursor = ((_c = response.json) == null ? void 0 : _c.has_more) ? String(((_d = response.json) == null ? void 0 : _d.next_cursor) || "") : "";
   } while (cursor);
-  if (matches.length > 1) throw new Error(`Notion \u4E2D\u627E\u5230\u591A\u4E2A"${dateTitle}"\u6BCF\u65E5\u9875\u9762\uFF0C\u8BF7\u4FDD\u7559\u4E00\u4E2A\u540E\u91CD\u8BD5`);
+  if (matches.length > 1) throw new Error(t5('Notion \u4E2D\u627E\u5230\u591A\u4E2A"{dateTitle}"\u6BCF\u65E5\u9875\u9762\uFF0C\u8BF7\u4FDD\u7559\u4E00\u4E2A\u540E\u91CD\u8BD5', { dateTitle }));
   return matches[0] || null;
 }
 async function createPage(requestUrl2, token, parent, title, children) {
@@ -7808,7 +8302,7 @@ async function createPage(requestUrl2, token, parent, title, children) {
   });
   if (response.status < 200 || response.status >= 300) throw new Error(getResponseError(response));
   const pageId = (_a = response.json) == null ? void 0 : _a.id;
-  if (!pageId) throw new Error("Notion \u672A\u8FD4\u56DE\u65B0\u9875\u9762 ID");
+  if (!pageId) throw new Error(t5("Notion \u672A\u8FD4\u56DE\u65B0\u9875\u9762 ID"));
   if (children.length > MAX_BLOCKS_PER_REQUEST) await appendBlocks(requestUrl2, token, pageId, children);
   return pageId;
 }
@@ -7836,7 +8330,7 @@ async function prepareLocalImages(payload, autoCompress) {
     const vaultPath = img.vaultPath || img.filename;
     if (!vaultPath || typeof payload.readAttachment !== "function") continue;
     const buffer = await payload.readAttachment(vaultPath);
-    if (!buffer) throw new Error(`\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247\uFF1A${img.filename || vaultPath}`);
+    if (!buffer) throw new Error(t5("\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247\uFF1A{name}", { name: img.filename || vaultPath }));
     const source = new Uint8Array(buffer);
     let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
     let filename = img.filename || `image-${index + 1}`;
@@ -7880,15 +8374,15 @@ async function validate5({ payload }) {
   for (const img of images) {
     const ext = String(img.filename || "").split(".").pop().toLowerCase();
     if (!["jpg", "jpeg", "png", "webp", "gif", "svg"].includes(ext)) {
-      warnings.push(`Notion \u53EF\u80FD\u4E0D\u652F\u6301\u56FE\u7247\u683C\u5F0F\uFF1A${img.filename}`);
+      warnings.push(t5("Notion \u53EF\u80FD\u4E0D\u652F\u6301\u56FE\u7247\u683C\u5F0F\uFF1A{filename}", { filename: img.filename }));
     }
   }
   return { warnings, errors };
 }
 async function execute5({ config = {}, payload = {}, requestUrl: requestUrl2 }) {
   const token = String(config.token || "").trim();
-  if (!token) return { success: false, error: "Notion Token \u672A\u914D\u7F6E" };
-  if (!requestUrl2) return { success: false, error: "Notion \u8BF7\u6C42\u63A5\u53E3\u4E0D\u53EF\u7528" };
+  if (!token) return { success: false, error: t5("Notion Token \u672A\u914D\u7F6E") };
+  if (!requestUrl2) return { success: false, error: t5("Notion \u8BF7\u6C42\u63A5\u53E3\u4E0D\u53EF\u7528") };
   try {
     const autoCompress = Boolean(config.autoCompressLargeImages);
     const { localImages, warnings: imageWarnings } = await prepareLocalImages(payload, autoCompress);
@@ -7898,11 +8392,11 @@ async function execute5({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
     const normalizedTitle = cleanText(title);
     const targetType = config.targetType || "page";
     if (targetType === "database") {
-      if (!config.dataSourceId || !config.titleProperty) return { success: false, error: "Notion Data Source ID \u6216\u6807\u9898\u5B57\u6BB5\u672A\u914D\u7F6E" };
+      if (!config.dataSourceId || !config.titleProperty) return { success: false, error: t5("Notion Data Source ID \u6216\u6807\u9898\u5B57\u6BB5\u672A\u914D\u7F6E") };
       const pageId2 = await createPage(requestUrl2, token, { type: "data_source_id", id: config.dataSourceId, titleProperty: config.titleProperty }, normalizedTitle, children);
-      return { success: true, pageId: pageId2, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
+      return { success: true, pageId: pageId2, warnings: imageWarnings.map((item) => t5("{filename} \u8D85\u8FC7 {size} MB \u9884\u8B66\u9608\u503C", { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
     }
-    if (!config.pageId) return { success: false, error: "Notion \u7236\u9875\u9762 ID \u672A\u914D\u7F6E" };
+    if (!config.pageId) return { success: false, error: t5("Notion \u7236\u9875\u9762 ID \u672A\u914D\u7F6E") };
     if (config.pageWriteMode === "daily_append") {
       const today = /* @__PURE__ */ new Date();
       const dateTitle = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -7910,13 +8404,13 @@ async function execute5({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
       let dailyPage = await findDailyPage(requestUrl2, token, config.pageId, dateTitle);
       if (!dailyPage) {
         const pageId2 = await createPage(requestUrl2, token, { type: "page_id", id: config.pageId }, dateTitle, appendChildren);
-        return { success: true, pageId: pageId2, daily: true, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
+        return { success: true, pageId: pageId2, daily: true, warnings: imageWarnings.map((item) => t5("{filename} \u8D85\u8FC7 {size} MB \u9884\u8B66\u9608\u503C", { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
       }
       await appendBlocks(requestUrl2, token, dailyPage.id, appendChildren);
-      return { success: true, pageId: dailyPage.id, daily: true, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
+      return { success: true, pageId: dailyPage.id, daily: true, warnings: imageWarnings.map((item) => t5("{filename} \u8D85\u8FC7 {size} MB \u9884\u8B66\u9608\u503C", { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
     }
     const pageId = await createPage(requestUrl2, token, { type: "page_id", id: config.pageId }, normalizedTitle, children);
-    return { success: true, pageId, warnings: imageWarnings.map((item) => `${item.filename} \u8D85\u8FC7 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB \u9884\u8B66\u9608\u503C`) };
+    return { success: true, pageId, warnings: imageWarnings.map((item) => t5("{filename} \u8D85\u8FC7 {size} MB \u9884\u8B66\u9608\u503C", { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
   } catch (error) {
     return { success: false, error: error.message || String(error) };
   }
@@ -7925,7 +8419,7 @@ async function retrieveDataSource({ config = {}, requestUrl: requestUrl2 }) {
   var _a;
   const token = String(config.token || "").trim();
   const dataSourceId = String(config.dataSourceId || "").trim();
-  if (!token || !dataSourceId) throw new Error("\u8BF7\u5148\u586B\u5199 Notion Token \u548C Data Source ID");
+  if (!token || !dataSourceId) throw new Error(t5("\u8BF7\u5148\u586B\u5199 Notion Token \u548C Data Source ID"));
   const response = await notionRequest(requestUrl2, token, {
     url: `${NOTION_API_BASE}/data_sources/${dataSourceId}`,
     method: "GET",
@@ -7939,21 +8433,21 @@ async function retrieveDataSource({ config = {}, requestUrl: requestUrl2 }) {
 }
 function renderSettings3(containerEl, ctx) {
   const config = ctx.plugin.getAdapterConfig("notion") || {};
-  new import_obsidian3.Setting(containerEl).setName("Notion Token").setDesc("\u4F7F\u7528 Notion Personal Access Token\uFF0C\u4EC5\u4FDD\u5B58\u5728 Obsidian \u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u3002").addText((text) => {
+  new import_obsidian3.Setting(containerEl).setName(t5("Notion Token")).setDesc(t5("\u4F7F\u7528 Notion Personal Access Token\uFF0C\u4EC5\u4FDD\u5B58\u5728 Obsidian \u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u3002")).addText((text) => {
     text.inputEl.type = "password";
     text.setPlaceholder("ntn_...").setValue(config.token || "").onChange((value) => {
       ctx.scheduleConfigSave({ token: value.trim() });
     });
   });
-  new import_obsidian3.Setting(containerEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u9A8C\u8BC1 Notion Token \u662F\u5426\u6709\u6548\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+  new import_obsidian3.Setting(containerEl).setName(t5("\u6D4B\u8BD5\u8FDE\u63A5")).setDesc(t5("\u9A8C\u8BC1 Notion Token \u662F\u5426\u6709\u6548\u3002")).addButton((btn) => btn.setButtonText(t5("\u6D4B\u8BD5\u8FDE\u63A5")).onClick(async () => {
     var _a, _b;
     const currentConfig = ctx.plugin.getAdapterConfig("notion") || {};
     const token = String(currentConfig.token || "").trim();
     if (!token) {
-      new import_obsidian3.Notice("\u8BF7\u5148\u914D\u7F6E Notion Token");
+      new import_obsidian3.Notice(t5("\u8BF7\u5148\u914D\u7F6E Notion Token"));
       return;
     }
-    btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+    btn.setButtonText(t5("\u8FDE\u63A5\u4E2D..."));
     btn.disabled = true;
     try {
       const response = await notionRequest(ctx.requestUrl, token, {
@@ -7964,75 +8458,130 @@ function renderSettings3(containerEl, ctx) {
       });
       if (response.status >= 200 && response.status < 300) {
         const result = response.json || {};
-        const name = result.name || ((_b = (_a = result.bot) == null ? void 0 : _a.owner) == null ? void 0 : _b.name) || "\u672A\u77E5";
-        new import_obsidian3.Notice(`Notion \u8FDE\u63A5\u6210\u529F\uFF08${name}\uFF09`);
+        const name = result.name || ((_b = (_a = result.bot) == null ? void 0 : _a.owner) == null ? void 0 : _b.name) || t5("\u672A\u77E5");
+        new import_obsidian3.Notice(t5("Notion \u8FDE\u63A5\u6210\u529F\uFF08{name}\uFF09", { name }));
       } else {
-        new import_obsidian3.Notice(`Notion \u8FDE\u63A5\u5931\u8D25\uFF1A${getResponseError(response)}`);
+        new import_obsidian3.Notice(t5("Notion \u8FDE\u63A5\u5931\u8D25\uFF1A{error}", { error: getResponseError(response) }));
       }
     } catch (error) {
-      new import_obsidian3.Notice(`Notion \u8FDE\u63A5\u5931\u8D25\uFF1A${error.message || String(error)}`);
+      new import_obsidian3.Notice(t5("Notion \u8FDE\u63A5\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }));
     } finally {
-      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.setButtonText(t5("\u6D4B\u8BD5\u8FDE\u63A5"));
       btn.disabled = false;
     }
   }));
-  new import_obsidian3.Setting(containerEl).setName("\u4FDD\u5B58\u76EE\u6807").setDesc("\u9009\u62E9\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA Notion \u9875\u9762\uFF0C\u6216\u5728 Data Source \u4E2D\u521B\u5EFA\u4E00\u6761\u8BB0\u5F55\u9875\u9762\u3002").addDropdown((dropdown) => dropdown.addOption("page", "\u4FDD\u5B58\u4E3A\u9875\u9762").addOption("database", "\u4FDD\u5B58\u5230\u6570\u636E\u5E93").setValue(config.targetType || "page").onChange(async (value) => {
+  new import_obsidian3.Setting(containerEl).setName(t5("\u4FDD\u5B58\u76EE\u6807")).setDesc(t5("\u9009\u62E9\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA Notion \u9875\u9762\uFF0C\u6216\u5728 Data Source \u4E2D\u521B\u5EFA\u4E00\u6761\u8BB0\u5F55\u9875\u9762\u3002")).addDropdown((dropdown) => dropdown.addOption("page", t5("\u4FDD\u5B58\u4E3A\u9875\u9762")).addOption("database", t5("\u4FDD\u5B58\u5230\u6570\u636E\u5E93")).setValue(config.targetType || "page").onChange(async (value) => {
     await ctx.saveConfig({ targetType: value });
     ctx.refresh();
   }));
   if ((config.targetType || "page") === "page") {
-    new import_obsidian3.Setting(containerEl).setName("\u65E5\u8BB0\u7236\u9875\u9762 Page ID").setDesc("\u521B\u5EFA\u5B50\u9875\u9762\u6216\u6BCF\u65E5\u9875\u9762\u7684 Notion \u7236\u9875\u9762 ID\u3002\u8BF7\u5148\u5C06\u8BE5\u9875\u9762\u8FDE\u63A5\u5230\u4F60\u7684 Notion Integration\u3002").addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.pageId || "").onChange((value) => {
+    new import_obsidian3.Setting(containerEl).setName(t5("\u65E5\u8BB0\u7236\u9875\u9762 Page ID")).setDesc(t5("\u521B\u5EFA\u5B50\u9875\u9762\u6216\u6BCF\u65E5\u9875\u9762\u7684 Notion \u7236\u9875\u9762 ID\u3002\u8BF7\u5148\u5C06\u8BE5\u9875\u9762\u8FDE\u63A5\u5230\u4F60\u7684 Notion Integration\u3002")).addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.pageId || "").onChange((value) => {
       ctx.scheduleConfigSave({ pageId: value.trim() });
     }));
-    new import_obsidian3.Setting(containerEl).setName("\u9875\u9762\u5199\u5165\u65B9\u5F0F").setDesc("\u65B0\u5EFA\u5B50\u9875\u9762\u4F1A\u4E3A\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA\u4E00\u4E2A\u9875\u9762\uFF1B\u6BCF\u65E5\u8FFD\u52A0\u4F1A\u67E5\u627E\u6216\u521B\u5EFA\u5F53\u5929 YYYY-MM-DD \u9875\u9762\u5E76\u6301\u7EED\u8FFD\u52A0\u5185\u5BB9\u3002").addDropdown((dropdown) => dropdown.addOption("new_page", "\u6BCF\u6B21\u65B0\u5EFA\u5B50\u9875\u9762").addOption("daily_append", "\u8FFD\u52A0\u5230\u6BCF\u65E5\u65E5\u8BB0\u9875\u9762").setValue(config.pageWriteMode || "new_page").onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName(t5("\u9875\u9762\u5199\u5165\u65B9\u5F0F")).setDesc(t5("\u65B0\u5EFA\u5B50\u9875\u9762\u4F1A\u4E3A\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA\u4E00\u4E2A\u9875\u9762\uFF1B\u6BCF\u65E5\u8FFD\u52A0\u4F1A\u67E5\u627E\u6216\u521B\u5EFA\u5F53\u5929 YYYY-MM-DD \u9875\u9762\u5E76\u6301\u7EED\u8FFD\u52A0\u5185\u5BB9\u3002")).addDropdown((dropdown) => dropdown.addOption("new_page", t5("\u6BCF\u6B21\u65B0\u5EFA\u5B50\u9875\u9762")).addOption("daily_append", t5("\u8FFD\u52A0\u5230\u6BCF\u65E5\u65E5\u8BB0\u9875\u9762")).setValue(config.pageWriteMode || "new_page").onChange(async (value) => {
       await ctx.saveConfig({ pageWriteMode: value });
       ctx.refresh();
     }));
     if ((config.pageWriteMode || "new_page") === "new_page") {
-      new import_obsidian3.Setting(containerEl).setName("\u9875\u9762\u6807\u9898\u6765\u6E90").setDesc("\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898\uFF1A\u6807\u9898\u5757\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002\u6B63\u6587\u9996\u6807\u9898\uFF1A\u4ECE\u6B63\u6587\u7B2C\u4E00\u4E2A Markdown \u6807\u9898\u53D6\u540D\u3002\u65E0\u6807\u9898\uFF1A\u4E0D\u8BBE\u7F6E\u6807\u9898\u3002").addDropdown((dropdown) => dropdown.addOption("scope", "\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898").addOption("first_heading", "\u6309\u6B63\u6587\u7B2C\u4E00\u4E2A\u6807\u9898").addOption("none", "\u65E0\u6807\u9898").setValue(config.titleSource || "scope").onChange(async (value) => ctx.saveConfig({ titleSource: value })));
+      new import_obsidian3.Setting(containerEl).setName(t5("\u9875\u9762\u6807\u9898\u6765\u6E90")).setDesc(t5("\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898\uFF1A\u6807\u9898\u5757\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002\u6B63\u6587\u9996\u6807\u9898\uFF1A\u4ECE\u6B63\u6587\u7B2C\u4E00\u4E2A Markdown \u6807\u9898\u53D6\u540D\u3002\u65E0\u6807\u9898\uFF1A\u4E0D\u8BBE\u7F6E\u6807\u9898\u3002")).addDropdown((dropdown) => dropdown.addOption("scope", t5("\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898")).addOption("first_heading", t5("\u6309\u6B63\u6587\u7B2C\u4E00\u4E2A\u6807\u9898")).addOption("none", t5("\u65E0\u6807\u9898")).setValue(config.titleSource || "scope").onChange(async (value) => ctx.saveConfig({ titleSource: value })));
     }
   } else {
-    new import_obsidian3.Setting(containerEl).setName("Data Source ID").setDesc("\u76EE\u6807 Notion Data Source \u7684 ID\uFF0C\u800C\u4E0D\u662F\u65E7\u7248\u6559\u7A0B\u4E2D\u7684 database ID\u3002").addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.dataSourceId || "").onChange((value) => {
+    new import_obsidian3.Setting(containerEl).setName(t5("Data Source ID")).setDesc(t5("\u76EE\u6807 Notion Data Source \u7684 ID\uFF0C\u800C\u4E0D\u662F\u65E7\u7248\u6559\u7A0B\u4E2D\u7684 database ID\u3002")).addText((text) => text.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").setValue(config.dataSourceId || "").onChange((value) => {
       ctx.scheduleConfigSave({ dataSourceId: value.trim() });
     }));
-    new import_obsidian3.Setting(containerEl).setName("\u8BFB\u53D6\u6807\u9898\u5B57\u6BB5").setDesc(config.titleProperty ? `\u5F53\u524D\u6807\u9898\u5B57\u6BB5\uFF1A${config.titleProperty}` : "\u8BFB\u53D6 Data Source \u540E\u9009\u62E9 title \u7C7B\u578B\u5B57\u6BB5\u3002").addButton((button) => button.setButtonText("\u8BFB\u53D6\u5B57\u6BB5").onClick(async () => {
+    new import_obsidian3.Setting(containerEl).setName(t5("\u8BFB\u53D6\u6807\u9898\u5B57\u6BB5")).setDesc(config.titleProperty ? t5("\u5F53\u524D\u6807\u9898\u5B57\u6BB5\uFF1A{name}", { name: config.titleProperty }) : t5("\u8BFB\u53D6 Data Source \u540E\u9009\u62E9 title \u7C7B\u578B\u5B57\u6BB5\u3002")).addButton((button) => button.setButtonText(t5("\u8BFB\u53D6\u5B57\u6BB5")).onClick(async () => {
       try {
-        button.setButtonText("\u8BFB\u53D6\u4E2D...");
+        button.setButtonText(t5("\u8BFB\u53D6\u4E2D..."));
         button.disabled = true;
         const result = await retrieveDataSource({ config: ctx.plugin.getAdapterConfig("notion"), requestUrl: ctx.requestUrl });
-        if (result.titles.length === 0) throw new Error("\u8BE5 Data Source \u6CA1\u6709 title \u7C7B\u578B\u5B57\u6BB5");
+        if (result.titles.length === 0) throw new Error(t5("\u8BE5 Data Source \u6CA1\u6709 title \u7C7B\u578B\u5B57\u6BB5"));
         const activeConfig = ctx.plugin.getAdapterConfig("notion");
         const selected = result.titles.includes(activeConfig.titleProperty) ? activeConfig.titleProperty : result.titles[0];
         await ctx.saveConfig({ titleProperty: selected, titleProperties: result.titles });
-        new import_obsidian3.Notice(`\u5DF2\u8BFB\u53D6 ${result.titles.length} \u4E2A\u6807\u9898\u5B57\u6BB5`);
+        new import_obsidian3.Notice(t5("\u5DF2\u8BFB\u53D6 {count} \u4E2A\u6807\u9898\u5B57\u6BB5", { count: result.titles.length }));
         ctx.refresh();
       } catch (error) {
-        new import_obsidian3.Notice(`\u8BFB\u53D6 Notion \u5B57\u6BB5\u5931\u8D25\uFF1A${error.message}`);
+        new import_obsidian3.Notice(t5("\u8BFB\u53D6 Notion \u5B57\u6BB5\u5931\u8D25\uFF1A{error}", { error: error.message }));
       } finally {
-        button.setButtonText("\u8BFB\u53D6\u5B57\u6BB5");
+        button.setButtonText(t5("\u8BFB\u53D6\u5B57\u6BB5"));
         button.disabled = false;
       }
     }));
     const titleProperties = Array.isArray(config.titleProperties) ? config.titleProperties : [];
     if (titleProperties.length > 0) {
-      new import_obsidian3.Setting(containerEl).setName("\u6570\u636E\u5E93\u6807\u9898\u5B57\u6BB5").setDesc("\u6BCF\u6761\u6570\u636E\u5E93\u8BB0\u5F55\u5747\u4F1A\u521B\u5EFA\u4E00\u4E2A\u5B8C\u6574\u9875\u9762\uFF0C\u6B63\u6587\u548C\u56FE\u7247\u5199\u5165\u8BE5\u9875\u9762\u7684 blocks\u3002").addDropdown((dropdown) => {
+      new import_obsidian3.Setting(containerEl).setName(t5("\u6570\u636E\u5E93\u6807\u9898\u5B57\u6BB5")).setDesc(t5("\u6BCF\u6761\u6570\u636E\u5E93\u8BB0\u5F55\u5747\u4F1A\u521B\u5EFA\u4E00\u4E2A\u5B8C\u6574\u9875\u9762\uFF0C\u6B63\u6587\u548C\u56FE\u7247\u5199\u5165\u8BE5\u9875\u9762\u7684 blocks\u3002")).addDropdown((dropdown) => {
         for (const property of titleProperties) dropdown.addOption(property, property);
         dropdown.setValue(config.titleProperty || titleProperties[0]).onChange(async (value) => {
           await ctx.saveConfig({ titleProperty: value });
         });
       });
     }
-    new import_obsidian3.Setting(containerEl).setName("\u9875\u9762\u6807\u9898\u6765\u6E90").setDesc("\u6807\u9898\u5757\u4F7F\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u4F7F\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002").addDropdown((dropdown) => dropdown.addOption("scope", "\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898").addOption("first_heading", "\u6309\u6B63\u6587\u7B2C\u4E00\u4E2A\u6807\u9898").addOption("none", "\u65E0\u6807\u9898").setValue(config.titleSource || "scope").onChange(async (value) => ctx.saveConfig({ titleSource: value })));
+    new import_obsidian3.Setting(containerEl).setName(t5("\u9875\u9762\u6807\u9898\u6765\u6E90")).setDesc(t5("\u6807\u9898\u5757\u4F7F\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u4F7F\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002")).addDropdown((dropdown) => dropdown.addOption("scope", t5("\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898")).addOption("first_heading", t5("\u6309\u6B63\u6587\u7B2C\u4E00\u4E2A\u6807\u9898")).addOption("none", t5("\u65E0\u6807\u9898")).setValue(config.titleSource || "scope").onChange(async (value) => ctx.saveConfig({ titleSource: value })));
   }
-  new import_obsidian3.Setting(containerEl).setName("\u8D85\u8FC7 5 MB \u65F6\u81EA\u52A8\u538B\u7F29\u56FE\u7247").setDesc("\u53D1\u9001\u524D\u5728\u5185\u5B58\u4E2D\u5C06\u53EF\u5904\u7406\u7684 JPEG\u3001PNG\u3001WebP \u538B\u7F29\u4E3A WebP\uFF0C\u4E0D\u4F1A\u4FEE\u6539 Vault \u539F\u6587\u4EF6\u3002GIF \u548C SVG \u4E0D\u538B\u7F29\u3002").addToggle((toggle) => toggle.setValue(Boolean(config.autoCompressLargeImages)).onChange(async (value) => {
+  new import_obsidian3.Setting(containerEl).setName(t5("\u8D85\u8FC7 5 MB \u65F6\u81EA\u52A8\u538B\u7F29\u56FE\u7247")).setDesc(t5("\u53D1\u9001\u524D\u5728\u5185\u5B58\u4E2D\u5C06\u53EF\u5904\u7406\u7684 JPEG\u3001PNG\u3001WebP \u538B\u7F29\u4E3A WebP\uFF0C\u4E0D\u4F1A\u4FEE\u6539 Vault \u539F\u6587\u4EF6\u3002GIF \u548C SVG \u4E0D\u538B\u7F29\u3002")).addToggle((toggle) => toggle.setValue(Boolean(config.autoCompressLargeImages)).onChange(async (value) => {
     await ctx.saveConfig({ autoCompressLargeImages: value });
   }));
 }
-var import_obsidian3, getMimeType4, NOTION_API_BASE, NOTION_VERSION, MAX_RETRIES, MAX_BLOCKS_PER_REQUEST, manifest5, MAX_NOTION_ATTACHMENT_SIZE, defaultConfig3, notion_default;
+var import_obsidian3, getMimeType4, t5, registerTranslations5, NOTION_API_BASE, NOTION_VERSION, MAX_RETRIES, MAX_BLOCKS_PER_REQUEST, manifest5, MAX_NOTION_ATTACHMENT_SIZE, defaultConfig3, notion_default;
 var init_notion = __esm({
   "src/adapters/notion.js"() {
     import_obsidian3 = require("obsidian");
     ({ getMimeType: getMimeType4 } = require_mime());
+    ({ t: t5, registerTranslations: registerTranslations5 } = require_i18n());
+    registerTranslations5("en", {
+      "\u672A\u77E5": "Unknown",
+      "\u56FE\u7247 {filename} \u521B\u5EFA\u4E0A\u4F20\u5931\u8D25\uFF1A{error}": "Image {filename} upload creation failed: {error}",
+      "\u56FE\u7247 {filename} \u521B\u5EFA\u4E0A\u4F20\u5931\u8D25\uFF1A\u672A\u8FD4\u56DE\u4E0A\u4F20 ID": "Image {filename} upload creation failed: no upload ID returned",
+      "\u56FE\u7247 {filename} \u4E0A\u4F20\u5931\u8D25\uFF1A{error}": "Image {filename} upload failed: {error}",
+      'Notion \u4E2D\u627E\u5230\u591A\u4E2A"{dateTitle}"\u6BCF\u65E5\u9875\u9762\uFF0C\u8BF7\u4FDD\u7559\u4E00\u4E2A\u540E\u91CD\u8BD5': 'Found multiple Notion daily pages named "{dateTitle}"; keep one and retry',
+      "Notion \u672A\u8FD4\u56DE\u65B0\u9875\u9762 ID": "Notion did not return a new page ID",
+      "\u65E0\u6CD5\u8BFB\u53D6\u56FE\u7247\uFF1A{name}": "Unable to read image: {name}",
+      "Notion \u53EF\u80FD\u4E0D\u652F\u6301\u56FE\u7247\u683C\u5F0F\uFF1A{filename}": "Notion may not support this image format: {filename}",
+      "Notion Token \u672A\u914D\u7F6E": "Notion Token is not configured",
+      "Notion \u8BF7\u6C42\u63A5\u53E3\u4E0D\u53EF\u7528": "Notion request interface is unavailable",
+      "Notion Data Source ID \u6216\u6807\u9898\u5B57\u6BB5\u672A\u914D\u7F6E": "Notion Data Source ID or title property is not configured",
+      "{filename} \u8D85\u8FC7 {size} MB \u9884\u8B66\u9608\u503C": "{filename} exceeds the {size} MB warning threshold",
+      "Notion \u7236\u9875\u9762 ID \u672A\u914D\u7F6E": "Notion parent page ID is not configured",
+      "\u8BF7\u5148\u586B\u5199 Notion Token \u548C Data Source ID": "Please fill in the Notion Token and Data Source ID first",
+      "Notion Token": "Notion Token",
+      "\u4F7F\u7528 Notion Personal Access Token\uFF0C\u4EC5\u4FDD\u5B58\u5728 Obsidian \u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u3002": "Uses a Notion Personal Access Token; it is stored only in Obsidian plugin settings.",
+      "\u6D4B\u8BD5\u8FDE\u63A5": "Test connection",
+      "\u9A8C\u8BC1 Notion Token \u662F\u5426\u6709\u6548\u3002": "Verifies whether the Notion Token is valid.",
+      "\u8BF7\u5148\u914D\u7F6E Notion Token": "Please configure the Notion Token first",
+      "\u8FDE\u63A5\u4E2D...": "Connecting...",
+      "Notion \u8FDE\u63A5\u6210\u529F\uFF08{name}\uFF09": "Notion connected successfully ({name})",
+      "Notion \u8FDE\u63A5\u5931\u8D25\uFF1A{error}": "Notion connection failed: {error}",
+      "\u4FDD\u5B58\u76EE\u6807": "Save target",
+      "\u9009\u62E9\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA Notion \u9875\u9762\uFF0C\u6216\u5728 Data Source \u4E2D\u521B\u5EFA\u4E00\u6761\u8BB0\u5F55\u9875\u9762\u3002": "Choose to create a Notion page for each send, or create a record page in a Data Source.",
+      "\u4FDD\u5B58\u4E3A\u9875\u9762": "Save as page",
+      "\u4FDD\u5B58\u5230\u6570\u636E\u5E93": "Save to database",
+      "\u65E5\u8BB0\u7236\u9875\u9762 Page ID": "Daily parent page Page ID",
+      "\u521B\u5EFA\u5B50\u9875\u9762\u6216\u6BCF\u65E5\u9875\u9762\u7684 Notion \u7236\u9875\u9762 ID\u3002\u8BF7\u5148\u5C06\u8BE5\u9875\u9762\u8FDE\u63A5\u5230\u4F60\u7684 Notion Integration\u3002": "The Notion parent page ID for creating child pages or daily pages. Connect this page to your Notion Integration first.",
+      "\u9875\u9762\u5199\u5165\u65B9\u5F0F": "Page write mode",
+      "\u65B0\u5EFA\u5B50\u9875\u9762\u4F1A\u4E3A\u6BCF\u6B21\u53D1\u9001\u521B\u5EFA\u4E00\u4E2A\u9875\u9762\uFF1B\u6BCF\u65E5\u8FFD\u52A0\u4F1A\u67E5\u627E\u6216\u521B\u5EFA\u5F53\u5929 YYYY-MM-DD \u9875\u9762\u5E76\u6301\u7EED\u8FFD\u52A0\u5185\u5BB9\u3002": "New child page creates a page for each send; daily append finds or creates the current YYYY-MM-DD page and keeps appending content.",
+      "\u6BCF\u6B21\u65B0\u5EFA\u5B50\u9875\u9762": "Create a new child page each time",
+      "\u8FFD\u52A0\u5230\u6BCF\u65E5\u65E5\u8BB0\u9875\u9762": "Append to the daily journal page",
+      "\u9875\u9762\u6807\u9898\u6765\u6E90": "Page title source",
+      "\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898\uFF1A\u6807\u9898\u5757\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002\u6B63\u6587\u9996\u6807\u9898\uFF1A\u4ECE\u6B63\u6587\u7B2C\u4E00\u4E2A Markdown \u6807\u9898\u53D6\u540D\u3002\u65E0\u6807\u9898\uFF1A\u4E0D\u8BBE\u7F6E\u6807\u9898\u3002": "Send scope title: title blocks use that title, whole pages use the file name, and selected text may have no title. First body heading: uses the first Markdown heading in the body. No title: does not set a title.",
+      "\u6309\u53D1\u9001\u8303\u56F4\u6807\u9898": "Use send scope title",
+      "\u6309\u6B63\u6587\u7B2C\u4E00\u4E2A\u6807\u9898": "Use the first heading in the body",
+      "\u65E0\u6807\u9898": "No title",
+      "Data Source ID": "Data Source ID",
+      "\u76EE\u6807 Notion Data Source \u7684 ID\uFF0C\u800C\u4E0D\u662F\u65E7\u7248\u6559\u7A0B\u4E2D\u7684 database ID\u3002": "The ID of the target Notion Data Source, not the database ID from older tutorials.",
+      "\u8BFB\u53D6\u6807\u9898\u5B57\u6BB5": "Read title property",
+      "\u5F53\u524D\u6807\u9898\u5B57\u6BB5\uFF1A{name}": "Current title property: {name}",
+      "\u8BFB\u53D6 Data Source \u540E\u9009\u62E9 title \u7C7B\u578B\u5B57\u6BB5\u3002": "After reading the Data Source, select a title-type property.",
+      "\u8BFB\u53D6\u5B57\u6BB5": "Read fields",
+      "\u8BFB\u53D6\u4E2D...": "Reading...",
+      "\u8BE5 Data Source \u6CA1\u6709 title \u7C7B\u578B\u5B57\u6BB5": "This Data Source has no title-type property",
+      "\u5DF2\u8BFB\u53D6 {count} \u4E2A\u6807\u9898\u5B57\u6BB5": "Read {count} title properties",
+      "\u8BFB\u53D6 Notion \u5B57\u6BB5\u5931\u8D25\uFF1A{error}": "Failed to read Notion fields: {error}",
+      "\u6570\u636E\u5E93\u6807\u9898\u5B57\u6BB5": "Database title property",
+      "\u6BCF\u6761\u6570\u636E\u5E93\u8BB0\u5F55\u5747\u4F1A\u521B\u5EFA\u4E00\u4E2A\u5B8C\u6574\u9875\u9762\uFF0C\u6B63\u6587\u548C\u56FE\u7247\u5199\u5165\u8BE5\u9875\u9762\u7684 blocks\u3002": "Each database record creates a full page; the body and images are written to that page's blocks.",
+      "\u6807\u9898\u5757\u4F7F\u7528\u8BE5\u6807\u9898\uFF0C\u6574\u9875\u4F7F\u7528\u6587\u4EF6\u540D\uFF0C\u9009\u4E2D\u6587\u672C\u5141\u8BB8\u65E0\u6807\u9898\u3002": "Title blocks use that title, whole pages use the file name, and selected text may have no title.",
+      "\u8D85\u8FC7 5 MB \u65F6\u81EA\u52A8\u538B\u7F29\u56FE\u7247": "Auto-compress images over 5 MB",
+      "\u53D1\u9001\u524D\u5728\u5185\u5B58\u4E2D\u5C06\u53EF\u5904\u7406\u7684 JPEG\u3001PNG\u3001WebP \u538B\u7F29\u4E3A WebP\uFF0C\u4E0D\u4F1A\u4FEE\u6539 Vault \u539F\u6587\u4EF6\u3002GIF \u548C SVG \u4E0D\u538B\u7F29\u3002": "Compresses processable JPEG, PNG, and WebP images to WebP in memory before sending; original Vault files are not modified. GIF and SVG are not compressed."
+    });
     NOTION_API_BASE = "https://api.notion.com/v1";
     NOTION_VERSION = "2026-03-11";
     MAX_RETRIES = 3;
@@ -8041,7 +8590,6 @@ var init_notion = __esm({
       id: "notion",
       version: "1.0.0",
       name: "Notion",
-      description: "\u53D1\u9001\u5185\u5BB9\u5230 Notion \u9875\u9762\u6216 Data Source",
       enabledByDefault: false,
       displayOrder: 70,
       capabilities: {
@@ -8211,11 +8759,48 @@ var require_bluesky = __commonJS({
       measurePostText,
       buildLinkFacets
     } = require_bluesky_core();
+    var { t: t9, registerTranslations: registerTranslations9 } = require_i18n();
+    registerTranslations9("en", {
+      "\uFF1B": "; ",
+      "\u8D26\u53F7": "Account",
+      "Bluesky handle\uFF08\u5982 alice.bsky.social\uFF09\u3001DID \u6216\u6CE8\u518C\u90AE\u7BB1\u3002": "Bluesky handle (e.g. alice.bsky.social), DID, or registered email.",
+      "\u5728 Bluesky \u8BBE\u7F6E \u2192 Privacy & security \u2192 App passwords \u4E2D\u751F\u6210\uFF0C\u8BF7\u52FF\u586B\u5199\u8D26\u53F7\u4E3B\u5BC6\u7801\u3002": "Generate it in Bluesky Settings \u2192 Privacy & security \u2192 App passwords. Do not use your account main password.",
+      "Service \u5730\u5740": "Service URL",
+      "\u9ED8\u8BA4\u5B98\u65B9\u670D\u52A1 https://bsky.social\uFF0C\u81EA\u5EFA PDS \u53EF\u4FEE\u6539\u3002": "Default official service https://bsky.social; can be changed for a self-hosted PDS.",
+      "\u6D4B\u8BD5\u8FDE\u63A5": "Test connection",
+      "\u4F7F\u7528\u5F53\u524D\u914D\u7F6E\u767B\u5F55\u4E00\u6B21 Bluesky\uFF0C\u9A8C\u8BC1\u8D26\u53F7\u4E0E App Password \u662F\u5426\u6709\u6548\u3002": "Log in to Bluesky once with the current config to verify the account and App Password are valid.",
+      "\u8FDE\u63A5\u4E2D...": "Connecting...",
+      "\u8D26\u53F7\u5F00\u542F\u4E86\u90AE\u7BB1\u4E24\u6B65\u9A8C\u8BC1\uFF0C\u8BF7\u4F7F\u7528 App Password \u6216\u5173\u95ED\u90AE\u7BB1\u4E24\u6B65\u9A8C\u8BC1\u540E\u91CD\u8BD5": "Email two-step verification is enabled on the account. Use an App Password or disable email two-step verification and retry.",
+      "\u89E6\u53D1 Bluesky \u9650\u6D41\uFF0C\u8BF7 {seconds} \u79D2\u540E\u91CD\u8BD5": "Bluesky rate limit triggered, retry in {seconds} seconds",
+      "\u89E6\u53D1 Bluesky \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5": "Bluesky rate limit triggered, please try again later",
+      "Bluesky \u8D26\u53F7\u6216 App Password \u65E0\u6548": "Bluesky account or App Password is invalid",
+      "{actionLabel}\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09": "{actionLabel} failed (HTTP {status}: {detail})",
+      "Bluesky \u767B\u5F55": "Bluesky login",
+      "Bluesky \u767B\u5F55\u54CD\u5E94\u7F3A\u5C11\u4F1A\u8BDD\u4FE1\u606F": "Bluesky login response is missing session info",
+      "\u56FE\u7247\u4E0A\u4F20": "Image upload",
+      "Bluesky \u672A\u8FD4\u56DE\u56FE\u7247\u5F15\u7528": "Bluesky did not return an image reference",
+      "Bluesky \u56FE\u7247": "Image",
+      "Bluesky \u4E0D\u652F\u6301 {name} \u7684\u683C\u5F0F\uFF0C\u5DF2\u8DF3\u8FC7": "Bluesky does not support the format of {name}, skipped",
+      "Bluesky \u8D85\u8FC7 {max} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20": "Over {max} images, only the first {max} will be sent",
+      "\u6B63\u6587\u4E3A\u7A7A\uFF0C\u4E14\u56FE\u7247\u683C\u5F0F\u5747\u4E0D\u53D7 Bluesky \u652F\u6301\uFF08\u4EC5\u652F\u6301 JPEG/PNG/WebP/GIF\uFF09": "Body is empty, and none of the image formats are supported by Bluesky (only JPEG/PNG/WebP/GIF)",
+      "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A": "Content cannot be empty",
+      "Bluesky \u5355\u5E16\u4E0A\u9650 {max} \u5B57\u7B26\uFF08\u5F53\u524D {current}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9": "Bluesky single-post limit is {max} characters (currently {current}), please shorten the content",
+      "Bluesky \u5355\u5E16 UTF-8 \u4E0A\u9650 {max} \u5B57\u8282\uFF08\u5F53\u524D {current}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9": "Bluesky single-post UTF-8 limit is {max} bytes (currently {current}), please shorten the content",
+      "\u56FE\u7247\u8BFB\u53D6\u63A5\u53E3\u4E0D\u53EF\u7528": "Image reading interface is unavailable",
+      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{name}\uFF08{detail}\uFF09": "Failed to read image: {name} ({detail})",
+      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{name}\uFF08\u6587\u4EF6\u4E3A\u7A7A\uFF09": "Failed to read image: {name} (file is empty)",
+      "Bluesky \u5355\u5F20\u56FE\u7247\u4E0A\u9650 2 MB\uFF1A{name}\uFF08\u5F53\u524D {size} \u5B57\u8282\uFF09": "Bluesky single-image limit is 2 MB: {name} (currently {size} bytes)",
+      "Bluesky \u8D26\u53F7\u6216 App Password \u672A\u914D\u7F6E": "Bluesky account or App Password is not configured",
+      "\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A{name}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Image upload failed: {name} ({error}); nothing was sent.",
+      "\u53D1\u5E16": "Post",
+      "Bluesky \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}": "Bluesky adapter does not support action: {action}",
+      "\u8BF7\u5148\u586B\u5199 Bluesky \u8D26\u53F7\u4E0E App Password": "Please fill in the Bluesky account and App Password first",
+      "\u5DF2\u8FDE\u63A5 {name}": "Connected to {name}"
+    });
     var manifest8 = {
       id: "bluesky",
       version: "1.0.0",
       name: "Bluesky",
-      description: "\u53D1\u5E03\u5185\u5BB9\u5230 Bluesky (AT Protocol)",
       enabledByDefault: false,
       displayOrder: 50,
       capabilities: {
@@ -8280,18 +8865,18 @@ var require_bluesky = __commonJS({
       const error = String(body.error || "");
       const message = String(body.message || "");
       if (error === "AuthFactorTokenRequired") {
-        return "\u8D26\u53F7\u5F00\u542F\u4E86\u90AE\u7BB1\u4E24\u6B65\u9A8C\u8BC1\uFF0C\u8BF7\u4F7F\u7528 App Password \u6216\u5173\u95ED\u90AE\u7BB1\u4E24\u6B65\u9A8C\u8BC1\u540E\u91CD\u8BD5";
+        return t9("\u8D26\u53F7\u5F00\u542F\u4E86\u90AE\u7BB1\u4E24\u6B65\u9A8C\u8BC1\uFF0C\u8BF7\u4F7F\u7528 App Password \u6216\u5173\u95ED\u90AE\u7BB1\u4E24\u6B65\u9A8C\u8BC1\u540E\u91CD\u8BD5");
       }
       if (response.status === 429) {
         const retryAfter = response.headers && (response.headers["retry-after"] || response.headers["Retry-After"]);
-        return retryAfter ? `\u89E6\u53D1 Bluesky \u9650\u6D41\uFF0C\u8BF7 ${retryAfter} \u79D2\u540E\u91CD\u8BD5` : "\u89E6\u53D1 Bluesky \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+        return retryAfter ? t9("\u89E6\u53D1 Bluesky \u9650\u6D41\uFF0C\u8BF7 {seconds} \u79D2\u540E\u91CD\u8BD5", { seconds: retryAfter }) : t9("\u89E6\u53D1 Bluesky \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5");
       }
       if (response.status === 401 || error === "AuthenticationRequired") {
-        return "Bluesky \u8D26\u53F7\u6216 App Password \u65E0\u6548";
+        return t9("Bluesky \u8D26\u53F7\u6216 App Password \u65E0\u6548");
       }
       if (error === "InvalidRecordError" && message) return message;
       const detail = message || error || `HTTP ${response.status}`;
-      return `${actionLabel}\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${detail}\uFF09`;
+      return t9("{actionLabel}\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09", { actionLabel, status: response.status, detail });
     }
     async function createSession(serviceUrl, identifier, appPassword, requestUrl2) {
       const response = await requestUrl2({
@@ -8302,7 +8887,7 @@ var require_bluesky = __commonJS({
         throw: false
       });
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(xrpcErrorMessage(response, "Bluesky \u767B\u5F55"));
+        throw new Error(xrpcErrorMessage(response, t9("Bluesky \u767B\u5F55")));
       }
       let result = {};
       try {
@@ -8310,7 +8895,7 @@ var require_bluesky = __commonJS({
       } catch (e) {
       }
       if (!result.accessJwt || !result.did) {
-        throw new Error("Bluesky \u767B\u5F55\u54CD\u5E94\u7F3A\u5C11\u4F1A\u8BDD\u4FE1\u606F");
+        throw new Error(t9("Bluesky \u767B\u5F55\u54CD\u5E94\u7F3A\u5C11\u4F1A\u8BDD\u4FE1\u606F"));
       }
       return result;
     }
@@ -8326,7 +8911,7 @@ var require_bluesky = __commonJS({
         throw: false
       });
       if (response.status < 200 || response.status >= 300) {
-        return { blob: null, error: xrpcErrorMessage(response, "\u56FE\u7247\u4E0A\u4F20") };
+        return { blob: null, error: xrpcErrorMessage(response, t9("\u56FE\u7247\u4E0A\u4F20")) };
       }
       let result = {};
       try {
@@ -8335,7 +8920,7 @@ var require_bluesky = __commonJS({
       }
       const blob = result.blob;
       if (!blob || !blob.ref || !blob.ref.$link) {
-        return { blob: null, error: "Bluesky \u672A\u8FD4\u56DE\u56FE\u7247\u5F15\u7528" };
+        return { blob: null, error: t9("Bluesky \u672A\u8FD4\u56DE\u56FE\u7247\u5F15\u7528") };
       }
       return { blob, error: "" };
     }
@@ -8345,7 +8930,7 @@ var require_bluesky = __commonJS({
       return `https://bsky.app/profile/${session.handle || session.did}/post/${rkey}`;
     }
     function imageLabel(image) {
-      return (image == null ? void 0 : image.filename) || (image == null ? void 0 : image.vaultPath) || "\u56FE\u7247";
+      return (image == null ? void 0 : image.filename) || (image == null ? void 0 : image.vaultPath) || t9("Bluesky \u56FE\u7247");
     }
     async function preparePayload(payload = {}) {
       const warnings = [];
@@ -8357,27 +8942,27 @@ var require_bluesky = __commonJS({
       const text = String(payload.plainText || "").trim();
       for (const image of images) {
         if (!isSupportedImageMime(image.mimeType)) {
-          warnings.push(`Bluesky \u4E0D\u652F\u6301 ${imageLabel(image)} \u7684\u683C\u5F0F\uFF0C\u5DF2\u8DF3\u8FC7`);
+          warnings.push(t9("Bluesky \u4E0D\u652F\u6301 {name} \u7684\u683C\u5F0F\uFF0C\u5DF2\u8DF3\u8FC7", { name: imageLabel(image) }));
         }
       }
       if (supportedImages.length > MAX_IMAGES) {
-        warnings.push(`\u8D85\u8FC7 ${MAX_IMAGES} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D ${MAX_IMAGES} \u5F20`);
+        warnings.push(t9("Bluesky \u8D85\u8FC7 {max} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {max} \u5F20", { max: MAX_IMAGES }));
       }
       if (!text && selectedImages.length === 0) {
-        errors.push(images.length > 0 ? "\u6B63\u6587\u4E3A\u7A7A\uFF0C\u4E14\u56FE\u7247\u683C\u5F0F\u5747\u4E0D\u53D7 Bluesky \u652F\u6301\uFF08\u4EC5\u652F\u6301 JPEG/PNG/WebP/GIF\uFF09" : "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+        errors.push(images.length > 0 ? t9("\u6B63\u6587\u4E3A\u7A7A\uFF0C\u4E14\u56FE\u7247\u683C\u5F0F\u5747\u4E0D\u53D7 Bluesky \u652F\u6301\uFF08\u4EC5\u652F\u6301 JPEG/PNG/WebP/GIF\uFF09") : t9("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"));
       }
       const { graphemes, utf8Bytes } = measurePostText(text);
       if (graphemes > MAX_GRAPHEMES) {
-        errors.push(`Bluesky \u5355\u5E16\u4E0A\u9650 ${MAX_GRAPHEMES} \u5B57\u7B26\uFF08\u5F53\u524D ${graphemes}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9`);
+        errors.push(t9("Bluesky \u5355\u5E16\u4E0A\u9650 {max} \u5B57\u7B26\uFF08\u5F53\u524D {current}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9", { max: MAX_GRAPHEMES, current: graphemes }));
       }
       if (utf8Bytes > MAX_TEXT_BYTES) {
-        errors.push(`Bluesky \u5355\u5E16 UTF-8 \u4E0A\u9650 ${MAX_TEXT_BYTES} \u5B57\u8282\uFF08\u5F53\u524D ${utf8Bytes}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9`);
+        errors.push(t9("Bluesky \u5355\u5E16 UTF-8 \u4E0A\u9650 {max} \u5B57\u8282\uFF08\u5F53\u524D {current}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9", { max: MAX_TEXT_BYTES, current: utf8Bytes }));
       }
       if (errors.length > 0) {
         return { text, images: [], warnings, errors };
       }
       if (selectedImages.length > 0 && typeof payload.readAttachment !== "function") {
-        errors.push("\u56FE\u7247\u8BFB\u53D6\u63A5\u53E3\u4E0D\u53EF\u7528");
+        errors.push(t9("\u56FE\u7247\u8BFB\u53D6\u63A5\u53E3\u4E0D\u53EF\u7528"));
         return { text, images: [], warnings, errors };
       }
       const preparedImages = [];
@@ -8387,16 +8972,16 @@ var require_bluesky = __commonJS({
           buffer = await payload.readAttachment(image.vaultPath);
         } catch (error) {
           const detail = (error == null ? void 0 : error.message) || String(error);
-          errors.push(`\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${imageLabel(image)}\uFF08${detail}\uFF09`);
+          errors.push(t9("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{name}\uFF08{detail}\uFF09", { name: imageLabel(image), detail }));
           continue;
         }
         const size = Number(buffer == null ? void 0 : buffer.byteLength) || 0;
         if (size <= 0) {
-          errors.push(`\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${imageLabel(image)}\uFF08\u6587\u4EF6\u4E3A\u7A7A\uFF09`);
+          errors.push(t9("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{name}\uFF08\u6587\u4EF6\u4E3A\u7A7A\uFF09", { name: imageLabel(image) }));
           continue;
         }
         if (size > MAX_IMAGE_BYTES) {
-          errors.push(`Bluesky \u5355\u5F20\u56FE\u7247\u4E0A\u9650 2 MB\uFF1A${imageLabel(image)}\uFF08\u5F53\u524D ${size} \u5B57\u8282\uFF09`);
+          errors.push(t9("Bluesky \u5355\u5F20\u56FE\u7247\u4E0A\u9650 2 MB\uFF1A{name}\uFF08\u5F53\u524D {size} \u5B57\u8282\uFF09", { name: imageLabel(image), size }));
           continue;
         }
         preparedImages.push({ attachment: image, buffer });
@@ -8412,21 +8997,21 @@ var require_bluesky = __commonJS({
       const appPassword = String(config.appPassword || "").trim();
       const serviceUrl = normalizeServiceUrl(config.serviceUrl);
       if (!identifier || !appPassword) {
-        return { success: false, error: "Bluesky \u8D26\u53F7\u6216 App Password \u672A\u914D\u7F6E" };
+        return { success: false, error: t9("Bluesky \u8D26\u53F7\u6216 App Password \u672A\u914D\u7F6E") };
       }
       const warnings = [];
       try {
         const prepared = await preparePayload(payload);
         warnings.push(...prepared.warnings);
         if (prepared.errors.length > 0) {
-          return { success: false, error: prepared.errors.join("\uFF1B"), warnings };
+          return { success: false, error: prepared.errors.join(t9("\uFF1B")), warnings };
         }
         const session = await createSession(serviceUrl, identifier, appPassword, requestUrl2);
         const blobs = [];
         for (const { attachment: image, buffer } of prepared.images) {
           const upload = await uploadBlob(serviceUrl, session.accessJwt, buffer, image.mimeType, requestUrl2);
           if (!upload.blob) {
-            return { success: false, error: `\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A${imageLabel(image)}\uFF08${upload.error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`, warnings };
+            return { success: false, error: t9("\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A{name}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", { name: imageLabel(image), error: upload.error }), warnings };
           }
           blobs.push(upload.blob);
         }
@@ -8465,23 +9050,23 @@ var require_bluesky = __commonJS({
           }
           return { success: true, url: buildPostUrl2(result.uri, session), mediaCount: blobs.length, warnings };
         }
-        return { success: false, error: xrpcErrorMessage(response, "\u53D1\u5E16"), warnings };
+        return { success: false, error: xrpcErrorMessage(response, t9("\u53D1\u5E16")), warnings };
       } catch (error) {
         return { success: false, error: error.message || String(error), warnings };
       }
     }
     async function runAction6(actionId, config, requestUrlFn) {
       if (actionId !== "testConnection") {
-        throw new Error(`Bluesky \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+        throw new Error(t9("Bluesky \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}", { action: actionId }));
       }
       const identifier = String((config == null ? void 0 : config.identifier) || "").trim();
       const appPassword = String((config == null ? void 0 : config.appPassword) || "").trim();
       if (!identifier || !appPassword) {
-        throw new Error("\u8BF7\u5148\u586B\u5199 Bluesky \u8D26\u53F7\u4E0E App Password");
+        throw new Error(t9("\u8BF7\u5148\u586B\u5199 Bluesky \u8D26\u53F7\u4E0E App Password"));
       }
       const serviceUrl = normalizeServiceUrl(config.serviceUrl);
       const session = await createSession(serviceUrl, identifier, appPassword, requestUrlFn);
-      return { success: true, message: `\u5DF2\u8FDE\u63A5 ${session.handle || identifier}` };
+      return { success: true, message: t9("\u5DF2\u8FDE\u63A5 {name}", { name: session.handle || identifier }) };
     }
     module2.exports = { manifest: manifest8, execute: execute8, validate: validate8, runAction: runAction6 };
   }
@@ -8530,11 +9115,11 @@ function weiboApiErrorMessage(response, actionLabel) {
   }
   const errorCode = Number(body.error_code || body.code || 0) || 0;
   const rawError = String(body.error || body.error_description || response.text || "");
-  if (rawError.includes("\u91CD\u590D")) return "\u5FAE\u535A\u62D2\u7EDD\u8FDE\u7EED\u91CD\u590D\u5185\u5BB9\uFF0C\u8BF7\u4FEE\u6539\u5185\u5BB9\u540E\u518D\u8BD5";
-  if (errorCode && WEIBO_ERROR_MESSAGES[errorCode]) return WEIBO_ERROR_MESSAGES[errorCode];
-  if (response.status === 401) return "\u5FAE\u535A\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743";
+  if (rawError.includes("\u91CD\u590D")) return t6("\u5FAE\u535A\u62D2\u7EDD\u8FDE\u7EED\u91CD\u590D\u5185\u5BB9\uFF0C\u8BF7\u4FEE\u6539\u5185\u5BB9\u540E\u518D\u8BD5");
+  if (errorCode && WEIBO_ERROR_MESSAGES[errorCode]) return t6(WEIBO_ERROR_MESSAGES[errorCode]);
+  if (response.status === 401) return t6("\u5FAE\u535A\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743");
   const detail = rawError || `HTTP ${response.status}`;
-  return `${actionLabel}\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${detail}\uFF09`;
+  return t6("{action}\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09", { action: actionLabel, status: response.status, detail });
 }
 function encodeBase62(num) {
   if (num === 0) return "0";
@@ -8583,7 +9168,7 @@ async function sendTextUpdate({ accessToken, visible, status, isLongText, reques
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
-    return { success: false, error: weiboApiErrorMessage(response, "\u53D1\u5FAE\u535A"), data: null };
+    return { success: false, error: weiboApiErrorMessage(response, t6("\u53D1\u5FAE\u535A")), data: null };
   }
   let result = {};
   try {
@@ -8633,7 +9218,7 @@ Content-Type: ${mimeType}\r
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
-    return { success: false, error: weiboApiErrorMessage(response, "\u56FE\u7247\u5FAE\u535A\u53D1\u9001"), data: null };
+    return { success: false, error: weiboApiErrorMessage(response, t6("\u56FE\u7247\u5FAE\u535A\u53D1\u9001")), data: null };
   }
   let result = {};
   try {
@@ -8650,16 +9235,16 @@ async function validate6({ payload, config = {} }) {
   const supportedImages = images.filter((a) => SUPPORTED_IMAGE_MIME.has(a.mimeType));
   const plainText = String(payload.plainText || "").trim();
   if (!plainText && supportedImages.length === 0) {
-    errors.push(images.length > 0 ? "\u6B63\u6587\u4E3A\u7A7A\uFF0C\u4E14\u56FE\u7247\u683C\u5F0F\u5747\u4E0D\u53D7\u5FAE\u535A\u652F\u6301\uFF08\u4EC5\u652F\u6301 JPG/PNG/GIF\uFF09" : "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+    errors.push(images.length > 0 ? t6("\u6B63\u6587\u4E3A\u7A7A\uFF0C\u4E14\u56FE\u7247\u683C\u5F0F\u5747\u4E0D\u53D7\u5FAE\u535A\u652F\u6301\uFF08\u4EC5\u652F\u6301 JPG/PNG/GIF\uFF09") : t6("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"));
     return { warnings, errors };
   }
   const longTextMode = ["longtext", "truncate", "error"].includes(config.longTextMode) ? config.longTextMode : "longtext";
   const textUnits = weiboTextLength(plainText);
   if (textUnits > MAX_TEXT_UNITS) {
     if (longTextMode === "error") {
-      errors.push(`\u5FAE\u535A\u9ED8\u8BA4\u4E0A\u9650 ${MAX_TEXT_UNITS} \u5B57\uFF0C\u5F53\u524D ${textUnits} \u5B57\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9\u6216\u5728\u8BBE\u7F6E\u4E2D\u5C06\u957F\u6587\u6A21\u5F0F\u6539\u4E3A\u300C\u957F\u6587\u300D`);
+      errors.push(t6("\u5FAE\u535A\u9ED8\u8BA4\u4E0A\u9650 {max} \u5B57\uFF0C\u5F53\u524D {count} \u5B57\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9\u6216\u5728\u8BBE\u7F6E\u4E2D\u5C06\u957F\u6587\u6A21\u5F0F\u6539\u4E3A\u300C\u957F\u6587\u300D", { max: MAX_TEXT_UNITS, count: textUnits }));
     } else if (supportedImages.length > 0) {
-      warnings.push("\u5E26\u56FE\u5FAE\u535A\u6682\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u53D1\u9001\u65F6\u6B63\u6587\u5C06\u622A\u65AD\u81F3 140 \u5B57");
+      warnings.push(t6("\u5E26\u56FE\u5FAE\u535A\u6682\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u53D1\u9001\u65F6\u6B63\u6587\u5C06\u622A\u65AD\u81F3 140 \u5B57"));
     }
   }
   return { warnings, errors };
@@ -8669,10 +9254,10 @@ async function execute6({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
   const appSecret = String(config.appSecret || "").trim();
   const accessToken = String(config.accessToken || "").trim();
   if (!appKey || !appSecret || !accessToken) {
-    return { success: false, error: "\u5FAE\u535A\u672A\u914D\u7F6E\u6216\u672A\u6388\u6743\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 App Key / App Secret \u5E76\u5B8C\u6210\u6388\u6743" };
+    return { success: false, error: t6("\u5FAE\u535A\u672A\u914D\u7F6E\u6216\u672A\u6388\u6743\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 App Key / App Secret \u5E76\u5B8C\u6210\u6388\u6743") };
   }
   if (isTokenExpired(config)) {
-    return { success: false, error: "\u5FAE\u535A\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743" };
+    return { success: false, error: t6("\u5FAE\u535A\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743") };
   }
   const warnings = [];
   const visible = config.visibility === "private" ? "1" : "0";
@@ -8682,14 +9267,14 @@ async function execute6({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
     const allImages = attachments.filter((a) => a && a.kind === "image");
     for (const image of allImages) {
       if (!SUPPORTED_IMAGE_MIME.has(image.mimeType)) {
-        warnings.push(`\u5FAE\u535A\u4E0D\u652F\u6301 ${image.filename || "\u56FE\u7247"} \u7684\u683C\u5F0F\uFF08\u4EC5\u652F\u6301 JPG/PNG/GIF\uFF09\uFF0C\u5DF2\u8DF3\u8FC7`);
+        warnings.push(t6("\u5FAE\u535A\u4E0D\u652F\u6301 {filename} \u7684\u683C\u5F0F\uFF08\u4EC5\u652F\u6301 JPG/PNG/GIF\uFF09\uFF0C\u5DF2\u8DF3\u8FC7", { filename: image.filename || t6("\u5FAE\u535A\u56FE\u7247") }));
       }
     }
     const supportedImages = allImages.filter((a) => SUPPORTED_IMAGE_MIME.has(a.mimeType));
     const maxImages = manifest6.capabilities.maxAttachments;
     const images = supportedImages.slice(0, maxImages);
     if (supportedImages.length > maxImages) {
-      warnings.push("\u5FAE\u535A\u6682\u53EA\u652F\u6301\u53D1\u9001 1 \u5F20\u56FE\u7247\uFF0C\u5DF2\u53D1\u9001\u7B2C 1 \u5F20\uFF08\u591A\u56FE\u5C06\u5728\u540E\u7EED\u7248\u672C\u652F\u6301\uFF09");
+      warnings.push(t6("\u5FAE\u535A\u6682\u53EA\u652F\u6301\u53D1\u9001 1 \u5F20\u56FE\u7247\uFF0C\u5DF2\u53D1\u9001\u7B2C 1 \u5F20\uFF08\u591A\u56FE\u5C06\u5728\u540E\u7EED\u7248\u672C\u652F\u6301\uFF09"));
     }
     const rawText = String(payload.plainText || "").trim();
     if (images.length > 0) {
@@ -8697,20 +9282,20 @@ async function execute6({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
       try {
         buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(images[0].vaultPath) : null;
       } catch (error) {
-        return { success: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${images[0].filename}\uFF08${error.message || String(error)}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`, warnings };
+        return { success: false, error: t6("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{filename}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", { filename: images[0].filename, error: error.message || String(error) }), warnings };
       }
       if (!buffer) {
-        return { success: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${images[0].filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002`, warnings };
+        return { success: false, error: t6("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", { filename: images[0].filename }), warnings };
       }
       let statusText = rawText;
       if (weiboTextLength(statusText) > MAX_TEXT_UNITS) {
         if (longTextMode === "error") {
-          return { success: false, error: `\u5E26\u56FE\u5FAE\u535A\u4E0D\u652F\u6301\u957F\u6587\uFF1A\u6B63\u6587 ${weiboTextLength(statusText)} \u5B57\uFF0C\u8D85\u8FC7 140 \u5B57\u4E0A\u9650\u3002\u8BF7\u7F29\u77ED\u6B63\u6587\u6216\u6539\u4E3A\u7EAF\u6587\u672C\u53D1\u9001`, warnings };
+          return { success: false, error: t6("\u5E26\u56FE\u5FAE\u535A\u4E0D\u652F\u6301\u957F\u6587\uFF1A\u6B63\u6587 {count} \u5B57\uFF0C\u8D85\u8FC7 140 \u5B57\u4E0A\u9650\u3002\u8BF7\u7F29\u77ED\u6B63\u6587\u6216\u6539\u4E3A\u7EAF\u6587\u672C\u53D1\u9001", { count: weiboTextLength(statusText) }), warnings };
         }
         statusText = truncateToWeiboLimit(statusText);
-        warnings.push("\u5E26\u56FE\u5FAE\u535A\u6682\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u6B63\u6587\u5DF2\u622A\u65AD\u81F3 140 \u5B57");
+        warnings.push(t6("\u5E26\u56FE\u5FAE\u535A\u6682\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u6B63\u6587\u5DF2\u622A\u65AD\u81F3 140 \u5B57"));
       }
-      if (!statusText) statusText = "\u{1F4F7}";
+      if (!statusText) statusText = " ";
       const result2 = await uploadWithImage({
         accessToken,
         visible,
@@ -8724,7 +9309,7 @@ async function execute6({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
       return { success: true, url: buildPostUrl(result2.data, config), mediaCount: 1, warnings };
     }
     if (!rawText) {
-      return { success: false, error: "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A", warnings };
+      return { success: false, error: t6("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"), warnings };
     }
     let finalText = rawText;
     let isLongText = false;
@@ -8732,9 +9317,9 @@ async function execute6({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
     if (textUnits > MAX_TEXT_UNITS) {
       if (longTextMode === "truncate") {
         finalText = truncateToWeiboLimit(finalText);
-        warnings.push("\u6B63\u6587\u5DF2\u622A\u65AD\u81F3 140 \u5B57");
+        warnings.push(t6("\u6B63\u6587\u5DF2\u622A\u65AD\u81F3 140 \u5B57"));
       } else if (longTextMode === "error") {
-        return { success: false, error: `\u5FAE\u535A\u9ED8\u8BA4\u4E0A\u9650 140 \u5B57\uFF0C\u5F53\u524D ${textUnits} \u5B57\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9\u6216\u5728\u8BBE\u7F6E\u4E2D\u5C06\u957F\u6587\u6A21\u5F0F\u6539\u4E3A\u300C\u957F\u6587\u300D`, warnings };
+        return { success: false, error: t6("\u5FAE\u535A\u9ED8\u8BA4\u4E0A\u9650 140 \u5B57\uFF0C\u5F53\u524D {count} \u5B57\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9\u6216\u5728\u8BBE\u7F6E\u4E2D\u5C06\u957F\u6587\u6A21\u5F0F\u6539\u4E3A\u300C\u957F\u6587\u300D", { count: textUnits }), warnings };
       } else {
         isLongText = true;
       }
@@ -8765,7 +9350,7 @@ function extractAuthCode(raw) {
     return { code: code2, state };
   }
   if (/^https?:\/\//i.test(input)) {
-    throw new Error("\u7C98\u8D34\u7684\u5730\u5740\u4E2D\u672A\u627E\u5230\u6388\u6743 code\uFF0C\u8BF7\u5728\u5FAE\u535A\u6388\u6743\u9875\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740");
+    throw new Error(t6("\u7C98\u8D34\u7684\u5730\u5740\u4E2D\u672A\u627E\u5230\u6388\u6743 code\uFF0C\u8BF7\u5728\u5FAE\u535A\u6388\u6743\u9875\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740"));
   }
   return { code: input, state: "" };
 }
@@ -8773,7 +9358,7 @@ async function runAction4(actionId, config = {}, requestUrlFn, options = {}) {
   var _a, _b;
   if (actionId === "getAuthorizeUrl") {
     const appKey = String((config == null ? void 0 : config.appKey) || "").trim();
-    if (!appKey) throw new Error("\u8BF7\u5148\u586B\u5199\u5FAE\u535A App Key");
+    if (!appKey) throw new Error(t6("\u8BF7\u5148\u586B\u5199\u5FAE\u535A App Key"));
     pendingAuthState = `jsb${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
     const params = new URLSearchParams({
       client_id: appKey,
@@ -8783,16 +9368,16 @@ async function runAction4(actionId, config = {}, requestUrlFn, options = {}) {
     });
     const base = options.mobile ? "https://open.weibo.cn/oauth2/authorize" : `${API_BASE}/oauth2/authorize`;
     if (options.mobile) params.set("display", "mobile");
-    return { success: true, data: { url: `${base}?${params.toString()}` }, message: "\u5DF2\u751F\u6210\u5FAE\u535A\u6388\u6743\u94FE\u63A5" };
+    return { success: true, data: { url: `${base}?${params.toString()}` }, message: t6("\u5DF2\u751F\u6210\u5FAE\u535A\u6388\u6743\u94FE\u63A5") };
   }
   if (actionId === "exchangeToken") {
     const appKey = String((config == null ? void 0 : config.appKey) || "").trim();
     const appSecret = String((config == null ? void 0 : config.appSecret) || "").trim();
-    if (!appKey || !appSecret) throw new Error("\u8BF7\u5148\u586B\u5199\u5FAE\u535A App Key \u4E0E App Secret");
+    if (!appKey || !appSecret) throw new Error(t6("\u8BF7\u5148\u586B\u5199\u5FAE\u535A App Key \u4E0E App Secret"));
     const { code: code2, state } = extractAuthCode(config == null ? void 0 : config.code);
-    if (!code2) throw new Error("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code\uFF08\u767B\u5F55\u6388\u6743\u540E\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236\uFF09");
+    if (!code2) throw new Error(t6("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code\uFF08\u767B\u5F55\u6388\u6743\u540E\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236\uFF09"));
     if (state && pendingAuthState && state !== pendingAuthState) {
-      throw new Error("\u6388\u6743 state \u6821\u9A8C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u518D\u8BD5");
+      throw new Error(t6("\u6388\u6743 state \u6821\u9A8C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u518D\u8BD5"));
     }
     const response = await requestUrlFn({
       url: `${API_BASE}/oauth2/access_token`,
@@ -8808,14 +9393,14 @@ async function runAction4(actionId, config = {}, requestUrlFn, options = {}) {
       throw: false
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(weiboApiErrorMessage(response, "\u6362\u53D6 Token"));
+      throw new Error(weiboApiErrorMessage(response, t6("\u5FAE\u535A\u6362\u53D6 Token")));
     }
     let result = {};
     try {
       result = response.json || {};
     } catch (e) {
     }
-    if (!result.access_token) throw new Error("\u5FAE\u535A\u672A\u8FD4\u56DE access_token\uFF0C\u8BF7\u91CD\u8BD5");
+    if (!result.access_token) throw new Error(t6("\u5FAE\u535A\u672A\u8FD4\u56DE access_token\uFF0C\u8BF7\u91CD\u8BD5"));
     pendingAuthState = "";
     const uid = String(result.uid || result.id || "");
     const expiresIn = Number(result.expires_in || 0);
@@ -8827,19 +9412,22 @@ async function runAction4(actionId, config = {}, requestUrlFn, options = {}) {
         tokenObtainedAt: Date.now(),
         expiresIn
       },
-      message: `\u5DF2\u6388\u6743\u5FAE\u535A\u8D26\u53F7${uid ? ` uid=${uid}` : ""}${expiresIn ? `\uFF0Ctoken \u6709\u6548\u671F ${expiresIn} \u79D2\uFF08\u77ED\u6548\u8BF7\u5230\u5F00\u653E\u5E73\u53F0\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF09` : ""}`
+      message: t6("\u5DF2\u6388\u6743\u5FAE\u535A\u8D26\u53F7{uidInfo}{expiryInfo}", {
+        uidInfo: uid ? ` uid=${uid}` : "",
+        expiryInfo: expiresIn ? t6("\uFF0Ctoken \u6709\u6548\u671F {seconds} \u79D2\uFF08\u77ED\u6548\u8BF7\u5230\u5F00\u653E\u5E73\u53F0\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF09", { seconds: expiresIn }) : ""
+      })
     };
   }
   if (actionId === "testConnection") {
     const accessToken = String((config == null ? void 0 : config.accessToken) || "").trim();
-    if (!accessToken) throw new Error("\u8BF7\u5148\u5B8C\u6210\u5FAE\u535A\u6388\u6743");
+    if (!accessToken) throw new Error(t6("\u8BF7\u5148\u5B8C\u6210\u5FAE\u535A\u6388\u6743"));
     const response = await requestUrlFn({
       url: `${API_BASE}/2/account/rate_limit_status.json?access_token=${encodeURIComponent(accessToken)}`,
       method: "GET",
       throw: false
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(weiboApiErrorMessage(response, "\u6D4B\u8BD5\u8FDE\u63A5"));
+      throw new Error(weiboApiErrorMessage(response, t6("\u6D4B\u8BD5\u8FDE\u63A5")));
     }
     let result = {};
     try {
@@ -8850,30 +9438,30 @@ async function runAction4(actionId, config = {}, requestUrlFn, options = {}) {
     const remaining = (_a = status.user_remaining) != null ? _a : status.remaining_user_hits;
     const limit = (_b = status.user_limit) != null ? _b : status.limit_user_hits;
     const uid = String((config == null ? void 0 : config.uid) || "").trim();
-    let message = "\u8FDE\u63A5\u6210\u529F";
-    if (uid) message += `\uFF08uid=${uid}\uFF09`;
-    if (remaining !== void 0) message += `\uFF0C\u672C\u5C0F\u65F6\u5269\u4F59\u8BF7\u6C42 ${remaining}${limit !== void 0 ? `/${limit}` : ""} \u6B21`;
+    let message = t6("\u8FDE\u63A5\u6210\u529F");
+    if (uid) message += t6("\uFF08uid={uid}\uFF09", { uid });
+    if (remaining !== void 0) message += t6("\uFF0C\u672C\u5C0F\u65F6\u5269\u4F59\u8BF7\u6C42 {remaining}{limitInfo} \u6B21", { remaining, limitInfo: limit !== void 0 ? `/${limit}` : "" });
     return { success: true, message };
   }
-  throw new Error(`\u5FAE\u535A\u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+  throw new Error(t6("\u5FAE\u535A\u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}", { action: actionId }));
 }
 function renderSettings4(containerEl, ctx) {
   const config = ctx.plugin.getAdapterConfig("weibo") || {};
-  new import_obsidian4.Setting(containerEl).setName("\u26A0\uFE0F \u5F53\u524D\u63D2\u4EF6\u672A\u7ECF\u6D4B\u8BD5").setDesc("\u5FAE\u535A\u9002\u914D\u5668\u5C1A\u672A\u7ECF\u8FC7\u5B8C\u6574\u6D4B\u8BD5\uFF0C\u4F7F\u7528\u4E2D\u5982\u9047\u95EE\u9898\uFF0C\u6B22\u8FCE\u5728 GitHub \u4E0A\u63D0 issue \u53CD\u9988\u3002");
-  new import_obsidian4.Setting(containerEl).setName("\u5FAE\u535A\u5F00\u653E\u5E73\u53F0").setDesc("\u9700\u5728\u5FAE\u535A\u5F00\u653E\u5E73\u53F0\uFF08open.weibo.com\uFF09\u521B\u5EFA\u5E94\u7528\u540E\u4F7F\u7528\uFF1A\u2460 \u6CE8\u518C\u5F00\u53D1\u8005\u5E76\u5B8C\u6210\u4E2A\u4EBA\u8EAB\u4EFD\u8BA4\u8BC1\uFF1B\u2461 \u521B\u5EFA\u300C\u7F51\u7AD9\u5E94\u7528\u300D\uFF0C\u6388\u6743\u56DE\u8C03\u9875\u586B https://api.weibo.com/oauth2/default.html\uFF1B\u2462 \u5EFA\u8BAE\u5728\u300C\u9AD8\u7EA7\u4FE1\u606F \u2192 OAuth2.0 \u6388\u6743\u8BBE\u7F6E\u300D\u4E2D\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF0C\u907F\u514D token \u77ED\u65F6\u95F4\u8FC7\u671F\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002");
-  new import_obsidian4.Setting(containerEl).setName("App Key").setDesc("\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Key\u3002").addText((text) => text.setPlaceholder("App Key").setValue(config.appKey || "").onChange((value) => ctx.scheduleConfigSave({ appKey: value.trim() })));
-  new import_obsidian4.Setting(containerEl).setName("App Secret").setDesc("\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002").addText((text) => {
+  new import_obsidian4.Setting(containerEl).setName(t6("\u26A0\uFE0F \u5F53\u524D\u63D2\u4EF6\u672A\u7ECF\u6D4B\u8BD5")).setDesc(t6("\u5FAE\u535A\u9002\u914D\u5668\u5C1A\u672A\u7ECF\u8FC7\u5B8C\u6574\u6D4B\u8BD5\uFF0C\u4F7F\u7528\u4E2D\u5982\u9047\u95EE\u9898\uFF0C\u6B22\u8FCE\u5728 GitHub \u4E0A\u63D0 issue \u53CD\u9988\u3002"));
+  new import_obsidian4.Setting(containerEl).setName(t6("\u5FAE\u535A\u5F00\u653E\u5E73\u53F0")).setDesc(t6("\u9700\u5728\u5FAE\u535A\u5F00\u653E\u5E73\u53F0\uFF08open.weibo.com\uFF09\u521B\u5EFA\u5E94\u7528\u540E\u4F7F\u7528\uFF1A\u2460 \u6CE8\u518C\u5F00\u53D1\u8005\u5E76\u5B8C\u6210\u4E2A\u4EBA\u8EAB\u4EFD\u8BA4\u8BC1\uFF1B\u2461 \u521B\u5EFA\u300C\u7F51\u7AD9\u5E94\u7528\u300D\uFF0C\u6388\u6743\u56DE\u8C03\u9875\u586B https://api.weibo.com/oauth2/default.html\uFF1B\u2462 \u5EFA\u8BAE\u5728\u300C\u9AD8\u7EA7\u4FE1\u606F \u2192 OAuth2.0 \u6388\u6743\u8BBE\u7F6E\u300D\u4E2D\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF0C\u907F\u514D token \u77ED\u65F6\u95F4\u8FC7\u671F\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002"));
+  new import_obsidian4.Setting(containerEl).setName("App Key").setDesc(t6("\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Key\u3002")).addText((text) => text.setPlaceholder("App Key").setValue(config.appKey || "").onChange((value) => ctx.scheduleConfigSave({ appKey: value.trim() })));
+  new import_obsidian4.Setting(containerEl).setName("App Secret").setDesc(t6("\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002")).addText((text) => {
     text.inputEl.type = "password";
     text.setPlaceholder("App Secret").setValue(config.appSecret || "").onChange((value) => ctx.scheduleConfigSave({ appSecret: value.trim() }));
   });
   const obtainedAt = Number(config.tokenObtainedAt || 0);
   const expiresIn = Number(config.expiresIn || 0);
   const tokenExpired = obtainedAt && expiresIn && Date.now() - obtainedAt >= expiresIn * 1e3;
-  const authDesc = config.accessToken ? `\u5DF2\u6388\u6743${config.uid ? ` uid=${config.uid}` : ""}${tokenExpired ? "\uFF0C\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u6388\u6743" : ""}\u3002` : "\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55\u5FAE\u535A\u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002";
-  new import_obsidian4.Setting(containerEl).setName("\u5FAE\u535A\u6388\u6743").setDesc(authDesc).addButton((btn) => btn.setButtonText("\u6253\u5F00\u6388\u6743\u9875\u9762").onClick(async () => {
+  const authDesc = config.accessToken ? t6("\u5DF2\u6388\u6743{uidInfo}{expiredInfo}\u3002", { uidInfo: config.uid ? ` uid=${config.uid}` : "", expiredInfo: tokenExpired ? t6("\uFF0C\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u6388\u6743") : "" }) : t6("\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55\u5FAE\u535A\u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002");
+  new import_obsidian4.Setting(containerEl).setName(t6("\u5FAE\u535A\u6388\u6743")).setDesc(authDesc).addButton((btn) => btn.setButtonText(t6("\u5FAE\u535A\u6253\u5F00\u6388\u6743\u9875\u9762")).onClick(async () => {
     var _a;
     try {
-      btn.setButtonText("\u6253\u5F00\u4E2D...");
+      btn.setButtonText(t6("\u6253\u5F00\u4E2D..."));
       btn.disabled = true;
       const result = await runAction4(
         "getAuthorizeUrl",
@@ -8882,34 +9470,34 @@ function renderSettings4(containerEl, ctx) {
         { mobile: import_obsidian4.Platform.isMobile }
       );
       const url = ((_a = result == null ? void 0 : result.data) == null ? void 0 : _a.url) || "";
-      if (!url) throw new Error((result == null ? void 0 : result.message) || "\u672A\u83B7\u53D6\u5230\u6388\u6743\u94FE\u63A5");
+      if (!url) throw new Error((result == null ? void 0 : result.message) || t6("\u672A\u83B7\u53D6\u5230\u6388\u6743\u94FE\u63A5"));
       if (import_obsidian4.Platform.isMobile) {
         navigator.clipboard.writeText(url).then(() => {
-          new import_obsidian4.Notice("\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55\u5FAE\u535A");
+          new import_obsidian4.Notice(t6("\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55\u5FAE\u535A"));
         }).catch(() => {
-          new import_obsidian4.Notice(`\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A${url}`);
+          new import_obsidian4.Notice(t6("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A{url}", { url }));
         });
       } else {
         window.open(url, "_blank");
-        new import_obsidian4.Notice("\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u5FAE\u535A\u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740");
+        new import_obsidian4.Notice(t6("\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u5FAE\u535A\u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740"));
       }
     } catch (error) {
-      new import_obsidian4.Notice(`\u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian4.Notice(t6("\u5FAE\u535A\u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u6253\u5F00\u6388\u6743\u9875\u9762");
+      btn.setButtonText(t6("\u5FAE\u535A\u6253\u5F00\u6388\u6743\u9875\u9762"));
       btn.disabled = false;
     }
   }));
   let authCode = "";
-  new import_obsidian4.Setting(containerEl).setName("\u6388\u6743 Code").setDesc("\u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002").addText((text) => text.setPlaceholder("\u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740").onChange((value) => {
+  new import_obsidian4.Setting(containerEl).setName(t6("\u6388\u6743 Code")).setDesc(t6("\u5FAE\u535A\u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002")).addText((text) => text.setPlaceholder(t6("\u5FAE\u535A\u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740")).onChange((value) => {
     authCode = value.trim();
-  })).addButton((btn) => btn.setButtonText("\u6362\u53D6 Token").onClick(async () => {
+  })).addButton((btn) => btn.setButtonText(t6("\u5FAE\u535A\u6362\u53D6 Token")).onClick(async () => {
     if (!authCode) {
-      new import_obsidian4.Notice("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code");
+      new import_obsidian4.Notice(t6("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code"));
       return;
     }
     try {
-      btn.setButtonText("\u6362\u53D6\u4E2D...");
+      btn.setButtonText(t6("\u6362\u53D6\u4E2D..."));
       btn.disabled = true;
       const result = await runAction4(
         "exchangeToken",
@@ -8923,44 +9511,125 @@ function renderSettings4(containerEl, ctx) {
         tokenObtainedAt: data.tokenObtainedAt || 0,
         expiresIn: data.expiresIn || 0
       });
-      new import_obsidian4.Notice(result.message || "\u6388\u6743\u6210\u529F");
+      new import_obsidian4.Notice(result.message || t6("\u6388\u6743\u6210\u529F"));
       ctx.refresh();
     } catch (error) {
-      new import_obsidian4.Notice(`\u6362\u53D6 Token \u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian4.Notice(t6("\u5FAE\u535A\u6362\u53D6 Token \u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u6362\u53D6 Token");
+      btn.setButtonText(t6("\u5FAE\u535A\u6362\u53D6 Token"));
       btn.disabled = false;
     }
   }));
-  new import_obsidian4.Setting(containerEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u8C03\u7528\u5FAE\u535A\u9891\u6B21\u63A5\u53E3\uFF0C\u9A8C\u8BC1\u6388\u6743\u662F\u5426\u6709\u6548\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+  new import_obsidian4.Setting(containerEl).setName(t6("\u6D4B\u8BD5\u8FDE\u63A5")).setDesc(t6("\u8C03\u7528\u5FAE\u535A\u9891\u6B21\u63A5\u53E3\uFF0C\u9A8C\u8BC1\u6388\u6743\u662F\u5426\u6709\u6548\u3002")).addButton((btn) => btn.setButtonText(t6("\u6D4B\u8BD5\u8FDE\u63A5")).onClick(async () => {
     try {
-      btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+      btn.setButtonText(t6("\u8FDE\u63A5\u4E2D..."));
       btn.disabled = true;
       const result = await runAction4(
         "testConnection",
         ctx.plugin.getAdapterConfig("weibo"),
         ctx.requestUrl
       );
-      new import_obsidian4.Notice(result.message || "\u8FDE\u63A5\u6210\u529F");
+      new import_obsidian4.Notice(result.message || t6("\u8FDE\u63A5\u6210\u529F"));
     } catch (error) {
-      new import_obsidian4.Notice(`\u8FDE\u63A5\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian4.Notice(t6("\u8FDE\u63A5\u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.setButtonText(t6("\u6D4B\u8BD5\u8FDE\u63A5"));
       btn.disabled = false;
     }
   }));
-  new import_obsidian4.Setting(containerEl).setName("\u53EF\u89C1\u6027").setDesc("\u516C\u5F00\uFF1A\u6240\u6709\u4EBA\u53EF\u89C1\uFF1B\u4EC5\u81EA\u5DF1\u53EF\u89C1\uFF1A\u53EA\u6709\u81EA\u5DF1\u80FD\u770B\u5230\u8FD9\u6761\u5FAE\u535A\u3002").addDropdown((dropdown) => dropdown.addOption("public", "\u516C\u5F00").addOption("private", "\u4EC5\u81EA\u5DF1\u53EF\u89C1").setValue(config.visibility || "public").onChange((value) => ctx.scheduleConfigSave({ visibility: value })));
-  new import_obsidian4.Setting(containerEl).setName("\u957F\u6587\u6A21\u5F0F").setDesc("\u6B63\u6587\u8D85\u8FC7 140 \u5B57\u65F6\u7684\u5904\u7406\u65B9\u5F0F\uFF08\u5E26\u56FE\u53D1\u9001\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u4F1A\u81EA\u52A8\u622A\u65AD\uFF09\u3002").addDropdown((dropdown) => dropdown.addOption("longtext", "\u957F\u6587\uFF08\u6298\u53E0\u4E3A\u5C55\u5F00\u5168\u6587\uFF09").addOption("truncate", "\u622A\u65AD\u81F3 140 \u5B57").addOption("error", "\u8D85\u957F\u62D2\u53D1").setValue(config.longTextMode || "longtext").onChange((value) => ctx.scheduleConfigSave({ longTextMode: value })));
+  new import_obsidian4.Setting(containerEl).setName(t6("\u53EF\u89C1\u6027")).setDesc(t6("\u516C\u5F00\uFF1A\u6240\u6709\u4EBA\u53EF\u89C1\uFF1B\u4EC5\u81EA\u5DF1\u53EF\u89C1\uFF1A\u53EA\u6709\u81EA\u5DF1\u80FD\u770B\u5230\u8FD9\u6761\u5FAE\u535A\u3002")).addDropdown((dropdown) => dropdown.addOption("public", t6("\u516C\u5F00")).addOption("private", t6("\u4EC5\u81EA\u5DF1\u53EF\u89C1")).setValue(config.visibility || "public").onChange((value) => ctx.scheduleConfigSave({ visibility: value })));
+  new import_obsidian4.Setting(containerEl).setName(t6("\u957F\u6587\u6A21\u5F0F")).setDesc(t6("\u6B63\u6587\u8D85\u8FC7 140 \u5B57\u65F6\u7684\u5904\u7406\u65B9\u5F0F\uFF08\u5E26\u56FE\u53D1\u9001\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u4F1A\u81EA\u52A8\u622A\u65AD\uFF09\u3002")).addDropdown((dropdown) => dropdown.addOption("longtext", t6("\u957F\u6587\uFF08\u6298\u53E0\u4E3A\u5C55\u5F00\u5168\u6587\uFF09")).addOption("truncate", t6("\u622A\u65AD\u81F3 140 \u5B57")).addOption("error", t6("\u8D85\u957F\u62D2\u53D1")).setValue(config.longTextMode || "longtext").onChange((value) => ctx.scheduleConfigSave({ longTextMode: value })));
 }
-var import_obsidian4, manifest6, defaultConfig4, API_BASE, UPLOAD_API_BASE, DEFAULT_REDIRECT_URI, MAX_TEXT_UNITS, SUPPORTED_IMAGE_MIME, WEIBO_ERROR_MESSAGES, pendingAuthState, BASE62_ALPHABET, weibo_default;
+var import_obsidian4, t6, registerTranslations6, manifest6, defaultConfig4, API_BASE, UPLOAD_API_BASE, DEFAULT_REDIRECT_URI, MAX_TEXT_UNITS, SUPPORTED_IMAGE_MIME, WEIBO_ERROR_MESSAGES, pendingAuthState, BASE62_ALPHABET, weibo_default;
 var init_weibo = __esm({
   "src/adapters/weibo.js"() {
     import_obsidian4 = require("obsidian");
+    ({ t: t6, registerTranslations: registerTranslations6 } = require_i18n());
+    registerTranslations6("en", {
+      "\u5FAE\u535A": "Weibo",
+      "Access Token\uFF08\u6388\u6743\u4EA7\u7269\uFF0C\u7531\u300C\u6362\u53D6 Token\u300D\u5199\u5165\uFF09": 'Access Token (authorization artifact, written by "Exchange Token")',
+      "\u5FAE\u535A\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743": "Weibo authorization has expired. Please re-authorize in settings",
+      "\u5FAE\u535A\u6388\u6743\u5173\u7CFB\u5DF2\u88AB\u89E3\u9664\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743": "Weibo authorization has been revoked. Please re-authorize in settings",
+      "\u5E94\u7528\u7F3A\u5C11\u8BE5\u63A5\u53E3\u6743\u9650\uFF0C\u8BF7\u5230\u5FAE\u535A\u5F00\u653E\u5E73\u53F0\u7533\u8BF7": "The app lacks this API permission. Please apply on the Weibo Open Platform",
+      "\u8BF7\u6C42\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5": "Too many requests. Please try again later",
+      "\u53D1\u5E03\u6B21\u6570\u8FBE\u5230\u5FAE\u535A\u9891\u6B21\u4E0A\u9650\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5": "Publish rate limit reached. Please try again later",
+      "\u6388\u6743\u65F6\u672A\u52FE\u9009\u53D1\u535A\u6743\u9650\uFF0C\u8BF7\u91CD\u65B0\u6388\u6743\u5FAE\u535A": "Posting permission was not granted during authorization. Please authorize Weibo again",
+      "\u5FAE\u535A\u62D2\u7EDD\u8FDE\u7EED\u91CD\u590D\u5185\u5BB9\uFF0C\u8BF7\u4FEE\u6539\u5185\u5BB9\u540E\u518D\u8BD5": "Weibo rejected duplicate consecutive content. Please modify the content and try again",
+      "\u53D1\u5FAE\u535A": "Publish Weibo post",
+      "\u56FE\u7247\u5FAE\u535A\u53D1\u9001": "Send image Weibo",
+      "\u5FAE\u535A\u6362\u53D6 Token": "Exchange Token",
+      "\u6D4B\u8BD5\u8FDE\u63A5": "Test connection",
+      "{action}\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09": "{action} failed (HTTP {status}: {detail})",
+      "\u6B63\u6587\u4E3A\u7A7A\uFF0C\u4E14\u56FE\u7247\u683C\u5F0F\u5747\u4E0D\u53D7\u5FAE\u535A\u652F\u6301\uFF08\u4EC5\u652F\u6301 JPG/PNG/GIF\uFF09": "The text is empty and none of the image formats are supported by Weibo (only JPG/PNG/GIF are supported)",
+      "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A": "Content cannot be empty",
+      "\u5FAE\u535A\u9ED8\u8BA4\u4E0A\u9650 {max} \u5B57\uFF0C\u5F53\u524D {count} \u5B57\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9\u6216\u5728\u8BBE\u7F6E\u4E2D\u5C06\u957F\u6587\u6A21\u5F0F\u6539\u4E3A\u300C\u957F\u6587\u300D": 'The Weibo default limit is {max} characters; currently {count}. Please shorten the content or change the long text mode to "Long text" in settings',
+      "\u5E26\u56FE\u5FAE\u535A\u6682\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u53D1\u9001\u65F6\u6B63\u6587\u5C06\u622A\u65AD\u81F3 140 \u5B57": "Image Weibo does not support long text; the text will be truncated to 140 characters",
+      "\u5FAE\u535A\u672A\u914D\u7F6E\u6216\u672A\u6388\u6743\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u586B\u5199 App Key / App Secret \u5E76\u5B8C\u6210\u6388\u6743": "Weibo is not configured or authorized. Please fill in App Key / App Secret in settings and complete authorization",
+      "\u5FAE\u535A\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u6388\u6743": "Weibo authorization has expired. Please re-authorize in settings",
+      "\u5FAE\u535A\u4E0D\u652F\u6301 {filename} \u7684\u683C\u5F0F\uFF08\u4EC5\u652F\u6301 JPG/PNG/GIF\uFF09\uFF0C\u5DF2\u8DF3\u8FC7": "Weibo does not support the format of {filename} (only JPG/PNG/GIF are supported); skipped",
+      "\u5FAE\u535A\u56FE\u7247": "image",
+      "\u5FAE\u535A\u6682\u53EA\u652F\u6301\u53D1\u9001 1 \u5F20\u56FE\u7247\uFF0C\u5DF2\u53D1\u9001\u7B2C 1 \u5F20\uFF08\u591A\u56FE\u5C06\u5728\u540E\u7EED\u7248\u672C\u652F\u6301\uFF09": "Weibo currently only supports sending 1 image; the first one was sent (multiple images will be supported in a later version)",
+      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{filename}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Failed to read image: {filename} ({error}); nothing was sent.",
+      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{filename}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Failed to read image: {filename}; nothing was sent.",
+      "\u5E26\u56FE\u5FAE\u535A\u4E0D\u652F\u6301\u957F\u6587\uFF1A\u6B63\u6587 {count} \u5B57\uFF0C\u8D85\u8FC7 140 \u5B57\u4E0A\u9650\u3002\u8BF7\u7F29\u77ED\u6B63\u6587\u6216\u6539\u4E3A\u7EAF\u6587\u672C\u53D1\u9001": "Image Weibo does not support long text: the text is {count} characters, exceeding the 140-character limit. Please shorten the text or send as plain text",
+      "\u5E26\u56FE\u5FAE\u535A\u6682\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u6B63\u6587\u5DF2\u622A\u65AD\u81F3 140 \u5B57": "Image Weibo does not support long text; the text has been truncated to 140 characters",
+      "\u6B63\u6587\u5DF2\u622A\u65AD\u81F3 140 \u5B57": "The text has been truncated to 140 characters",
+      "\u5FAE\u535A\u9ED8\u8BA4\u4E0A\u9650 140 \u5B57\uFF0C\u5F53\u524D {count} \u5B57\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9\u6216\u5728\u8BBE\u7F6E\u4E2D\u5C06\u957F\u6587\u6A21\u5F0F\u6539\u4E3A\u300C\u957F\u6587\u300D": 'The Weibo default limit is 140 characters; currently {count}. Please shorten the content or change the long text mode to "Long text" in settings',
+      "\u7C98\u8D34\u7684\u5730\u5740\u4E2D\u672A\u627E\u5230\u6388\u6743 code\uFF0C\u8BF7\u5728\u5FAE\u535A\u6388\u6743\u9875\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740": "No authorization code found in the pasted address. After logging in on the Weibo authorization page, copy the code or the full callback address from the address bar",
+      "\u8BF7\u5148\u586B\u5199\u5FAE\u535A App Key": "Please fill in the Weibo App Key first",
+      "\u5DF2\u751F\u6210\u5FAE\u535A\u6388\u6743\u94FE\u63A5": "Weibo authorization link generated",
+      "\u8BF7\u5148\u586B\u5199\u5FAE\u535A App Key \u4E0E App Secret": "Please fill in the Weibo App Key and App Secret first",
+      "\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code\uFF08\u767B\u5F55\u6388\u6743\u540E\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236\uFF09": "Please paste the authorization code first (copy it from the callback page address bar after logging in)",
+      "\u6388\u6743 state \u6821\u9A8C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u518D\u8BD5": 'Authorization state validation failed. Please click "Open Authorization Page" again and retry',
+      "\u5FAE\u535A\u672A\u8FD4\u56DE access_token\uFF0C\u8BF7\u91CD\u8BD5": "Weibo did not return an access_token. Please retry",
+      "\u5DF2\u6388\u6743\u5FAE\u535A\u8D26\u53F7{uidInfo}{expiryInfo}": "Authorized Weibo account{uidInfo}{expiryInfo}",
+      "\uFF0Ctoken \u6709\u6548\u671F {seconds} \u79D2\uFF08\u77ED\u6548\u8BF7\u5230\u5F00\u653E\u5E73\u53F0\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF09": ", token valid for {seconds} seconds (for short-lived tokens, configure long-term authorization on the Open Platform)",
+      "\u8BF7\u5148\u5B8C\u6210\u5FAE\u535A\u6388\u6743": "Please complete Weibo authorization first",
+      "\u8FDE\u63A5\u6210\u529F": "Connection successful",
+      "\uFF08uid={uid}\uFF09": " (uid: {uid})",
+      "\uFF0C\u672C\u5C0F\u65F6\u5269\u4F59\u8BF7\u6C42 {remaining}{limitInfo} \u6B21": ", {remaining}{limitInfo} requests remaining this hour",
+      "\u5FAE\u535A\u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}": "Weibo adapter does not support the operation: {action}",
+      "\u26A0\uFE0F \u5F53\u524D\u63D2\u4EF6\u672A\u7ECF\u6D4B\u8BD5": "\u26A0\uFE0F This plugin is untested",
+      "\u5FAE\u535A\u9002\u914D\u5668\u5C1A\u672A\u7ECF\u8FC7\u5B8C\u6574\u6D4B\u8BD5\uFF0C\u4F7F\u7528\u4E2D\u5982\u9047\u95EE\u9898\uFF0C\u6B22\u8FCE\u5728 GitHub \u4E0A\u63D0 issue \u53CD\u9988\u3002": "The Weibo adapter has not been fully tested. If you encounter any issues, please file an issue on GitHub.",
+      "\u5FAE\u535A\u5F00\u653E\u5E73\u53F0": "Weibo Open Platform",
+      "\u9700\u5728\u5FAE\u535A\u5F00\u653E\u5E73\u53F0\uFF08open.weibo.com\uFF09\u521B\u5EFA\u5E94\u7528\u540E\u4F7F\u7528\uFF1A\u2460 \u6CE8\u518C\u5F00\u53D1\u8005\u5E76\u5B8C\u6210\u4E2A\u4EBA\u8EAB\u4EFD\u8BA4\u8BC1\uFF1B\u2461 \u521B\u5EFA\u300C\u7F51\u7AD9\u5E94\u7528\u300D\uFF0C\u6388\u6743\u56DE\u8C03\u9875\u586B https://api.weibo.com/oauth2/default.html\uFF1B\u2462 \u5EFA\u8BAE\u5728\u300C\u9AD8\u7EA7\u4FE1\u606F \u2192 OAuth2.0 \u6388\u6743\u8BBE\u7F6E\u300D\u4E2D\u914D\u7F6E\u957F\u671F\u6388\u6743\uFF0C\u907F\u514D token \u77ED\u65F6\u95F4\u8FC7\u671F\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002": 'Requires an app created on the Weibo Open Platform (open.weibo.com): \u2460 Register as a developer and complete personal identity verification; \u2461 Create a "Website App" and set the authorization callback page to https://api.weibo.com/oauth2/default.html; \u2462 It is recommended to configure long-term authorization under "Advanced Info \u2192 OAuth2.0 Authorization Settings" to prevent tokens from expiring quickly. Credentials are stored only in local data.json.',
+      "\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Key\u3002": "The App Key of your website app on the Open Platform.",
+      "\u5F00\u653E\u5E73\u53F0\u7F51\u7AD9\u5E94\u7528\u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002": "The App Secret of your website app on the Open Platform. Stored only in local data.json; do not share it.",
+      "\u5DF2\u6388\u6743{uidInfo}{expiredInfo}\u3002": "Authorized{uidInfo}{expiredInfo}.",
+      "\uFF0C\u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u6388\u6743": ", authorization expired, please re-authorize",
+      "\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55\u5FAE\u535A\u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002": 'Not authorized yet. Click "Open Authorization Page", log in to Weibo, then copy the code from the callback page address bar.',
+      "\u5FAE\u535A\u6388\u6743": "Weibo Authorization",
+      "\u5FAE\u535A\u6253\u5F00\u6388\u6743\u9875\u9762": "Open Authorization Page",
+      "\u6253\u5F00\u4E2D...": "Opening...",
+      "\u672A\u83B7\u53D6\u5230\u6388\u6743\u94FE\u63A5": "Failed to obtain the authorization link",
+      "\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55\u5FAE\u535A": "Authorization link copied. Please open it in a browser and log in to Weibo",
+      "\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A{url}": "Copy failed. Please open the authorization page manually: {url}",
+      "\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u5FAE\u535A\u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740": "Weibo authorization page opened in the browser. After logging in, copy the code or the full callback address from the address bar",
+      "\u5FAE\u535A\u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A{error}": "Failed to open the authorization page: {error}",
+      "\u6388\u6743 Code": "Authorization Code",
+      "\u5FAE\u535A\u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002": "Paste the code from the callback page address bar, or paste the full callback address.",
+      "\u5FAE\u535A\u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740": "Paste the code or callback address",
+      "\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code": "Please paste the authorization code first",
+      "\u6362\u53D6\u4E2D...": "Exchanging...",
+      "\u6388\u6743\u6210\u529F": "Authorization successful",
+      "\u5FAE\u535A\u6362\u53D6 Token \u5931\u8D25\uFF1A{error}": "Failed to exchange Token: {error}",
+      "\u8C03\u7528\u5FAE\u535A\u9891\u6B21\u63A5\u53E3\uFF0C\u9A8C\u8BC1\u6388\u6743\u662F\u5426\u6709\u6548\u3002": "Calls the Weibo rate-limit API to verify whether the authorization is valid.",
+      "\u8FDE\u63A5\u4E2D...": "Connecting...",
+      "\u8FDE\u63A5\u5931\u8D25\uFF1A{error}": "Connection failed: {error}",
+      "\u53EF\u89C1\u6027": "Visibility",
+      "\u516C\u5F00\uFF1A\u6240\u6709\u4EBA\u53EF\u89C1\uFF1B\u4EC5\u81EA\u5DF1\u53EF\u89C1\uFF1A\u53EA\u6709\u81EA\u5DF1\u80FD\u770B\u5230\u8FD9\u6761\u5FAE\u535A\u3002": "Public: visible to everyone; Private: only you can see this Weibo post.",
+      "\u516C\u5F00": "Public",
+      "\u4EC5\u81EA\u5DF1\u53EF\u89C1": "Private (only me)",
+      "\u957F\u6587\u6A21\u5F0F": "Long text mode",
+      "\u6B63\u6587\u8D85\u8FC7 140 \u5B57\u65F6\u7684\u5904\u7406\u65B9\u5F0F\uFF08\u5E26\u56FE\u53D1\u9001\u4E0D\u652F\u6301\u957F\u6587\uFF0C\u4F1A\u81EA\u52A8\u622A\u65AD\uFF09\u3002": "How to handle text over 140 characters (image posts do not support long text and will be truncated automatically).",
+      "\u957F\u6587\uFF08\u6298\u53E0\u4E3A\u5C55\u5F00\u5168\u6587\uFF09": 'Long text (collapsed as "expand full text")',
+      "\u622A\u65AD\u81F3 140 \u5B57": "Truncate to 140 characters",
+      "\u8D85\u957F\u62D2\u53D1": "Reject if too long"
+    });
     manifest6 = {
       id: "weibo",
       version: "1.0.0",
       name: "\u5FAE\u535A",
-      description: "\u53D1\u5E03\u5185\u5BB9\u5230\u65B0\u6D6A\u5FAE\u535A",
       enabledByDefault: false,
       displayOrder: 60,
       capabilities: {
@@ -9066,18 +9735,18 @@ function graphErrorMessage(response, actionLabel) {
   const userMsg = String(err.error_user_msg || body.error_user_msg || "");
   const combined = `${detail} ${userMsg}`;
   if (code2 === 190 || /access token|token has expired|invalid oauth/i.test(combined)) {
-    return "Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743";
+    return t7("Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743");
   }
   if (combined.includes("LINK_LIMIT")) {
-    return `Threads \u5355\u5E16\u6700\u591A ${MAX_LINKS} \u4E2A\u94FE\u63A5\uFF08\u6B63\u6587\u4E0E\u94FE\u63A5\u5361\u7247\u5408\u5E76\u8BA1\u7B97\uFF09\uFF0C\u8BF7\u51CF\u5C11\u94FE\u63A5\u540E\u91CD\u8BD5`;
+    return t7("Threads \u5355\u5E16\u6700\u591A {count} \u4E2A\u94FE\u63A5\uFF08\u6B63\u6587\u4E0E\u94FE\u63A5\u5361\u7247\u5408\u5E76\u8BA1\u7B97\uFF09\uFF0C\u8BF7\u51CF\u5C11\u94FE\u63A5\u540E\u91CD\u8BD5", { count: MAX_LINKS });
   }
   if (response.status === 429) {
-    return "\u89E6\u53D1 Threads \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+    return t7("\u89E6\u53D1 Threads \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5");
   }
   if (/quota|publishing limit/i.test(combined)) {
-    return "\u5DF2\u8FBE Threads 24 \u5C0F\u65F6\u53D1\u5E03\u4E0A\u9650\uFF08250 \u5E16\uFF09\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+    return t7("\u5DF2\u8FBE Threads 24 \u5C0F\u65F6\u53D1\u5E03\u4E0A\u9650\uFF08250 \u5E16\uFF09\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5");
   }
-  return `${actionLabel}\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${userMsg || detail}\uFF09`;
+  return t7("{actionLabel}\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09", { actionLabel, status: response.status, detail: userMsg || detail });
 }
 function oauthExchangeErrorMessage(response) {
   var _a;
@@ -9085,15 +9754,15 @@ function oauthExchangeErrorMessage(response) {
   const err = body.error && typeof body.error === "object" ? body.error : {};
   const detail = String(err.message || err.error_message || body.error_message || body.error_description || (typeof body.error === "string" ? body.error : "") || `HTTP ${response.status}`);
   if (/redirect/i.test(detail) || /url blocked/i.test(detail)) {
-    return "\u91CD\u5B9A\u5411 URI \u4E0E Meta App \u540E\u53F0\u767B\u8BB0\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u9010\u5B57\u7B26\u6838\u5BF9\uFF08\u6CE8\u610F\u540E\u53F0\u53EF\u80FD\u81EA\u52A8\u8865\u5C3E\u659C\u6760\uFF09";
+    return t7("\u91CD\u5B9A\u5411 URI \u4E0E Meta App \u540E\u53F0\u767B\u8BB0\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u9010\u5B57\u7B26\u6838\u5BF9\uFF08\u6CE8\u610F\u540E\u53F0\u53EF\u80FD\u81EA\u52A8\u8865\u5C3E\u659C\u6760\uFF09");
   }
   if (/code.*(?:used|expired|invalid)|invalid.*code/i.test(detail)) {
-    return "\u6388\u6743\u7801\u65E0\u6548\u6216\u5DF2\u88AB\u4F7F\u7528\uFF08code \u53EA\u80FD\u7528\u4E00\u6B21\uFF09\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u6388\u6743\u9875\u83B7\u53D6\u65B0\u7684 code";
+    return t7("\u6388\u6743\u7801\u65E0\u6548\u6216\u5DF2\u88AB\u4F7F\u7528\uFF08code \u53EA\u80FD\u7528\u4E00\u6B21\uFF09\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u6388\u6743\u9875\u83B7\u53D6\u65B0\u7684 code");
   }
   if (Number((_a = err.code) != null ? _a : body.code) === 190) {
-    return "Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743";
+    return t7("Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743");
   }
-  return `Threads \u6388\u6743\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${detail}\uFF09`;
+  return t7("Threads \u6388\u6743\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09", { status: response.status, detail });
 }
 async function fetchProfile(requestUrlFn, accessToken) {
   const response = await requestUrlFn({
@@ -9102,10 +9771,10 @@ async function fetchProfile(requestUrlFn, accessToken) {
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(graphErrorMessage(response, "\u83B7\u53D6 Threads \u7528\u6237\u4FE1\u606F"));
+    throw new Error(graphErrorMessage(response, t7("\u83B7\u53D6 Threads \u7528\u6237\u4FE1\u606F")));
   }
   const body = responseJson(response);
-  if (!body.id) throw new Error("Threads \u672A\u8FD4\u56DE\u7528\u6237\u4FE1\u606F");
+  if (!body.id) throw new Error(t7("Threads \u672A\u8FD4\u56DE\u7528\u6237\u4FE1\u606F"));
   return { id: String(body.id), username: String(body.username || "") };
 }
 async function refreshAccessToken(accessToken, requestUrlFn) {
@@ -9118,10 +9787,10 @@ async function refreshAccessToken(accessToken, requestUrlFn) {
     const body2 = responseJson(response);
     const err = body2.error && typeof body2.error === "object" ? body2.error : {};
     const detail = String(err.message || err.error_message || body2.error_message || body2.message || `HTTP ${response.status}`);
-    throw new Error(`Threads token \u5237\u65B0\u5931\u8D25\uFF08HTTP ${response.status}\uFF1A${detail}\uFF09`);
+    throw new Error(t7("Threads token \u5237\u65B0\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09", { status: response.status, detail }));
   }
   const body = responseJson(response);
-  if (!body.access_token) throw new Error("Threads \u672A\u8FD4\u56DE\u5237\u65B0\u540E\u7684 token");
+  if (!body.access_token) throw new Error(t7("Threads \u672A\u8FD4\u56DE\u5237\u65B0\u540E\u7684 token"));
   return {
     accessToken: String(body.access_token),
     expiresInMs: Number(body.expires_in) > 0 ? Number(body.expires_in) * 1e3 : DEFAULT_TOKEN_TTL_MS
@@ -9129,12 +9798,12 @@ async function refreshAccessToken(accessToken, requestUrlFn) {
 }
 async function getValidToken({ config, requestUrl: requestUrl2, saveConfig }) {
   const token = String(config.accessToken || "").trim();
-  if (!token) throw new Error("Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token");
+  if (!token) throw new Error(t7("Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token"));
   const now = Date.now();
   const expiresAt = Number(config.tokenExpiresAt) || 0;
   const issuedAt = Number(config.tokenIssuedAt) || 0;
   if (expiresAt && now >= expiresAt) {
-    throw new Error("Threads \u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743");
+    throw new Error(t7("Threads \u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743"));
   }
   const expiringSoon = !expiresAt || expiresAt - now <= SEVEN_DAYS_MS;
   const refreshable = issuedAt > 0 && now - issuedAt >= TWENTY_FOUR_HOURS_MS;
@@ -9153,9 +9822,9 @@ async function getValidToken({ config, requestUrl: requestUrl2, saveConfig }) {
     } catch (error) {
       const message = error.message || String(error);
       if (!expiresAt || now < expiresAt) {
-        return { token, warnings: [`Threads token \u81EA\u52A8\u5237\u65B0\u5931\u8D25\uFF0C\u5DF2\u4F7F\u7528\u73B0\u6709 token\uFF08${message}\uFF09`] };
+        return { token, warnings: [t7("Threads token \u81EA\u52A8\u5237\u65B0\u5931\u8D25\uFF0C\u5DF2\u4F7F\u7528\u73B0\u6709 token\uFF08{message}\uFF09", { message })] };
       }
-      throw new Error(`Threads token \u5237\u65B0\u5931\u8D25\uFF1A${message}\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743`);
+      throw new Error(t7("Threads token \u5237\u65B0\u5931\u8D25\uFF1A{message}\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743", { message }));
     }
   }
   return { token, warnings: [] };
@@ -9197,19 +9866,19 @@ async function validate7({ payload = {}, config = {} } = {}) {
   const warnings = [];
   const errors = [];
   if (!String(config.accessToken || "").trim()) {
-    errors.push("Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token");
+    errors.push(t7("Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token"));
   }
   const plainText = String(payload.plainText || "").trim();
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   if (!plainText) {
-    errors.push(attachments.length > 0 ? "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09\uFF0C\u8BF7\u8865\u5145\u6B63\u6587" : "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+    errors.push(attachments.length > 0 ? t7("Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09\uFF0C\u8BF7\u8865\u5145\u6B63\u6587") : t7("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"));
   } else {
     const length = threadsTextLength(plainText);
     if (length > MAX_TEXT_LENGTH) {
-      errors.push(`Threads \u5355\u5E16\u4E0A\u9650 ${MAX_TEXT_LENGTH} \u5B57\u8282\uFF08\u5F53\u524D ${length}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9`);
+      errors.push(t7("Threads \u5355\u5E16\u4E0A\u9650 {max} \u5B57\u8282\uFF08\u5F53\u524D {length}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9", { max: MAX_TEXT_LENGTH, length }));
     }
     if (countUniqueUrls(plainText) > MAX_LINKS) {
-      warnings.push(`Threads \u5355\u5E16\u6700\u591A ${MAX_LINKS} \u4E2A\u94FE\u63A5\uFF0C\u8D85\u51FA\u90E8\u5206\u53EF\u80FD\u88AB\u670D\u52A1\u7AEF\u62D2\u7EDD`);
+      warnings.push(t7("Threads \u5355\u5E16\u6700\u591A {count} \u4E2A\u94FE\u63A5\uFF0C\u8D85\u51FA\u90E8\u5206\u53EF\u80FD\u88AB\u670D\u52A1\u7AEF\u62D2\u7EDD", { count: MAX_LINKS }));
     }
   }
   return { warnings, errors };
@@ -9217,16 +9886,16 @@ async function validate7({ payload = {}, config = {} } = {}) {
 async function execute7({ config = {}, payload = {}, requestUrl: requestUrl2, saveConfig } = {}) {
   const warnings = [];
   try {
-    if (!requestUrl2) return { success: false, error: "\u7F3A\u5C11 requestUrl", warnings };
+    if (!requestUrl2) return { success: false, error: t7("\u7F3A\u5C11 requestUrl"), warnings };
     const { token, warnings: tokenWarnings } = await getValidToken({ config, requestUrl: requestUrl2, saveConfig });
     warnings.push(...tokenWarnings);
     const text = String(payload.plainText || "").trim();
     if (!text) {
       const hasImages = Array.isArray(payload.attachments) && payload.attachments.length > 0;
-      return { success: false, error: hasImages ? "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09" : "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A", warnings };
+      return { success: false, error: hasImages ? t7("Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09") : t7("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"), warnings };
     }
     if (Array.isArray(payload.attachments) && payload.attachments.length > 0) {
-      warnings.push("Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF0C\u672C\u6B21\u4EC5\u53D1\u9001\u6587\u672C");
+      warnings.push(t7("Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF0C\u672C\u6B21\u4EC5\u53D1\u9001\u6587\u672C"));
     }
     const userId = await ensureUserId(config, token, requestUrl2, saveConfig);
     const createForm = new URLSearchParams({
@@ -9244,11 +9913,11 @@ async function execute7({ config = {}, payload = {}, requestUrl: requestUrl2, sa
       throw: false
     });
     if (createResponse.status < 200 || createResponse.status >= 300) {
-      return { success: false, error: graphErrorMessage(createResponse, "\u521B\u5EFA Threads \u5E16\u5B50"), warnings };
+      return { success: false, error: graphErrorMessage(createResponse, t7("\u521B\u5EFA Threads \u5E16\u5B50")), warnings };
     }
     const containerId = responseJson(createResponse).id;
     if (!containerId) {
-      return { success: false, error: "Threads \u672A\u8FD4\u56DE\u5A92\u4F53\u5BB9\u5668 ID", warnings };
+      return { success: false, error: t7("Threads \u672A\u8FD4\u56DE\u5A92\u4F53\u5BB9\u5668 ID"), warnings };
     }
     const publishForm = new URLSearchParams({
       access_token: token,
@@ -9262,7 +9931,7 @@ async function execute7({ config = {}, payload = {}, requestUrl: requestUrl2, sa
       throw: false
     });
     if (publishResponse.status < 200 || publishResponse.status >= 300) {
-      return { success: false, error: graphErrorMessage(publishResponse, "\u53D1\u5E03 Threads \u5E16\u5B50"), warnings };
+      return { success: false, error: graphErrorMessage(publishResponse, t7("\u53D1\u5E03 Threads \u5E16\u5B50")), warnings };
     }
     const postId = responseJson(publishResponse).id;
     let url = "";
@@ -9289,11 +9958,11 @@ async function connectCode(config, requestUrlFn, options = {}) {
   const clientSecret = String(config.clientSecret || "").trim();
   const redirectUri = String(config.redirectUri || "").trim() || DEFAULT_REDIRECT_URI2;
   if (!clientId || !clientSecret) {
-    throw new Error("\u8BF7\u5148\u586B\u5199 Threads App ID \u4E0E App Secret");
+    throw new Error(t7("\u8BF7\u5148\u586B\u5199 Threads App ID \u4E0E App Secret"));
   }
   const code2 = extractAuthCode2(options.code);
   if (!code2) {
-    throw new Error("\u8BF7\u7C98\u8D34\u6388\u6743\u540E\u6D4F\u89C8\u5668\u5730\u5740\u680F\u4E2D\u7684\u5B8C\u6574\u94FE\u63A5\u6216\u5176\u4E2D\u7684 code");
+    throw new Error(t7("\u8BF7\u7C98\u8D34\u6388\u6743\u540E\u6D4F\u89C8\u5668\u5730\u5740\u680F\u4E2D\u7684\u5B8C\u6574\u94FE\u63A5\u6216\u5176\u4E2D\u7684 code"));
   }
   const shortForm = new URLSearchParams({
     client_id: clientId,
@@ -9313,7 +9982,7 @@ async function connectCode(config, requestUrlFn, options = {}) {
     throw new Error(oauthExchangeErrorMessage(shortResponse));
   }
   const shortBody = responseJson(shortResponse);
-  if (!shortBody.access_token) throw new Error("Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u77ED\u671F token");
+  if (!shortBody.access_token) throw new Error(t7("Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u77ED\u671F token"));
   const longResponse = await requestUrlFn({
     url: `${OAUTH_BASE}/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(clientSecret)}&access_token=${encodeURIComponent(shortBody.access_token)}`,
     method: "GET",
@@ -9323,13 +9992,13 @@ async function connectCode(config, requestUrlFn, options = {}) {
     throw new Error(oauthExchangeErrorMessage(longResponse));
   }
   const longBody = responseJson(longResponse);
-  if (!longBody.access_token) throw new Error("Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u957F\u671F token");
+  if (!longBody.access_token) throw new Error(t7("Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u957F\u671F token"));
   const expiresInMs = Number(longBody.expires_in) > 0 ? Number(longBody.expires_in) * 1e3 : DEFAULT_TOKEN_TTL_MS;
   const profile = await fetchProfile(requestUrlFn, longBody.access_token);
   const issuedAt = Date.now();
   return {
     success: true,
-    message: `\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @${profile.username || profile.id}`,
+    message: t7("\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @{name}", { name: profile.username || profile.id }),
     configPatch: {
       accessToken: String(longBody.access_token),
       tokenIssuedAt: issuedAt,
@@ -9342,7 +10011,7 @@ async function connectCode(config, requestUrlFn, options = {}) {
 async function testConnection(config, requestUrlFn) {
   const token = String(config.accessToken || "").trim();
   if (!token) {
-    throw new Error("\u8BF7\u5148\u5B8C\u6210 Threads \u6388\u6743\uFF08\u300C\u5B8C\u6210\u8FDE\u63A5\u300D\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token\uFF09");
+    throw new Error(t7("\u8BF7\u5148\u5B8C\u6210 Threads \u6388\u6743\uFF08\u300C\u5B8C\u6210\u8FDE\u63A5\u300D\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token\uFF09"));
   }
   const profile = await fetchProfile(requestUrlFn, token);
   let quotaText = "";
@@ -9359,62 +10028,65 @@ async function testConnection(config, requestUrlFn) {
         const data = Array.isArray(body.data) ? body.data[0] || {} : body;
         const total = Number(data.quota_total) || 0;
         const used = Number(data.quota_usage) || 0;
-        if (total > 0) quotaText = `\uFF0C24h \u53D1\u5E16\u914D\u989D\u5269\u4F59 ${Math.max(total - used, 0)}/${total}`;
+        if (total > 0) quotaText = t7("\uFF0C24h \u53D1\u5E16\u914D\u989D\u5269\u4F59 {remaining}/{total}", { remaining: Math.max(total - used, 0), total });
       }
     } catch (e) {
     }
   }
-  return { success: true, message: `\u5DF2\u8FDE\u63A5 @${profile.username || profile.id}${quotaText}` };
+  return { success: true, message: t7("\u5DF2\u8FDE\u63A5 @{name}{quota}", { name: profile.username || profile.id, quota: quotaText }) };
 }
 async function runAction5(actionId, config, requestUrlFn, options = {}) {
   if (actionId === "connectCode") return connectCode(config, requestUrlFn, options);
   if (actionId === "testConnection") return testConnection(config, requestUrlFn);
-  throw new Error(`Threads \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A${actionId}`);
+  throw new Error(t7("Threads \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{actionId}", { actionId }));
 }
 function renderSettings5(containerEl, ctx) {
   const config = ctx.plugin.getAdapterConfig("threads") || {};
-  new import_obsidian5.Setting(containerEl).setName("Meta \u5F00\u53D1\u8005\u5E73\u53F0").setDesc("\u9700\u5728 developers.threads.net \u521B\u5EFA Meta App \u5E76\u542F\u7528 Threads API \u540E\u4F7F\u7528\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002");
-  new import_obsidian5.Setting(containerEl).setName("Threads App ID").setDesc("Meta App \u7684\u7EAF\u6570\u5B57 App ID\u3002").addText((text) => text.setPlaceholder("\u7EAF\u6570\u5B57 App ID").setValue(config.clientId || "").onChange((value) => ctx.scheduleConfigSave({ clientId: value.trim() })));
-  new import_obsidian5.Setting(containerEl).setName("App Secret").setDesc("Meta App \u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002").addText((text) => {
+  new import_obsidian5.Setting(containerEl).setName(t7("Meta \u5F00\u53D1\u8005\u5E73\u53F0")).setDesc(t7("\u9700\u5728 developers.threads.net \u521B\u5EFA Meta App \u5E76\u542F\u7528 Threads API \u540E\u4F7F\u7528\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002"));
+  new import_obsidian5.Setting(containerEl).setName("Threads App ID").setDesc(t7("Meta App \u7684\u7EAF\u6570\u5B57 App ID\u3002")).addText((text) => text.setPlaceholder(t7("\u7EAF\u6570\u5B57 App ID")).setValue(config.clientId || "").onChange((value) => ctx.scheduleConfigSave({ clientId: value.trim() })));
+  new import_obsidian5.Setting(containerEl).setName("App Secret").setDesc(t7("Meta App \u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002")).addText((text) => {
     text.inputEl.type = "password";
     text.setPlaceholder("App Secret").setValue(config.clientSecret || "").onChange((value) => ctx.scheduleConfigSave({ clientSecret: value.trim() }));
   });
-  new import_obsidian5.Setting(containerEl).setName("\u91CD\u5B9A\u5411 URI").setDesc("\u6388\u6743\u56DE\u8C03\u5730\u5740\uFF0C\u9700\u4E0E Meta App \u8BBE\u7F6E\u4E2D\u5B8C\u5168\u4E00\u81F4\u3002").addText((text) => text.setPlaceholder("https://localhost:3000/callback").setValue(config.redirectUri || "").onChange((value) => ctx.scheduleConfigSave({ redirectUri: value.trim() })));
+  new import_obsidian5.Setting(containerEl).setName(t7("\u91CD\u5B9A\u5411 URI")).setDesc(t7("\u6388\u6743\u56DE\u8C03\u5730\u5740\uFF0C\u9700\u4E0E Meta App \u8BBE\u7F6E\u4E2D\u5B8C\u5168\u4E00\u81F4\u3002")).addText((text) => text.setPlaceholder("https://localhost:3000/callback").setValue(config.redirectUri || "").onChange((value) => ctx.scheduleConfigSave({ redirectUri: value.trim() })));
   const tokenOk = !!config.accessToken;
-  const tokenDesc = tokenOk ? `\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @${config.username || ""}${config.tokenExpiresAt && Date.now() > config.tokenExpiresAt ? "\uFF0CToken \u5DF2\u8FC7\u671F\uFF0C\u53D1\u9001\u65F6\u4F1A\u81EA\u52A8\u5237\u65B0\u6216\u9700\u91CD\u65B0\u6388\u6743" : ""}\u3002` : "\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55 Threads \u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002";
-  new import_obsidian5.Setting(containerEl).setName("Threads \u6388\u6743").setDesc(tokenDesc).addButton((btn) => btn.setButtonText("\u6253\u5F00\u6388\u6743\u9875\u9762").onClick(async () => {
+  const tokenDesc = tokenOk ? t7("\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @{name}{expired}\u3002", {
+    name: config.username || "",
+    expired: config.tokenExpiresAt && Date.now() > config.tokenExpiresAt ? t7("\uFF0CToken \u5DF2\u8FC7\u671F\uFF0C\u53D1\u9001\u65F6\u4F1A\u81EA\u52A8\u5237\u65B0\u6216\u9700\u91CD\u65B0\u6388\u6743") : ""
+  }) : t7("\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55 Threads \u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002");
+  new import_obsidian5.Setting(containerEl).setName(t7("Threads \u6388\u6743")).setDesc(tokenDesc).addButton((btn) => btn.setButtonText(t7("Threads \u6253\u5F00\u6388\u6743\u9875\u9762")).onClick(async () => {
     try {
-      btn.setButtonText("\u6253\u5F00\u4E2D...");
+      btn.setButtonText(t7("\u6253\u5F00\u4E2D..."));
       btn.disabled = true;
       const url = authorizeUrl(ctx.plugin.getAdapterConfig("threads"));
-      if (!url) throw new Error("\u8BF7\u5148\u586B\u5199 Threads App ID");
+      if (!url) throw new Error(t7("\u8BF7\u5148\u586B\u5199 Threads App ID"));
       if (import_obsidian5.Platform.isMobile) {
         navigator.clipboard.writeText(url).then(() => {
-          new import_obsidian5.Notice("\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55 Threads");
+          new import_obsidian5.Notice(t7("\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55 Threads"));
         }).catch(() => {
-          new import_obsidian5.Notice(`\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A${url}`);
+          new import_obsidian5.Notice(t7("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A{url}", { url }));
         });
       } else {
         window.open(url, "_blank");
-        new import_obsidian5.Notice("\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00 Threads \u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740");
+        new import_obsidian5.Notice(t7("\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00 Threads \u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740"));
       }
     } catch (error) {
-      new import_obsidian5.Notice(`\u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian5.Notice(t7("Threads \u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u6253\u5F00\u6388\u6743\u9875\u9762");
+      btn.setButtonText(t7("Threads \u6253\u5F00\u6388\u6743\u9875\u9762"));
       btn.disabled = false;
     }
   }));
   let authCode = "";
-  new import_obsidian5.Setting(containerEl).setName("\u6388\u6743 Code").setDesc("\u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002").addText((text) => text.setPlaceholder("\u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740").onChange((value) => {
+  new import_obsidian5.Setting(containerEl).setName(t7("\u6388\u6743 Code")).setDesc(t7("Threads \u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002")).addText((text) => text.setPlaceholder(t7("Threads \u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740")).onChange((value) => {
     authCode = value.trim();
-  })).addButton((btn) => btn.setButtonText("\u6362\u53D6 Token").onClick(async () => {
+  })).addButton((btn) => btn.setButtonText(t7("Threads \u6362\u53D6 Token")).onClick(async () => {
     if (!authCode) {
-      new import_obsidian5.Notice("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code");
+      new import_obsidian5.Notice(t7("\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code"));
       return;
     }
     try {
-      btn.setButtonText("\u6362\u53D6\u4E2D...");
+      btn.setButtonText(t7("\u6362\u53D6\u4E2D..."));
       btn.disabled = true;
       const result = await runAction5(
         "connectCode",
@@ -9425,43 +10097,116 @@ function renderSettings5(containerEl, ctx) {
       if (result == null ? void 0 : result.configPatch) {
         await ctx.saveConfig(result.configPatch);
       }
-      new import_obsidian5.Notice((result == null ? void 0 : result.message) || "\u6388\u6743\u6210\u529F");
+      new import_obsidian5.Notice((result == null ? void 0 : result.message) || t7("\u6388\u6743\u6210\u529F"));
       ctx.refresh();
     } catch (error) {
-      new import_obsidian5.Notice(`\u6362\u53D6 Token \u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian5.Notice(t7("Threads \u6362\u53D6 Token \u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u6362\u53D6 Token");
+      btn.setButtonText(t7("Threads \u6362\u53D6 Token"));
       btn.disabled = false;
     }
   }));
-  new import_obsidian5.Setting(containerEl).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u9A8C\u8BC1 Token \u662F\u5426\u6709\u6548\uFF0C\u5E76\u5C55\u793A 24 \u5C0F\u65F6\u53D1\u5E16\u914D\u989D\u3002").addButton((btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+  new import_obsidian5.Setting(containerEl).setName(t7("\u6D4B\u8BD5\u8FDE\u63A5")).setDesc(t7("\u9A8C\u8BC1 Token \u662F\u5426\u6709\u6548\uFF0C\u5E76\u5C55\u793A 24 \u5C0F\u65F6\u53D1\u5E16\u914D\u989D\u3002")).addButton((btn) => btn.setButtonText(t7("\u6D4B\u8BD5\u8FDE\u63A5")).onClick(async () => {
     try {
-      btn.setButtonText("\u8FDE\u63A5\u4E2D...");
+      btn.setButtonText(t7("\u8FDE\u63A5\u4E2D..."));
       btn.disabled = true;
       const result = await runAction5(
         "testConnection",
         ctx.plugin.getAdapterConfig("threads"),
         ctx.requestUrl
       );
-      new import_obsidian5.Notice((result == null ? void 0 : result.message) || "\u8FDE\u63A5\u6210\u529F");
+      new import_obsidian5.Notice((result == null ? void 0 : result.message) || t7("\u8FDE\u63A5\u6210\u529F"));
     } catch (error) {
-      new import_obsidian5.Notice(`\u8FDE\u63A5\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian5.Notice(t7("\u8FDE\u63A5\u5931\u8D25\uFF1A{error}", { error: error.message }));
     } finally {
-      btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+      btn.setButtonText(t7("\u6D4B\u8BD5\u8FDE\u63A5"));
       btn.disabled = false;
     }
   }));
-  new import_obsidian5.Setting(containerEl).setName("\u56DE\u590D\u6743\u9650").setDesc("\u53D1\u5E03\u540E\u5141\u8BB8\u54EA\u4E9B\u4EBA\u56DE\u590D\u4F60\u7684 Threads \u5E16\u5B50\u3002").addDropdown((dropdown) => dropdown.addOption("everyone", "\u6240\u6709\u4EBA").addOption("accounts_you_follow", "\u4F60\u5173\u6CE8\u7684\u8D26\u53F7").addOption("mentioned_only", "\u4EC5\u9650\u63D0\u53CA\u7684\u8D26\u53F7").setValue(config.replyControl || "everyone").onChange((value) => ctx.scheduleConfigSave({ replyControl: value })));
+  new import_obsidian5.Setting(containerEl).setName(t7("\u56DE\u590D\u6743\u9650")).setDesc(t7("\u53D1\u5E03\u540E\u5141\u8BB8\u54EA\u4E9B\u4EBA\u56DE\u590D\u4F60\u7684 Threads \u5E16\u5B50\u3002")).addDropdown((dropdown) => dropdown.addOption("everyone", t7("\u6240\u6709\u4EBA")).addOption("accounts_you_follow", t7("\u4F60\u5173\u6CE8\u7684\u8D26\u53F7")).addOption("mentioned_only", t7("\u4EC5\u9650\u63D0\u53CA\u7684\u8D26\u53F7")).setValue(config.replyControl || "everyone").onChange((value) => ctx.scheduleConfigSave({ replyControl: value })));
 }
-var import_obsidian5, manifest7, API_BASE2, OAUTH_BASE, DEFAULT_REDIRECT_URI2, MAX_TEXT_LENGTH, MAX_LINKS, SEVEN_DAYS_MS, TWENTY_FOUR_HOURS_MS, DEFAULT_TOKEN_TTL_MS, REPLY_CONTROL_VALUES, threads_default;
+var import_obsidian5, t7, registerTranslations7, manifest7, API_BASE2, OAUTH_BASE, DEFAULT_REDIRECT_URI2, MAX_TEXT_LENGTH, MAX_LINKS, SEVEN_DAYS_MS, TWENTY_FOUR_HOURS_MS, DEFAULT_TOKEN_TTL_MS, REPLY_CONTROL_VALUES, threads_default;
 var init_threads = __esm({
   "src/adapters/threads.js"() {
     import_obsidian5 = require("obsidian");
+    ({ t: t7, registerTranslations: registerTranslations7 } = require_i18n());
+    registerTranslations7("en", {
+      "\u7EAF\u6570\u5B57 App ID": "Numeric App ID only",
+      "\u91CD\u5B9A\u5411 URI": "Redirect URI",
+      "\u56DE\u590D\u6743\u9650": "Reply permission",
+      "\u6240\u6709\u4EBA": "Everyone",
+      "\u4F60\u5173\u6CE8\u7684\u8D26\u53F7": "Accounts you follow",
+      "\u4EC5\u9650\u63D0\u53CA\u7684\u8D26\u53F7": "Mentioned accounts only",
+      "Threads \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743": "Threads authorization has expired. Please re-authorize in settings",
+      "Threads \u5355\u5E16\u6700\u591A {count} \u4E2A\u94FE\u63A5\uFF08\u6B63\u6587\u4E0E\u94FE\u63A5\u5361\u7247\u5408\u5E76\u8BA1\u7B97\uFF09\uFF0C\u8BF7\u51CF\u5C11\u94FE\u63A5\u540E\u91CD\u8BD5": "Threads allows at most {count} links per post (text links + link cards combined). Please remove some links and retry",
+      "\u89E6\u53D1 Threads \u9650\u6D41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5": "Threads rate limit hit. Please try again later",
+      "\u5DF2\u8FBE Threads 24 \u5C0F\u65F6\u53D1\u5E03\u4E0A\u9650\uFF08250 \u5E16\uFF09\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5": "Threads 24-hour publishing limit (250 posts) reached. Please try again later",
+      "{actionLabel}\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09": "{actionLabel} failed (HTTP {status}: {detail})",
+      "\u91CD\u5B9A\u5411 URI \u4E0E Meta App \u540E\u53F0\u767B\u8BB0\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u9010\u5B57\u7B26\u6838\u5BF9\uFF08\u6CE8\u610F\u540E\u53F0\u53EF\u80FD\u81EA\u52A8\u8865\u5C3E\u659C\u6760\uFF09": "The redirect URI does not match the one registered in your Meta App. Please compare character by character (note that Meta may auto-append a trailing slash)",
+      "\u6388\u6743\u7801\u65E0\u6548\u6216\u5DF2\u88AB\u4F7F\u7528\uFF08code \u53EA\u80FD\u7528\u4E00\u6B21\uFF09\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u6388\u6743\u9875\u83B7\u53D6\u65B0\u7684 code": "The authorization code is invalid or has already been used (each code works only once). Please reopen the authorization page to get a new code",
+      "Threads \u6388\u6743\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09": "Threads authorization failed (HTTP {status}: {detail})",
+      "\u83B7\u53D6 Threads \u7528\u6237\u4FE1\u606F": "Fetching Threads user info",
+      "Threads \u672A\u8FD4\u56DE\u7528\u6237\u4FE1\u606F": "Threads did not return user info",
+      "Threads token \u5237\u65B0\u5931\u8D25\uFF08HTTP {status}\uFF1A{detail}\uFF09": "Failed to refresh Threads token (HTTP {status}: {detail})",
+      "Threads \u672A\u8FD4\u56DE\u5237\u65B0\u540E\u7684 token": "Threads did not return a refreshed token",
+      "Threads \u672A\u6388\u6743\uFF1A\u8BF7\u5230\u8BBE\u7F6E\u9875\u5B8C\u6210\u8FDE\u63A5\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token": "Threads is not authorized: please complete the connection in settings or paste a long-lived Access Token manually",
+      "Threads \u6388\u6743\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743": "Threads authorization has expired. Please re-authorize in settings",
+      "Threads token \u81EA\u52A8\u5237\u65B0\u5931\u8D25\uFF0C\u5DF2\u4F7F\u7528\u73B0\u6709 token\uFF08{message}\uFF09": "Threads token auto-refresh failed; using the existing token ({message})",
+      "Threads token \u5237\u65B0\u5931\u8D25\uFF1A{message}\uFF0C\u8BF7\u5230\u8BBE\u7F6E\u9875\u91CD\u65B0\u6388\u6743": "Failed to refresh Threads token: {message}. Please re-authorize in settings",
+      "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09\uFF0C\u8BF7\u8865\u5145\u6B63\u6587": "Threads does not support images yet (text only). Please add text",
+      "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A": "Content cannot be empty",
+      "Threads \u5355\u5E16\u4E0A\u9650 {max} \u5B57\u8282\uFF08\u5F53\u524D {length}\uFF09\uFF0C\u8BF7\u7F29\u77ED\u5185\u5BB9": "Threads post limit is {max} bytes (current: {length}). Please shorten the content",
+      "Threads \u5355\u5E16\u6700\u591A {count} \u4E2A\u94FE\u63A5\uFF0C\u8D85\u51FA\u90E8\u5206\u53EF\u80FD\u88AB\u670D\u52A1\u7AEF\u62D2\u7EDD": "Threads allows at most {count} links per post; extra links may be rejected by the server",
+      "\u7F3A\u5C11 requestUrl": "Missing requestUrl",
+      "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF08\u4EC5\u652F\u6301\u7EAF\u6587\u672C\uFF09": "Threads does not support images yet (text only)",
+      "Threads \u6682\u4E0D\u652F\u6301\u53D1\u9001\u56FE\u7247\uFF0C\u672C\u6B21\u4EC5\u53D1\u9001\u6587\u672C": "Threads does not support images yet; sending text only this time",
+      "\u521B\u5EFA Threads \u5E16\u5B50": "Creating Threads post",
+      "Threads \u672A\u8FD4\u56DE\u5A92\u4F53\u5BB9\u5668 ID": "Threads did not return a media container ID",
+      "\u53D1\u5E03 Threads \u5E16\u5B50": "Publishing Threads post",
+      "\u8BF7\u5148\u586B\u5199 Threads App ID \u4E0E App Secret": "Please fill in the Threads App ID and App Secret first",
+      "\u8BF7\u7C98\u8D34\u6388\u6743\u540E\u6D4F\u89C8\u5668\u5730\u5740\u680F\u4E2D\u7684\u5B8C\u6574\u94FE\u63A5\u6216\u5176\u4E2D\u7684 code": "Please paste the full URL from the browser address bar after authorizing, or the code within it",
+      "Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u77ED\u671F token": "Threads authorization response is missing the short-lived token",
+      "Threads \u6388\u6743\u54CD\u5E94\u7F3A\u5C11\u957F\u671F token": "Threads authorization response is missing the long-lived token",
+      "\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @{name}": "Connected to Threads account @{name}",
+      "\u8BF7\u5148\u5B8C\u6210 Threads \u6388\u6743\uFF08\u300C\u5B8C\u6210\u8FDE\u63A5\u300D\u6216\u624B\u52A8\u7C98\u8D34\u957F\u671F Access Token\uFF09": 'Please complete Threads authorization first (via "Complete connection" or by pasting a long-lived Access Token manually)',
+      "\uFF0C24h \u53D1\u5E16\u914D\u989D\u5269\u4F59 {remaining}/{total}": ", 24h posting quota remaining: {remaining}/{total}",
+      "\u5DF2\u8FDE\u63A5 @{name}{quota}": "Connected @{name}{quota}",
+      "Threads \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{actionId}": "Threads adapter does not support action: {actionId}",
+      "Meta \u5F00\u53D1\u8005\u5E73\u53F0": "Meta Developer Platform",
+      "\u9700\u5728 developers.threads.net \u521B\u5EFA Meta App \u5E76\u542F\u7528 Threads API \u540E\u4F7F\u7528\u3002\u51ED\u636E\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\u3002": "Requires a Meta App created on developers.threads.net with the Threads API enabled. Credentials are stored only in the local data.json.",
+      "Meta App \u7684\u7EAF\u6570\u5B57 App ID\u3002": "The numeric App ID of your Meta App.",
+      "Meta App \u7684 App Secret\uFF0C\u4EC5\u4FDD\u5B58\u5728\u672C\u5730 data.json\uFF0C\u8BF7\u52FF\u5916\u4F20\u3002": "The App Secret of your Meta App. Stored only in the local data.json; do not share it.",
+      "\u6388\u6743\u56DE\u8C03\u5730\u5740\uFF0C\u9700\u4E0E Meta App \u8BBE\u7F6E\u4E2D\u5B8C\u5168\u4E00\u81F4\u3002": "The authorization callback URL; must match your Meta App settings exactly.",
+      "\u5DF2\u8FDE\u63A5 Threads \u8D26\u53F7 @{name}{expired}\u3002": "Connected to Threads account @{name}{expired}.",
+      "\uFF0CToken \u5DF2\u8FC7\u671F\uFF0C\u53D1\u9001\u65F6\u4F1A\u81EA\u52A8\u5237\u65B0\u6216\u9700\u91CD\u65B0\u6388\u6743": ", token expired \u2014 it will be auto-refreshed on send or needs re-authorization",
+      "\u5C1A\u672A\u6388\u6743\u3002\u70B9\u51FB\u300C\u6253\u5F00\u6388\u6743\u9875\u9762\u300D\u767B\u5F55 Threads \u540E\uFF0C\u4ECE\u56DE\u8C03\u9875\u5730\u5740\u680F\u590D\u5236 code\u3002": 'Not authorized yet. Click "Open authorization page", sign in to Threads, then copy the code from the address bar of the callback page.',
+      "Threads \u6388\u6743": "Threads Authorization",
+      "Threads \u6253\u5F00\u6388\u6743\u9875\u9762": "Open authorization page",
+      "\u6253\u5F00\u4E2D...": "Opening...",
+      "\u8BF7\u5148\u586B\u5199 Threads App ID": "Please fill in the Threads App ID first",
+      "\u6388\u6743\u94FE\u63A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00\u5E76\u767B\u5F55 Threads": "Authorization link copied. Please open it in your browser and sign in to Threads",
+      "\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u6253\u5F00\u6388\u6743\u9875\uFF1A{url}": "Copy failed. Please open the authorization page manually: {url}",
+      "\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00 Threads \u6388\u6743\u9875\uFF0C\u767B\u5F55\u540E\u4ECE\u5730\u5740\u680F\u590D\u5236 code \u6216\u5B8C\u6574\u56DE\u8C03\u5730\u5740": "Opened the Threads authorization page in your browser. After signing in, copy the code or the full callback URL from the address bar",
+      "Threads \u6253\u5F00\u6388\u6743\u9875\u5931\u8D25\uFF1A{error}": "Failed to open authorization page: {error}",
+      "\u6388\u6743 Code": "Authorization Code",
+      "Threads \u7C98\u8D34\u56DE\u8C03\u9875\u5730\u5740\u680F\u4E2D\u7684 code\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u5B8C\u6574\u56DE\u8C03\u5730\u5740\u3002": "Paste the code from the callback page address bar, or paste the full callback URL directly.",
+      "Threads \u7C98\u8D34 code \u6216\u56DE\u8C03\u5730\u5740": "Paste code or callback URL",
+      "Threads \u6362\u53D6 Token": "Exchange for Token",
+      "\u8BF7\u5148\u7C98\u8D34\u6388\u6743 code": "Please paste the authorization code first",
+      "\u6362\u53D6\u4E2D...": "Exchanging...",
+      "\u6388\u6743\u6210\u529F": "Authorization successful",
+      "Threads \u6362\u53D6 Token \u5931\u8D25\uFF1A{error}": "Failed to exchange for Token: {error}",
+      "\u6D4B\u8BD5\u8FDE\u63A5": "Test connection",
+      "\u9A8C\u8BC1 Token \u662F\u5426\u6709\u6548\uFF0C\u5E76\u5C55\u793A 24 \u5C0F\u65F6\u53D1\u5E16\u914D\u989D\u3002": "Verify that the Token is valid and show the 24-hour posting quota.",
+      "\u53D1\u5E03\u540E\u5141\u8BB8\u54EA\u4E9B\u4EBA\u56DE\u590D\u4F60\u7684 Threads \u5E16\u5B50\u3002": "Who is allowed to reply to your Threads posts after publishing.",
+      "\u8FDE\u63A5\u4E2D...": "Connecting...",
+      "\u8FDE\u63A5\u6210\u529F": "Connection successful",
+      "\u8FDE\u63A5\u5931\u8D25\uFF1A{error}": "Connection failed: {error}"
+    });
     manifest7 = {
       id: "threads",
       version: "1.0.0",
       name: "Threads",
-      description: "\u53D1\u5E03\u5185\u5BB9\u5230 Threads (Meta)",
       displayOrder: 80,
       enabledByDefault: false,
       capabilities: {
@@ -9531,8 +10276,23 @@ var {
 } = require_vault_path();
 var { parseImageRefs } = require_image_refs();
 var { getSelectedOrBlockContent } = require_content();
+var { t: t8, setLanguage, registerTranslations: registerTranslations8 } = require_i18n();
 var { deepMergeSettings } = require_settings();
 var { buildRichDraftFromUploadedMarkdown } = require_rich_draft();
+registerTranslations8("en", {
+  "Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55": "Journal Sync: New journal entry",
+  "\u8BFB\u53D6\u5931\u8D25": "Failed to read",
+  "Vault \u4E2D\u672A\u627E\u5230\u8BE5\u6587\u4EF6": "File not found in the vault",
+  "\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002": "Created the Journal Sync journal entry.",
+  "\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0": "Please open or select a note first",
+  "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002": "Nothing to send. Please select some text or place the cursor under a heading of the chosen level.",
+  "\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08{count} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7{suffix}": "Some images could not be read ({count} spot(s)); this send will skip them{suffix}",
+  "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002": "No sendable content left after failed image reads.",
+  "\u65E5\u5FD7\u5FEB\u7167\u5DF2\u5931\u6548": "The log snapshot is no longer valid",
+  "\uFF1A{names}": ": {names}",
+  "\u3001": ", ",
+  " \u7B49": " ..."
+});
 var ADAPTER_MODULES = [
   (init_flomo(), __toCommonJS(flomo_exports)),
   (init_telegram(), __toCommonJS(telegram_exports)),
@@ -9544,6 +10304,8 @@ var ADAPTER_MODULES = [
   (init_threads(), __toCommonJS(threads_exports))
 ];
 var DEFAULT_SETTINGS = {
+  // 界面语言：'auto' = 跟随 Obsidian 应用语言；'zh' / 'en' = 手动指定
+  uiLanguage: "auto",
   diaryPath: "\u65E5\u8BB0",
   filenameRule: "YYYY-MM-DD \u65E5\u8BB0",
   autoUploadImages: true,
@@ -9587,11 +10349,12 @@ var JournalSyncPlugin = class extends Plugin {
       this.adapterRegistry.register(adapter);
     }
     this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
+    this._applyLanguage();
     this._migrateMastodonAccounts();
     if (JSON.stringify(this.settings) !== loadedSnapshot) {
       await this.saveSettings();
     }
-    this.addRibbonIcon("pencil", "Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55", () => this.createTodayDiaryEntry());
+    this.ribbonIconEl = this.addRibbonIcon("pencil", t8("Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55"), () => this.createTodayDiaryEntry());
     this.addCommand({
       id: "journal-sync-new",
       name: "JournalSync-New",
@@ -9615,6 +10378,32 @@ var JournalSyncPlugin = class extends Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+  /**
+   * 解析界面语言并注入 i18n 引擎。
+   * 'auto' 跟随 Obsidian 应用语言（getLanguage() 返回 ISO 码，如 'zh'/'en'）；
+   * 否则使用用户手动指定的 'zh' / 'en'。
+   * 语言变更后的 UI 刷新：settings-tab 语言下拉 onChange 调用本方法后自行重渲染设置页；
+   * ribbon 悬浮提示在 onload 求值一次，由本方法在语言变化时直接刷新。
+   */
+  _applyLanguage() {
+    var _a, _b, _c;
+    const choice = ((_a = this.settings) == null ? void 0 : _a.uiLanguage) || "auto";
+    let lang = "zh";
+    if (choice === "zh" || choice === "en") {
+      lang = choice;
+    } else {
+      try {
+        const appLang = (((_c = (_b = this.app) == null ? void 0 : _b.getLanguage) == null ? void 0 : _c.call(_b)) || "").toLowerCase();
+        lang = appLang.startsWith("zh") ? "zh" : "en";
+      } catch (e) {
+        lang = "en";
+      }
+    }
+    setLanguage(lang);
+    if (this.ribbonIconEl) {
+      this.ribbonIconEl.setAttribute("aria-label", t8("Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55"));
+    }
   }
   // ── 适配器管理 ──────────────────────────────
   isAdapterEnabled(id) {
@@ -9716,13 +10505,13 @@ var JournalSyncPlugin = class extends Plugin {
         failed.push({
           target: ref.target,
           raw: ref.raw,
-          reason: (error == null ? void 0 : error.message) || "\u8BFB\u53D6\u5931\u8D25"
+          reason: (error == null ? void 0 : error.message) || t8("\u8BFB\u53D6\u5931\u8D25")
         });
         failedRefs.push(ref);
         continue;
       }
       if (!file) {
-        failed.push({ target: ref.target, raw: ref.raw, reason: "Vault \u4E2D\u672A\u627E\u5230\u8BE5\u6587\u4EF6" });
+        failed.push({ target: ref.target, raw: ref.raw, reason: t8("Vault \u4E2D\u672A\u627E\u5230\u8BE5\u6587\u4EF6") });
         failedRefs.push(ref);
         continue;
       }
@@ -9760,7 +10549,7 @@ var JournalSyncPlugin = class extends Plugin {
    */
   async executeAdapter(adapterId, payload, extraConfig = {}) {
     const adapter = this.adapterRegistry.get(adapterId);
-    if (!adapter) return { success: false, error: "\u9002\u914D\u5668\u4E0D\u5B58\u5728" };
+    if (!adapter) return { success: false, error: t8("\u9002\u914D\u5668\u4E0D\u5B58\u5728") };
     const config = { ...this.getAdapterConfig(adapterId), ...extraConfig };
     const saveConfig = async (patch = {}) => this.setAdapterConfig(adapterId, {
       ...this.getAdapterConfig(adapterId),
@@ -9806,7 +10595,7 @@ var JournalSyncPlugin = class extends Plugin {
         view.editor.setCursor({ line: cursorLine, ch: 0 });
         view.editor.focus();
       }, 50);
-      new Notice6("\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002");
+      new Notice6(t8("\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002"));
     } catch (error) {
       new Notice6(error.message || String(error));
     }
@@ -9826,12 +10615,12 @@ var JournalSyncPlugin = class extends Plugin {
         editor = activeView == null ? void 0 : activeView.editor;
       }
       if (!editor) {
-        new Notice6("\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0");
+        new Notice6(t8("\u8BF7\u5148\u6253\u5F00\u6216\u9009\u4E2D\u4E00\u4EFD\u7B14\u8BB0"));
         return;
       }
       const current = getSelectedOrBlockContent(editor, this.settings.sendScope);
       if (!current || !current.content.trim()) {
-        new Notice6("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002");
+        new Notice6(t8("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u5185\u5BB9\uFF1A\u8BF7\u5148\u9009\u4E2D\u6587\u672C\uFF0C\u6216\u5C06\u5149\u6807\u7F6E\u4E8E\u6240\u9009\u7EA7\u522B\u7684\u6807\u9898\u4E0B\u3002"));
         return;
       }
       const currentFile = (view == null ? void 0 : view.file) || this.app.workspace.getActiveFile();
@@ -9847,13 +10636,16 @@ var JournalSyncPlugin = class extends Plugin {
       }
       if (processResult.failed.length > 0) {
         const failedNames = [...new Set(processResult.failed.map((item) => item.target).filter(Boolean))];
-        const suffix = failedNames.length > 0 ? `\uFF1A${failedNames.slice(0, 3).join("\u3001")}${failedNames.length > 3 ? " \u7B49" : ""}` : "";
-        new Notice6(`\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08${processResult.failed.length} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7${suffix}`, 1e4);
+        const suffix = failedNames.length > 0 ? t8("\uFF1A{names}", { names: failedNames.slice(0, 3).join(t8("\u3001")) }) + (failedNames.length > 3 ? t8(" \u7B49") : "") : "";
+        new Notice6(t8("\u90E8\u5206\u56FE\u7247\u65E0\u6CD5\u8BFB\u53D6\uFF08{count} \u5904\uFF09\uFF0C\u672C\u6B21\u53D1\u9001\u5C06\u8DF3\u8FC7{suffix}", {
+          count: processResult.failed.length,
+          suffix
+        }), 1e4);
       }
       const preparedContent = (_a = processResult.content) != null ? _a : current.content;
       const preparedImages = ((_b = processResult.richDraft) == null ? void 0 : _b.images) || [];
       if (!preparedContent.trim() && preparedImages.length === 0) {
-        new Notice6("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002");
+        new Notice6(t8("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\u540E\u6CA1\u6709\u5269\u4F59\u53EF\u53D1\u9001\u5185\u5BB9\u3002"));
         return;
       }
       const readImageFile = (vaultPath) => this.readImageFromVault(vaultPath, currentFile);
@@ -9877,7 +10669,7 @@ var JournalSyncPlugin = class extends Plugin {
     try {
       const snapshot = (entry == null ? void 0 : entry.snapshot) || await sendLog.readSnapshot({ plugin: this }, entry == null ? void 0 : entry.dirName);
       if (!snapshot) {
-        new Notice6("\u65E5\u5FD7\u5FEB\u7167\u5DF2\u5931\u6548");
+        new Notice6(t8("\u65E5\u5FD7\u5FEB\u7167\u5DF2\u5931\u6548"));
         return false;
       }
       let restorePresetId = null;

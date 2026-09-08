@@ -12,6 +12,11 @@
  */
 
 'use strict';
+const { t, registerTranslations } = require('./i18n');
+
+registerTranslations('en', {
+    '[图片] ×{count}': '[Image] ×{count}'
+});
 
 const SEND_LOG_DIR = 'send-log';
 const MAX_ENTRIES = 10;
@@ -84,7 +89,7 @@ function buildPreview(snapshot) {
   const firstLine = stripped.split('\n').map(l => l.trim()).find(l => l.length > 0) || '';
   if (firstLine) return firstLine.slice(0, 80);
   const count = Array.isArray(snapshot?.images) ? snapshot.images.length : 0;
-  return count > 0 ? `[图片] ×${count}` : '';
+  return count > 0 ? t('[图片] ×{count}', { count }) : '';
 }
 
 // ──────────────────────────────────────────────

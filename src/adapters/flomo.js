@@ -4,13 +4,28 @@
  * 无需后端服务、无文件系统依赖
  */
 
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    '在 flomo 网页版“API”页面获取': 'Get it from the "API" page on flomo web',
+    '测试连接（会发一条笔记）': 'Test connection (sends a note)',
+    '发送中...': 'Sending...',
+    '会向 flomo 发送一条「Journal Sync 测试连接 ✓」笔记来验证 Webhook。这条笔记会留在你的 flomo 里。': 'Sends a "Journal Sync test connection ✓" note to flomo to verify the Webhook. This note will remain in your flomo.',
+    '没有可发送的内容': 'Nothing to send',
+    'Flomo API URL 未配置': 'Flomo API URL is not configured',
+    '没有可发送到 flomo 的内容': 'Nothing to send to flomo',
+    'Flomo 适配器不支持操作：{action}': 'Flomo adapter does not support action: {action}',
+    '请先配置 Flomo API URL': 'Please configure the Flomo API URL first',
+    'Flomo 连接成功': 'Flomo connection successful'
+});
+
 const MAX_FLOMO_IMAGES = 9;
 
 export const manifest = {
     id: 'flomo',
     version: '1.0.0',
     name: 'Flomo',
-    description: '同步内容到 flomo',
     enabledByDefault: true,
     displayOrder: 10,
     capabilities: {
@@ -74,7 +89,7 @@ export async function validate({ payload }) {
     const errors = [];
 
     if (!payload.plainText && extractRemoteImageUrls(payload.content).length === 0) {
-        errors.push('没有可发送的内容');
+        errors.push(t('没有可发送的内容'));
     }
 
     return { warnings, errors };
@@ -92,7 +107,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
     const content = String(payload.content || '');
 
     if (!apiUrl) {
-        return { success: false, error: 'Flomo API URL 未配置' };
+        return { success: false, error: t('Flomo API URL 未配置') };
     }
 
     const imageUrls = extractRemoteImageUrls(content);
@@ -105,7 +120,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
     const warnings = [];
 
     if (!textContent && imageUrls.length === 0) {
-        return { success: true, skipped: true, message: '没有可发送到 flomo 的内容', warnings };
+        return { success: true, skipped: true, message: t('没有可发送到 flomo 的内容'), warnings };
     }
 
     try {
@@ -148,10 +163,10 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
 
 export async function runAction(actionId, config = {}, requestUrlFn) {
     if (actionId !== 'testConnection') {
-        throw new Error(`Flomo 适配器不支持操作：${actionId}`);
+        throw new Error(t('Flomo 适配器不支持操作：{action}', { action: actionId }));
     }
     const apiUrl = String(config.apiUrl || '').trim();
-    if (!apiUrl) throw new Error('请先配置 Flomo API URL');
+    if (!apiUrl) throw new Error(t('请先配置 Flomo API URL'));
     const response = await requestUrlFn({
         url: apiUrl,
         method: 'POST',
@@ -165,7 +180,7 @@ export async function runAction(actionId, config = {}, requestUrlFn) {
     if (!isSuccess) {
         throw new Error(result.message || `HTTP ${response.status}`);
     }
-    return { success: true, message: 'Flomo 连接成功' };
+    return { success: true, message: t('Flomo 连接成功') };
 }
 
 export default { manifest, execute, validate, runAction };

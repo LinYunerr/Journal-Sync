@@ -1,4 +1,45 @@
 const { PluginSettingTab, Setting, Notice, Platform, requestUrl } = require('obsidian');
+const { t, registerTranslations } = require('../core/i18n');
+
+registerTranslations('en', {
+    '设置保存失败：{error}': 'Failed to save settings: {error}',
+    '{action}失败：{error}': '{action} failed: {error}',
+    'Journal Sync': 'Journal Sync',
+    '一键将笔记发送至其它平台': 'Send notes to other platforms in one click',
+    '主设置': 'Main settings',
+    '插件设置': 'Plugin settings',
+    '管理日记创建和发送时通用的行为。': 'Manage behaviors shared by journal creation and sending.',
+    '界面语言': 'Interface language',
+    '选择插件界面语言；跟随 Obsidian 时自动匹配应用语言。': 'Choose the interface language. "Follow Obsidian" matches the app language automatically.',
+    '跟随 Obsidian（自动）': 'Follow Obsidian (auto)',
+    '中文': 'Chinese',
+    '日记存放路径': 'Journal folder path',
+    'Obsidian Vault 内的相对路径（如 日记/2024）': 'Relative path inside the Obsidian vault (e.g. Journal/2024)',
+    '日记': 'Journal',
+    '日记文件名规则': 'Journal filename rule',
+    '支持 YYYY MM DD 占位符，例如 YYYY-MM-DD 日记': 'Supports YYYY MM DD placeholders, e.g. YYYY-MM-DD Journal',
+    'YYYY-MM-DD 日记': 'YYYY-MM-DD Journal',
+    '自动上传本地图片': 'Auto-upload local images',
+    '发送时自动读取并发送 Obsidian Vault 中引用的本地图片。': 'Automatically read and send local images referenced in the vault when publishing.',
+    '发送范围（未选中文本时）': 'Send scope (when no text is selected)',
+    '使用发送命令且未选中文本时，发送光标所在位置的内容范围。选择任意标题级别时，不包含标题本身。': 'What to send when the send command runs with no selection. Heading levels exclude the heading itself.',
+    '整个页面': 'Entire page',
+    '新建标题级别': 'New-entry heading level',
+    '使用新建日记命令时，时间戳记录使用的标题级别。': 'Heading level used for the timestamp entry created by the new-journal command.',
+    '新建标题格式': 'New-entry heading format',
+    '支持 H M S 占位符（H=时、M=分、S=秒），例如 HH:MM:SS 或 HH:MM': 'Supports H M S placeholders (H=hour, M=minute, S=second), e.g. HH:MM:SS or HH:MM',
+    '选择发布平台，配置连接信息与发送行为。': 'Choose publish platforms and configure connection info and send behavior.',
+    '{name} 设置渲染失败：{error}': 'Failed to render {name} settings: {error}',
+    '启用{label}': 'Enable {label}',
+    '执行': 'Run',
+    '操作完成': 'Action completed',
+    '操作': 'Action',
+    '{name}级标题': 'Heading level {name}',
+    '一': '1', '二': '2', '三': '3', '四': '4', '五': '5', '六': '6',
+    '微博': 'Weibo',
+    'Flomo': 'Flomo', 'Telegram': 'Telegram', 'Mastodon': 'Mastodon', 'Misskey': 'Misskey',
+    'Bluesky': 'Bluesky', 'Threads': 'Threads', 'Notion': 'Notion'
+});
 
 class JournalSyncSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
@@ -17,17 +58,17 @@ class JournalSyncSettingTab extends PluginSettingTab {
         containerEl.empty();
         containerEl.addClass('js-bridge-settings');
 
-        containerEl.createEl('h2', { text: 'Journal Sync' });
+        containerEl.createEl('h2', { text: t('Journal Sync') });
         containerEl.createEl('p', {
             cls: 'js-bridge-settings-desc',
-            text: '一键将笔记发送至其它平台'
+            text: t('一键将笔记发送至其它平台')
         });
 
         const layoutEl = containerEl.createDiv({ cls: 'js-bridge-settings-layout' });
         const navEl = layoutEl.createDiv({ cls: 'js-bridge-settings-nav' });
         const contentEl = layoutEl.createDiv({ cls: 'js-bridge-settings-content' });
-        this._addNavButton(navEl, 'main', '主设置');
-        this._addNavButton(navEl, 'plugins', '插件设置');
+        this._addNavButton(navEl, 'main', t('主设置'));
+        this._addNavButton(navEl, 'plugins', t('插件设置'));
 
         if (this.activeSection === 'main') {
             this._renderMainSettings(contentEl);
@@ -72,7 +113,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
 
         this._savePending = false;
         this._savePromise = this.plugin.saveSettings().catch(error => {
-            new Notice(`设置保存失败：${error.message || String(error)}`);
+            new Notice(t('设置保存失败：{error}', { error: error.message || String(error) }));
         });
         await this._savePromise;
         this._savePromise = null;
@@ -92,43 +133,58 @@ class JournalSyncSettingTab extends PluginSettingTab {
     }
 
     _renderMainSettings(containerEl) {
-        containerEl.createEl('h3', { text: '主设置', cls: 'js-bridge-section-heading' });
+        containerEl.createEl('h3', { text: t('主设置'), cls: 'js-bridge-section-heading' });
         containerEl.createEl('p', {
-            text: '管理日记创建和发送时通用的行为。',
+            text: t('管理日记创建和发送时通用的行为。'),
             cls: 'js-bridge-settings-section-desc'
         });
 
         new Setting(containerEl)
-            .setName('日记存放路径')
-            .setDesc('Obsidian Vault 内的相对路径（如 日记/2024）')
-            .addText(text => text.setPlaceholder('日记').setValue(this.plugin.settings.diaryPath || '').onChange(value => {
+            .setName(t('界面语言'))
+            .setDesc(t('选择插件界面语言；跟随 Obsidian 时自动匹配应用语言。'))
+            .addDropdown(dropdown => {
+                dropdown.addOption('auto', t('跟随 Obsidian（自动）'));
+                dropdown.addOption('zh', t('中文'));
+                dropdown.addOption('en', t('English'));
+                dropdown.setValue(this.plugin.settings.uiLanguage || 'auto').onChange(async value => {
+                    this.plugin.settings.uiLanguage = value;
+                    await this.plugin.saveSettings();
+                    this.plugin._applyLanguage();
+                    await this.display();
+                });
+            });
+
+        new Setting(containerEl)
+            .setName(t('日记存放路径'))
+            .setDesc(t('Obsidian Vault 内的相对路径（如 日记/2024）'))
+            .addText(text => text.setPlaceholder(t('日记')).setValue(this.plugin.settings.diaryPath || '').onChange(value => {
                 this._scheduleSettingsSave(() => {
                     this.plugin.settings.diaryPath = value.trim();
                 });
             }));
 
         new Setting(containerEl)
-            .setName('日记文件名规则')
-            .setDesc('支持 YYYY MM DD 占位符，例如 YYYY-MM-DD 日记')
-            .addText(text => text.setPlaceholder('YYYY-MM-DD 日记').setValue(this.plugin.settings.filenameRule || 'YYYY-MM-DD 日记').onChange(value => {
+            .setName(t('日记文件名规则'))
+            .setDesc(t('支持 YYYY MM DD 占位符，例如 YYYY-MM-DD 日记'))
+            .addText(text => text.setPlaceholder(t('YYYY-MM-DD 日记')).setValue(this.plugin.settings.filenameRule || 'YYYY-MM-DD 日记').onChange(value => {
                 this._scheduleSettingsSave(() => {
                     this.plugin.settings.filenameRule = value.trim() || 'YYYY-MM-DD 日记';
                 });
             }));
 
         new Setting(containerEl)
-            .setName('自动上传本地图片')
-            .setDesc('发送时自动读取并发送 Obsidian Vault 中引用的本地图片。')
+            .setName(t('自动上传本地图片'))
+            .setDesc(t('发送时自动读取并发送 Obsidian Vault 中引用的本地图片。'))
             .addToggle(toggle => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async value => {
                 this.plugin.settings.autoUploadImages = value;
                 await this.plugin.saveSettings();
             }));
 
         new Setting(containerEl)
-            .setName('发送范围（未选中文本时）')
-            .setDesc('使用发送命令且未选中文本时，发送光标所在位置的内容范围。选择任意标题级别时，不包含标题本身。')
+            .setName(t('发送范围（未选中文本时）'))
+            .setDesc(t('使用发送命令且未选中文本时，发送光标所在位置的内容范围。选择任意标题级别时，不包含标题本身。'))
             .addDropdown(dropdown => {
-                dropdown.addOption('0', '整个页面');
+                dropdown.addOption('0', t('整个页面'));
                 for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
                 dropdown.setValue(String(this.plugin.settings.sendScope ?? 2)).onChange(async value => {
                     this.plugin.settings.sendScope = Number(value);
@@ -149,8 +205,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
             });
 
         new Setting(containerEl)
-            .setName('新建标题级别')
-            .setDesc('使用新建日记命令时，时间戳记录使用的标题级别。')
+            .setName(t('新建标题级别'))
+            .setDesc(t('使用新建日记命令时，时间戳记录使用的标题级别。'))
             .addDropdown(dropdown => {
                 for (let i = 1; i <= 6; i++) dropdown.addOption(String(i), this._headingLevelLabel(i));
                 dropdown.setValue(String(this.plugin.settings.diaryTimestampLevel ?? 2)).onChange(async value => {
@@ -160,8 +216,8 @@ class JournalSyncSettingTab extends PluginSettingTab {
             });
 
         new Setting(containerEl)
-            .setName('新建标题格式')
-            .setDesc('支持 H M S 占位符（H=时、M=分、S=秒），例如 HH:MM:SS 或 HH:MM')
+            .setName(t('新建标题格式'))
+            .setDesc(t('支持 H M S 占位符（H=时、M=分、S=秒），例如 HH:MM:SS 或 HH:MM'))
             .addText(text => text.setPlaceholder('HH:MM:SS').setValue(this.plugin.settings.diaryHeadingRule || 'HH:MM:SS').onChange(value => {
                 this._scheduleSettingsSave(() => {
                     this.plugin.settings.diaryHeadingRule = value.trim() || 'HH:MM:SS';
@@ -185,9 +241,9 @@ class JournalSyncSettingTab extends PluginSettingTab {
     }
 
     _renderPluginSettings(containerEl) {
-        containerEl.createEl('h3', { text: '插件设置', cls: 'js-bridge-section-heading' });
+        containerEl.createEl('h3', { text: t('插件设置'), cls: 'js-bridge-section-heading' });
         containerEl.createEl('p', {
-            text: '选择发布平台，配置连接信息与发送行为。',
+            text: t('选择发布平台，配置连接信息与发送行为。'),
             cls: 'js-bridge-settings-section-desc'
         });
 
@@ -199,7 +255,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
         const tabsEl = containerEl.createDiv({ cls: 'js-bridge-plugin-tabs' });
         for (const adapter of adapters) {
             const id = adapter.manifest.id;
-            const button = tabsEl.createEl('button', { text: adapter.manifest.name || id, cls: 'js-bridge-plugin-tab' });
+            const button = tabsEl.createEl('button', { text: t(adapter.manifest.name) || id, cls: 'js-bridge-plugin-tab' });
             button.toggleClass('is-active', this.activePlugin === id);
             button.addEventListener('click', () => {
                 this.activePlugin = id;
@@ -212,7 +268,7 @@ class JournalSyncSettingTab extends PluginSettingTab {
         if (!adapter) return;
 
         // 启用开关由设置页统一渲染；未启用时不渲染其它内容
-        this._addEnabledToggle(panelEl, adapter.manifest.id, adapter.manifest.name || adapter.manifest.id);
+        this._addEnabledToggle(panelEl, adapter.manifest.id, t(adapter.manifest.name) || adapter.manifest.id);
         if (!this.plugin.isAdapterEnabled(adapter.manifest.id)) return;
 
         try {
@@ -222,12 +278,15 @@ class JournalSyncSettingTab extends PluginSettingTab {
                 this._renderGenericAdapterSettings(panelEl, adapter);
             }
         } catch (error) {
-            new Notice(`${adapter.manifest.name || adapter.manifest.id} 设置渲染失败：${error?.message || String(error)}`);
+            new Notice(t('{name} 设置渲染失败：{error}', {
+                name: t(adapter.manifest.name || adapter.manifest.id),
+                error: error?.message || String(error)
+            }));
         }
     }
 
     _addEnabledToggle(containerEl, id, label) {
-        new Setting(containerEl).setName(`启用 ${label}`).addToggle(toggle => toggle
+        new Setting(containerEl).setName(t('启用{label}', { label })).addToggle(toggle => toggle
             .setValue(this.plugin.isAdapterEnabled(id))
             .onChange(async value => {
                 this.plugin.setAdapterEnabled(id, value);
@@ -288,12 +347,12 @@ class JournalSyncSettingTab extends PluginSettingTab {
     _renderGenericText(panelEl, id, field, ctx, isPassword) {
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
-        const setting = new Setting(panelEl).setName(field.label || field.key);
+        const setting = new Setting(panelEl).setName(t(field.label || field.key));
         const desc = field.desc ?? field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t(desc));
         setting.addText(text => {
             if (isPassword) text.inputEl.type = 'password';
-            if (field.placeholder) text.setPlaceholder(field.placeholder);
+            if (field.placeholder) text.setPlaceholder(t(field.placeholder));
             text.setValue(String(current ?? field.default ?? '')).onChange(value => {
                 ctx.scheduleConfigSave({ [field.key]: value.trim() });
             });
@@ -303,9 +362,9 @@ class JournalSyncSettingTab extends PluginSettingTab {
     _renderGenericToggle(panelEl, id, field, ctx) {
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
-        const setting = new Setting(panelEl).setName(field.label || field.key);
+        const setting = new Setting(panelEl).setName(t(field.label || field.key));
         const desc = field.desc ?? field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t(desc));
         setting.addToggle(toggle => toggle
             .setValue(Boolean(current ?? field.default ?? false))
             .onChange(async value => {
@@ -317,13 +376,13 @@ class JournalSyncSettingTab extends PluginSettingTab {
         if (!field.key) return;
         const current = this.plugin.getAdapterConfig(id)[field.key];
         const options = Array.isArray(field.options) ? field.options : [];
-        const setting = new Setting(panelEl).setName(field.label || field.key);
+        const setting = new Setting(panelEl).setName(t(field.label || field.key));
         const desc = field.desc ?? field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t(desc));
         setting.addDropdown(dropdown => {
             for (const option of options) {
                 if (!option) continue;
-                dropdown.addOption(option.value, option.label ?? option.value);
+                dropdown.addOption(option.value, t(option.label ?? option.value));
             }
             dropdown.setValue(String(current ?? field.default ?? '')).onChange(async value => {
                 await ctx.saveConfig({ [field.key]: value });
@@ -333,23 +392,23 @@ class JournalSyncSettingTab extends PluginSettingTab {
 
     _renderGenericAction(panelEl, id, adapter, field, ctx) {
         if (!field.action || typeof adapter.runAction !== 'function') return;
-        const buttonText = field.buttonLabel || field.label;
-        const setting = new Setting(panelEl).setName(field.label || '');
+        const buttonText = t(field.buttonLabel || field.label);
+        const setting = new Setting(panelEl).setName(t(field.label || ''));
         const desc = field.desc ?? field.description;
-        if (desc) setting.setDesc(desc);
+        if (desc) setting.setDesc(t(desc));
         setting.addButton(btn => btn
-            .setButtonText(buttonText || '执行')
+            .setButtonText(buttonText || t('执行'))
             .onClick(async () => {
-                if (field.busyLabel) btn.setButtonText(field.busyLabel);
+                if (field.busyLabel) btn.setButtonText(t(field.busyLabel));
                 btn.disabled = true;
                 try {
                     const result = await adapter.runAction(field.action, this.plugin.getAdapterConfig(id), ctx.requestUrl, { mobile: Platform.isMobile });
-                    new Notice(result?.message || field.successMessage || '操作完成');
+                    new Notice(result?.message || t('操作完成'));
                     void this.display().catch(() => {});
                 } catch (error) {
-                    new Notice(`${buttonText || '操作'}失败：${error?.message || String(error)}`);
+                    new Notice(t('{action}失败：{error}', { action: buttonText || t('操作'), error: error?.message || String(error) }));
                 } finally {
-                    btn.setButtonText(buttonText || '执行');
+                    btn.setButtonText(buttonText || t('执行'));
                     btn.disabled = false;
                 }
             }));
@@ -358,14 +417,14 @@ class JournalSyncSettingTab extends PluginSettingTab {
     _renderGenericInfo(panelEl, field) {
         const desc = field.desc ?? field.description;
         if (!field.label && !desc) return;
-        const setting = new Setting(panelEl).setName(field.label || '');
-        if (desc) setting.setDesc(desc);
+        const setting = new Setting(panelEl).setName(t(field.label || ''));
+        if (desc) setting.setDesc(t(desc));
     }
 
     _headingLevelLabel(level) {
         const names = ['一', '二', '三', '四', '五', '六'];
         const n = Math.min(6, Math.max(1, Number(level) || 1));
-        return `${names[n - 1]}级标题`;
+        return t('{name}级标题', { name: t(names[n - 1]) });
     }
 }
 

@@ -14,11 +14,87 @@
  */
 import { Setting, Notice, Platform } from 'obsidian';
 
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    '纯数字 App ID': 'Numeric App ID only',
+    '重定向 URI': 'Redirect URI',
+    '回复权限': 'Reply permission',
+    '所有人': 'Everyone',
+    '你关注的账号': 'Accounts you follow',
+    '仅限提及的账号': 'Mentioned accounts only',
+    'Threads 授权已失效，请到设置页重新授权': 'Threads authorization has expired. Please re-authorize in settings',
+    'Threads 单帖最多 {count} 个链接（正文与链接卡片合并计算），请减少链接后重试': 'Threads allows at most {count} links per post (text links + link cards combined). Please remove some links and retry',
+    '触发 Threads 限流，请稍后再试': 'Threads rate limit hit. Please try again later',
+    '已达 Threads 24 小时发布上限（250 帖），请稍后再试': 'Threads 24-hour publishing limit (250 posts) reached. Please try again later',
+    '{actionLabel}失败（HTTP {status}：{detail}）': '{actionLabel} failed (HTTP {status}: {detail})',
+    '重定向 URI 与 Meta App 后台登记不一致，请逐字符核对（注意后台可能自动补尾斜杠）': 'The redirect URI does not match the one registered in your Meta App. Please compare character by character (note that Meta may auto-append a trailing slash)',
+    '授权码无效或已被使用（code 只能用一次），请重新打开授权页获取新的 code': 'The authorization code is invalid or has already been used (each code works only once). Please reopen the authorization page to get a new code',
+    'Threads 授权失败（HTTP {status}：{detail}）': 'Threads authorization failed (HTTP {status}: {detail})',
+    '获取 Threads 用户信息': 'Fetching Threads user info',
+    'Threads 未返回用户信息': 'Threads did not return user info',
+    'Threads token 刷新失败（HTTP {status}：{detail}）': 'Failed to refresh Threads token (HTTP {status}: {detail})',
+    'Threads 未返回刷新后的 token': 'Threads did not return a refreshed token',
+    'Threads 未授权：请到设置页完成连接或手动粘贴长期 Access Token': 'Threads is not authorized: please complete the connection in settings or paste a long-lived Access Token manually',
+    'Threads 授权已过期，请到设置页重新授权': 'Threads authorization has expired. Please re-authorize in settings',
+    'Threads token 自动刷新失败，已使用现有 token（{message}）': 'Threads token auto-refresh failed; using the existing token ({message})',
+    'Threads token 刷新失败：{message}，请到设置页重新授权': 'Failed to refresh Threads token: {message}. Please re-authorize in settings',
+    'Threads 暂不支持发送图片（仅支持纯文本），请补充正文': 'Threads does not support images yet (text only). Please add text',
+    '内容不能为空': 'Content cannot be empty',
+    'Threads 单帖上限 {max} 字节（当前 {length}），请缩短内容': 'Threads post limit is {max} bytes (current: {length}). Please shorten the content',
+    'Threads 单帖最多 {count} 个链接，超出部分可能被服务端拒绝': 'Threads allows at most {count} links per post; extra links may be rejected by the server',
+    '缺少 requestUrl': 'Missing requestUrl',
+    'Threads 暂不支持发送图片（仅支持纯文本）': 'Threads does not support images yet (text only)',
+    'Threads 暂不支持发送图片，本次仅发送文本': 'Threads does not support images yet; sending text only this time',
+    '创建 Threads 帖子': 'Creating Threads post',
+    'Threads 未返回媒体容器 ID': 'Threads did not return a media container ID',
+    '发布 Threads 帖子': 'Publishing Threads post',
+    '请先填写 Threads App ID 与 App Secret': 'Please fill in the Threads App ID and App Secret first',
+    '请粘贴授权后浏览器地址栏中的完整链接或其中的 code': 'Please paste the full URL from the browser address bar after authorizing, or the code within it',
+    'Threads 授权响应缺少短期 token': 'Threads authorization response is missing the short-lived token',
+    'Threads 授权响应缺少长期 token': 'Threads authorization response is missing the long-lived token',
+    '已连接 Threads 账号 @{name}': 'Connected to Threads account @{name}',
+    '请先完成 Threads 授权（「完成连接」或手动粘贴长期 Access Token）': 'Please complete Threads authorization first (via "Complete connection" or by pasting a long-lived Access Token manually)',
+    '，24h 发帖配额剩余 {remaining}/{total}': ', 24h posting quota remaining: {remaining}/{total}',
+    '已连接 @{name}{quota}': 'Connected @{name}{quota}',
+    'Threads 适配器不支持操作：{actionId}': 'Threads adapter does not support action: {actionId}',
+    'Meta 开发者平台': 'Meta Developer Platform',
+    '需在 developers.threads.net 创建 Meta App 并启用 Threads API 后使用。凭据仅保存在本地 data.json。': 'Requires a Meta App created on developers.threads.net with the Threads API enabled. Credentials are stored only in the local data.json.',
+    'Meta App 的纯数字 App ID。': 'The numeric App ID of your Meta App.',
+    'Meta App 的 App Secret，仅保存在本地 data.json，请勿外传。': 'The App Secret of your Meta App. Stored only in the local data.json; do not share it.',
+    '授权回调地址，需与 Meta App 设置中完全一致。': 'The authorization callback URL; must match your Meta App settings exactly.',
+    '已连接 Threads 账号 @{name}{expired}。': 'Connected to Threads account @{name}{expired}.',
+    '，Token 已过期，发送时会自动刷新或需重新授权': ', token expired — it will be auto-refreshed on send or needs re-authorization',
+    '尚未授权。点击「打开授权页面」登录 Threads 后，从回调页地址栏复制 code。': 'Not authorized yet. Click "Open authorization page", sign in to Threads, then copy the code from the address bar of the callback page.',
+    'Threads 授权': 'Threads Authorization',
+    'Threads 打开授权页面': 'Open authorization page',
+    '打开中...': 'Opening...',
+    '请先填写 Threads App ID': 'Please fill in the Threads App ID first',
+    '授权链接已复制，请在浏览器中打开并登录 Threads': 'Authorization link copied. Please open it in your browser and sign in to Threads',
+    '复制失败，请手动打开授权页：{url}': 'Copy failed. Please open the authorization page manually: {url}',
+    '已在浏览器打开 Threads 授权页，登录后从地址栏复制 code 或完整回调地址': 'Opened the Threads authorization page in your browser. After signing in, copy the code or the full callback URL from the address bar',
+    'Threads 打开授权页失败：{error}': 'Failed to open authorization page: {error}',
+    '授权 Code': 'Authorization Code',
+    'Threads 粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。': 'Paste the code from the callback page address bar, or paste the full callback URL directly.',
+    'Threads 粘贴 code 或回调地址': 'Paste code or callback URL',
+    'Threads 换取 Token': 'Exchange for Token',
+    '请先粘贴授权 code': 'Please paste the authorization code first',
+    '换取中...': 'Exchanging...',
+    '授权成功': 'Authorization successful',
+    'Threads 换取 Token 失败：{error}': 'Failed to exchange for Token: {error}',
+    '测试连接': 'Test connection',
+    '验证 Token 是否有效，并展示 24 小时发帖配额。': 'Verify that the Token is valid and show the 24-hour posting quota.',
+    '发布后允许哪些人回复你的 Threads 帖子。': 'Who is allowed to reply to your Threads posts after publishing.',
+    '连接中...': 'Connecting...',
+    '连接成功': 'Connection successful',
+    '连接失败：{error}': 'Connection failed: {error}'
+});
+
 export const manifest = {
     id: 'threads',
     version: '1.0.0',
     name: 'Threads',
-    description: '发布内容到 Threads (Meta)',
     displayOrder: 80,
     enabledByDefault: false,
     capabilities: {
@@ -108,18 +184,18 @@ function graphErrorMessage(response, actionLabel) {
     const combined = `${detail} ${userMsg}`;
 
     if (code === 190 || /access token|token has expired|invalid oauth/i.test(combined)) {
-        return 'Threads 授权已失效，请到设置页重新授权';
+        return t('Threads 授权已失效，请到设置页重新授权');
     }
     if (combined.includes('LINK_LIMIT')) {
-        return `Threads 单帖最多 ${MAX_LINKS} 个链接（正文与链接卡片合并计算），请减少链接后重试`;
+        return t('Threads 单帖最多 {count} 个链接（正文与链接卡片合并计算），请减少链接后重试', { count: MAX_LINKS });
     }
     if (response.status === 429) {
-        return '触发 Threads 限流，请稍后再试';
+        return t('触发 Threads 限流，请稍后再试');
     }
     if (/quota|publishing limit/i.test(combined)) {
-        return '已达 Threads 24 小时发布上限（250 帖），请稍后再试';
+        return t('已达 Threads 24 小时发布上限（250 帖），请稍后再试');
     }
-    return `${actionLabel}失败（HTTP ${response.status}：${userMsg || detail}）`;
+    return t('{actionLabel}失败（HTTP {status}：{detail}）', { actionLabel, status: response.status, detail: userMsg || detail });
 }
 
 /**
@@ -133,15 +209,15 @@ function oauthExchangeErrorMessage(response) {
         || (typeof body.error === 'string' ? body.error : '') || `HTTP ${response.status}`);
 
     if (/redirect/i.test(detail) || /url blocked/i.test(detail)) {
-        return '重定向 URI 与 Meta App 后台登记不一致，请逐字符核对（注意后台可能自动补尾斜杠）';
+        return t('重定向 URI 与 Meta App 后台登记不一致，请逐字符核对（注意后台可能自动补尾斜杠）');
     }
     if (/code.*(?:used|expired|invalid)|invalid.*code/i.test(detail)) {
-        return '授权码无效或已被使用（code 只能用一次），请重新打开授权页获取新的 code';
+        return t('授权码无效或已被使用（code 只能用一次），请重新打开授权页获取新的 code');
     }
     if (Number(err.code ?? body.code) === 190) {
-        return 'Threads 授权已失效，请到设置页重新授权';
+        return t('Threads 授权已失效，请到设置页重新授权');
     }
-    return `Threads 授权失败（HTTP ${response.status}：${detail}）`;
+    return t('Threads 授权失败（HTTP {status}：{detail}）', { status: response.status, detail });
 }
 
 async function fetchProfile(requestUrlFn, accessToken) {
@@ -151,10 +227,10 @@ async function fetchProfile(requestUrlFn, accessToken) {
         throw: false
     });
     if (response.status < 200 || response.status >= 300) {
-        throw new Error(graphErrorMessage(response, '获取 Threads 用户信息'));
+        throw new Error(graphErrorMessage(response, t('获取 Threads 用户信息')));
     }
     const body = responseJson(response);
-    if (!body.id) throw new Error('Threads 未返回用户信息');
+    if (!body.id) throw new Error(t('Threads 未返回用户信息'));
     return { id: String(body.id), username: String(body.username || '') };
 }
 
@@ -172,10 +248,10 @@ async function refreshAccessToken(accessToken, requestUrlFn) {
         const err = (body.error && typeof body.error === 'object') ? body.error : {};
         const detail = String(err.message || err.error_message || body.error_message || body.message
             || `HTTP ${response.status}`);
-        throw new Error(`Threads token 刷新失败（HTTP ${response.status}：${detail}）`);
+        throw new Error(t('Threads token 刷新失败（HTTP {status}：{detail}）', { status: response.status, detail }));
     }
     const body = responseJson(response);
-    if (!body.access_token) throw new Error('Threads 未返回刷新后的 token');
+    if (!body.access_token) throw new Error(t('Threads 未返回刷新后的 token'));
     return {
         accessToken: String(body.access_token),
         expiresInMs: (Number(body.expires_in) > 0 ? Number(body.expires_in) * 1000 : DEFAULT_TOKEN_TTL_MS)
@@ -186,18 +262,17 @@ async function refreshAccessToken(accessToken, requestUrlFn) {
  * 发送前 token 有效性保障：
  * 已过期 → 直接失败；7 天内到期（或缺失过期时间）且颁发满 24h → 自动刷新并 saveConfig；
  * 刷新失败但旧 token 未过期 → 不阻塞发送，仅预警。
- * @returns {Promise<{ token: string, warnings: string[] }>}
  */
 async function getValidToken({ config, requestUrl, saveConfig }) {
     const token = String(config.accessToken || '').trim();
-    if (!token) throw new Error('Threads 未授权：请到设置页完成连接或手动粘贴长期 Access Token');
+    if (!token) throw new Error(t('Threads 未授权：请到设置页完成连接或手动粘贴长期 Access Token'));
 
     const now = Date.now();
     const expiresAt = Number(config.tokenExpiresAt) || 0;
     const issuedAt = Number(config.tokenIssuedAt) || 0;
 
     if (expiresAt && now >= expiresAt) {
-        throw new Error('Threads 授权已过期，请到设置页重新授权');
+        throw new Error(t('Threads 授权已过期，请到设置页重新授权'));
     }
 
     const expiringSoon = !expiresAt || expiresAt - now <= SEVEN_DAYS_MS;
@@ -217,9 +292,9 @@ async function getValidToken({ config, requestUrl, saveConfig }) {
         } catch (error) {
             const message = error.message || String(error);
             if (!expiresAt || now < expiresAt) {
-                return { token, warnings: [`Threads token 自动刷新失败，已使用现有 token（${message}）`] };
+                return { token, warnings: [t('Threads token 自动刷新失败，已使用现有 token（{message}）', { message })] };
             }
-            throw new Error(`Threads token 刷新失败：${message}，请到设置页重新授权`);
+            throw new Error(t('Threads token 刷新失败：{message}，请到设置页重新授权', { message }));
         }
     }
 
@@ -278,7 +353,7 @@ export async function validate({ payload = {}, config = {} } = {}) {
     const errors = [];
 
     if (!String(config.accessToken || '').trim()) {
-        errors.push('Threads 未授权：请到设置页完成连接或手动粘贴长期 Access Token');
+        errors.push(t('Threads 未授权：请到设置页完成连接或手动粘贴长期 Access Token'));
     }
 
     const plainText = String(payload.plainText || '').trim();
@@ -286,15 +361,15 @@ export async function validate({ payload = {}, config = {} } = {}) {
 
     if (!plainText) {
         errors.push(attachments.length > 0
-            ? 'Threads 暂不支持发送图片（仅支持纯文本），请补充正文'
-            : '内容不能为空');
+            ? t('Threads 暂不支持发送图片（仅支持纯文本），请补充正文')
+            : t('内容不能为空'));
     } else {
         const length = threadsTextLength(plainText);
         if (length > MAX_TEXT_LENGTH) {
-            errors.push(`Threads 单帖上限 ${MAX_TEXT_LENGTH} 字节（当前 ${length}），请缩短内容`);
+            errors.push(t('Threads 单帖上限 {max} 字节（当前 {length}），请缩短内容', { max: MAX_TEXT_LENGTH, length }));
         }
         if (countUniqueUrls(plainText) > MAX_LINKS) {
-            warnings.push(`Threads 单帖最多 ${MAX_LINKS} 个链接，超出部分可能被服务端拒绝`);
+            warnings.push(t('Threads 单帖最多 {count} 个链接，超出部分可能被服务端拒绝', { count: MAX_LINKS }));
         }
     }
 
@@ -313,7 +388,7 @@ export async function execute({ config = {}, payload = {}, requestUrl, saveConfi
     const warnings = [];
 
     try {
-        if (!requestUrl) return { success: false, error: '缺少 requestUrl', warnings };
+        if (!requestUrl) return { success: false, error: t('缺少 requestUrl'), warnings };
 
         const { token, warnings: tokenWarnings } = await getValidToken({ config, requestUrl, saveConfig });
         warnings.push(...tokenWarnings);
@@ -321,10 +396,10 @@ export async function execute({ config = {}, payload = {}, requestUrl, saveConfi
         const text = String(payload.plainText || '').trim();
         if (!text) {
             const hasImages = Array.isArray(payload.attachments) && payload.attachments.length > 0;
-            return { success: false, error: hasImages ? 'Threads 暂不支持发送图片（仅支持纯文本）' : '内容不能为空', warnings };
+            return { success: false, error: hasImages ? t('Threads 暂不支持发送图片（仅支持纯文本）') : t('内容不能为空'), warnings };
         }
         if (Array.isArray(payload.attachments) && payload.attachments.length > 0) {
-            warnings.push('Threads 暂不支持发送图片，本次仅发送文本');
+            warnings.push(t('Threads 暂不支持发送图片，本次仅发送文本'));
         }
 
         const userId = await ensureUserId(config, token, requestUrl, saveConfig);
@@ -346,11 +421,11 @@ export async function execute({ config = {}, payload = {}, requestUrl, saveConfi
             throw: false
         });
         if (createResponse.status < 200 || createResponse.status >= 300) {
-            return { success: false, error: graphErrorMessage(createResponse, '创建 Threads 帖子'), warnings };
+            return { success: false, error: graphErrorMessage(createResponse, t('创建 Threads 帖子')), warnings };
         }
         const containerId = responseJson(createResponse).id;
         if (!containerId) {
-            return { success: false, error: 'Threads 未返回媒体容器 ID', warnings };
+            return { success: false, error: t('Threads 未返回媒体容器 ID'), warnings };
         }
 
         // 第二步：发布（TEXT 容器可立即发布，无需等待处理状态）
@@ -366,7 +441,7 @@ export async function execute({ config = {}, payload = {}, requestUrl, saveConfi
             throw: false
         });
         if (publishResponse.status < 200 || publishResponse.status >= 300) {
-            return { success: false, error: graphErrorMessage(publishResponse, '发布 Threads 帖子'), warnings };
+            return { success: false, error: graphErrorMessage(publishResponse, t('发布 Threads 帖子')), warnings };
         }
         const postId = responseJson(publishResponse).id;
 
@@ -405,11 +480,11 @@ async function connectCode(config, requestUrlFn, options = {}) {
     const clientSecret = String(config.clientSecret || '').trim();
     const redirectUri = String(config.redirectUri || '').trim() || DEFAULT_REDIRECT_URI;
     if (!clientId || !clientSecret) {
-        throw new Error('请先填写 Threads App ID 与 App Secret');
+        throw new Error(t('请先填写 Threads App ID 与 App Secret'));
     }
     const code = extractAuthCode(options.code);
     if (!code) {
-        throw new Error('请粘贴授权后浏览器地址栏中的完整链接或其中的 code');
+        throw new Error(t('请粘贴授权后浏览器地址栏中的完整链接或其中的 code'));
     }
 
     // 1. code → 短期 token（1 小时，一次性）；redirect_uri 必须与授权时逐字符一致
@@ -431,7 +506,7 @@ async function connectCode(config, requestUrlFn, options = {}) {
         throw new Error(oauthExchangeErrorMessage(shortResponse));
     }
     const shortBody = responseJson(shortResponse);
-    if (!shortBody.access_token) throw new Error('Threads 授权响应缺少短期 token');
+    if (!shortBody.access_token) throw new Error(t('Threads 授权响应缺少短期 token'));
 
     // 2. 短期 token → 长期 token（60 天），短期 token 绝不落盘
     const longResponse = await requestUrlFn({
@@ -445,7 +520,7 @@ async function connectCode(config, requestUrlFn, options = {}) {
         throw new Error(oauthExchangeErrorMessage(longResponse));
     }
     const longBody = responseJson(longResponse);
-    if (!longBody.access_token) throw new Error('Threads 授权响应缺少长期 token');
+    if (!longBody.access_token) throw new Error(t('Threads 授权响应缺少长期 token'));
     const expiresInMs = Number(longBody.expires_in) > 0
         ? Number(longBody.expires_in) * 1000
         : DEFAULT_TOKEN_TTL_MS;
@@ -456,7 +531,7 @@ async function connectCode(config, requestUrlFn, options = {}) {
     const issuedAt = Date.now();
     return {
         success: true,
-        message: `已连接 Threads 账号 @${profile.username || profile.id}`,
+        message: t('已连接 Threads 账号 @{name}', { name: profile.username || profile.id }),
         configPatch: {
             accessToken: String(longBody.access_token),
             tokenIssuedAt: issuedAt,
@@ -473,7 +548,7 @@ async function connectCode(config, requestUrlFn, options = {}) {
 async function testConnection(config, requestUrlFn) {
     const token = String(config.accessToken || '').trim();
     if (!token) {
-        throw new Error('请先完成 Threads 授权（「完成连接」或手动粘贴长期 Access Token）');
+        throw new Error(t('请先完成 Threads 授权（「完成连接」或手动粘贴长期 Access Token）'));
     }
     const profile = await fetchProfile(requestUrlFn, token);
 
@@ -491,12 +566,12 @@ async function testConnection(config, requestUrlFn) {
                 const data = Array.isArray(body.data) ? (body.data[0] || {}) : body;
                 const total = Number(data.quota_total) || 0;
                 const used = Number(data.quota_usage) || 0;
-                if (total > 0) quotaText = `，24h 发帖配额剩余 ${Math.max(total - used, 0)}/${total}`;
+                if (total > 0) quotaText = t('，24h 发帖配额剩余 {remaining}/{total}', { remaining: Math.max(total - used, 0), total });
             }
         } catch { /* 配额查询失败不影响连接验证结论 */ }
     }
 
-    return { success: true, message: `已连接 @${profile.username || profile.id}${quotaText}` };
+    return { success: true, message: t('已连接 @{name}{quota}', { name: profile.username || profile.id, quota: quotaText }) };
 }
 
 /**
@@ -505,7 +580,7 @@ async function testConnection(config, requestUrlFn) {
 export async function runAction(actionId, config, requestUrlFn, options = {}) {
     if (actionId === 'connectCode') return connectCode(config, requestUrlFn, options);
     if (actionId === 'testConnection') return testConnection(config, requestUrlFn);
-    throw new Error(`Threads 适配器不支持操作：${actionId}`);
+    throw new Error(t('Threads 适配器不支持操作：{actionId}', { actionId }));
 }
 /**
  * 设置页面（自定义面板）。
@@ -516,20 +591,20 @@ export function renderSettings(containerEl, ctx) {
     const config = ctx.plugin.getAdapterConfig('threads') || {};
 
     new Setting(containerEl)
-        .setName('Meta 开发者平台')
-        .setDesc('需在 developers.threads.net 创建 Meta App 并启用 Threads API 后使用。凭据仅保存在本地 data.json。');
+        .setName(t('Meta 开发者平台'))
+        .setDesc(t('需在 developers.threads.net 创建 Meta App 并启用 Threads API 后使用。凭据仅保存在本地 data.json。'));
 
     new Setting(containerEl)
         .setName('Threads App ID')
-        .setDesc('Meta App 的纯数字 App ID。')
+        .setDesc(t('Meta App 的纯数字 App ID。'))
         .addText(text => text
-            .setPlaceholder('纯数字 App ID')
+            .setPlaceholder(t('纯数字 App ID'))
             .setValue(config.clientId || '')
             .onChange(value => ctx.scheduleConfigSave({ clientId: value.trim() })));
 
     new Setting(containerEl)
         .setName('App Secret')
-        .setDesc('Meta App 的 App Secret，仅保存在本地 data.json，请勿外传。')
+        .setDesc(t('Meta App 的 App Secret，仅保存在本地 data.json，请勿外传。'))
         .addText(text => {
             text.inputEl.type = 'password';
             text.setPlaceholder('App Secret')
@@ -538,8 +613,8 @@ export function renderSettings(containerEl, ctx) {
         });
 
     new Setting(containerEl)
-        .setName('重定向 URI')
-        .setDesc('授权回调地址，需与 Meta App 设置中完全一致。')
+        .setName(t('重定向 URI'))
+        .setDesc(t('授权回调地址，需与 Meta App 设置中完全一致。'))
         .addText(text => text
             .setPlaceholder('https://localhost:3000/callback')
             .setValue(config.redirectUri || '')
@@ -548,54 +623,57 @@ export function renderSettings(containerEl, ctx) {
     // ── OAuth 授权流程 ──
     const tokenOk = !!config.accessToken;
     const tokenDesc = tokenOk
-        ? `已连接 Threads 账号 @${config.username || ''}${config.tokenExpiresAt && Date.now() > config.tokenExpiresAt ? '，Token 已过期，发送时会自动刷新或需重新授权' : ''}。`
-        : '尚未授权。点击「打开授权页面」登录 Threads 后，从回调页地址栏复制 code。';
+        ? t('已连接 Threads 账号 @{name}{expired}。', {
+            name: config.username || '',
+            expired: config.tokenExpiresAt && Date.now() > config.tokenExpiresAt ? t('，Token 已过期，发送时会自动刷新或需重新授权') : ''
+        })
+        : t('尚未授权。点击「打开授权页面」登录 Threads 后，从回调页地址栏复制 code。');
 
     new Setting(containerEl)
-        .setName('Threads 授权')
+        .setName(t('Threads 授权'))
         .setDesc(tokenDesc)
         .addButton(btn => btn
-            .setButtonText('打开授权页面')
+            .setButtonText(t('Threads 打开授权页面'))
             .onClick(async () => {
                 try {
-                    btn.setButtonText('打开中...');
+                    btn.setButtonText(t('打开中...'));
                     btn.disabled = true;
                     const url = authorizeUrl(ctx.plugin.getAdapterConfig('threads'));
-                    if (!url) throw new Error('请先填写 Threads App ID');
+                    if (!url) throw new Error(t('请先填写 Threads App ID'));
                     if (Platform.isMobile) {
                         navigator.clipboard.writeText(url).then(() => {
-                            new Notice('授权链接已复制，请在浏览器中打开并登录 Threads');
+                            new Notice(t('授权链接已复制，请在浏览器中打开并登录 Threads'));
                         }).catch(() => {
-                            new Notice(`复制失败，请手动打开授权页：${url}`);
+                            new Notice(t('复制失败，请手动打开授权页：{url}', { url }));
                         });
                     } else {
                         window.open(url, '_blank');
-                        new Notice('已在浏览器打开 Threads 授权页，登录后从地址栏复制 code 或完整回调地址');
+                        new Notice(t('已在浏览器打开 Threads 授权页，登录后从地址栏复制 code 或完整回调地址'));
                     }
                 } catch (error) {
-                    new Notice(`打开授权页失败：${error.message}`);
+                    new Notice(t('Threads 打开授权页失败：{error}', { error: error.message }));
                 } finally {
-                    btn.setButtonText('打开授权页面');
+                    btn.setButtonText(t('Threads 打开授权页面'));
                     btn.disabled = false;
                 }
             }));
 
     let authCode = '';
     new Setting(containerEl)
-        .setName('授权 Code')
-        .setDesc('粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。')
+        .setName(t('授权 Code'))
+        .setDesc(t('Threads 粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。'))
         .addText(text => text
-            .setPlaceholder('粘贴 code 或回调地址')
+            .setPlaceholder(t('Threads 粘贴 code 或回调地址'))
             .onChange(value => { authCode = value.trim(); }))
         .addButton(btn => btn
-            .setButtonText('换取 Token')
+            .setButtonText(t('Threads 换取 Token'))
             .onClick(async () => {
                 if (!authCode) {
-                    new Notice('请先粘贴授权 code');
+                    new Notice(t('请先粘贴授权 code'));
                     return;
                 }
                 try {
-                    btn.setButtonText('换取中...');
+                    btn.setButtonText(t('换取中...'));
                     btn.disabled = true;
                     const result = await runAction(
                         'connectCode',
@@ -606,46 +684,46 @@ export function renderSettings(containerEl, ctx) {
                     if (result?.configPatch) {
                         await ctx.saveConfig(result.configPatch);
                     }
-                    new Notice(result?.message || '授权成功');
+                    new Notice(result?.message || t('授权成功'));
                     ctx.refresh();
                 } catch (error) {
-                    new Notice(`换取 Token 失败：${error.message}`);
+                    new Notice(t('Threads 换取 Token 失败：{error}', { error: error.message }));
                 } finally {
-                    btn.setButtonText('换取 Token');
+                    btn.setButtonText(t('Threads 换取 Token'));
                     btn.disabled = false;
                 }
             }));
 
     new Setting(containerEl)
-        .setName('测试连接')
-        .setDesc('验证 Token 是否有效，并展示 24 小时发帖配额。')
+        .setName(t('测试连接'))
+        .setDesc(t('验证 Token 是否有效，并展示 24 小时发帖配额。'))
         .addButton(btn => btn
-            .setButtonText('测试连接')
+            .setButtonText(t('测试连接'))
             .onClick(async () => {
                 try {
-                    btn.setButtonText('连接中...');
+                    btn.setButtonText(t('连接中...'));
                     btn.disabled = true;
                     const result = await runAction(
                         'testConnection',
                         ctx.plugin.getAdapterConfig('threads'),
                         ctx.requestUrl
                     );
-                    new Notice(result?.message || '连接成功');
+                    new Notice(result?.message || t('连接成功'));
                 } catch (error) {
-                    new Notice(`连接失败：${error.message}`);
+                    new Notice(t('连接失败：{error}', { error: error.message }));
                 } finally {
-                    btn.setButtonText('测试连接');
+                    btn.setButtonText(t('测试连接'));
                     btn.disabled = false;
                 }
             }));
 
     new Setting(containerEl)
-        .setName('回复权限')
-        .setDesc('发布后允许哪些人回复你的 Threads 帖子。')
+        .setName(t('回复权限'))
+        .setDesc(t('发布后允许哪些人回复你的 Threads 帖子。'))
         .addDropdown(dropdown => dropdown
-            .addOption('everyone', '所有人')
-            .addOption('accounts_you_follow', '你关注的账号')
-            .addOption('mentioned_only', '仅限提及的账号')
+            .addOption('everyone', t('所有人'))
+            .addOption('accounts_you_follow', t('你关注的账号'))
+            .addOption('mentioned_only', t('仅限提及的账号'))
             .setValue(config.replyControl || 'everyone')
             .onChange(value => ctx.scheduleConfigSave({ replyControl: value })));
 }

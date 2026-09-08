@@ -10,11 +10,95 @@
  */
 import { Setting, Notice, Platform } from 'obsidian';
 
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    '微博': 'Weibo',
+    'Access Token（授权产物，由「换取 Token」写入）': 'Access Token (authorization artifact, written by "Exchange Token")',
+    '微博授权已失效，请到设置中重新授权': 'Weibo authorization has expired. Please re-authorize in settings',
+    '微博授权关系已被解除，请到设置中重新授权': 'Weibo authorization has been revoked. Please re-authorize in settings',
+    '应用缺少该接口权限，请到微博开放平台申请': 'The app lacks this API permission. Please apply on the Weibo Open Platform',
+    '请求过于频繁，请稍后再试': 'Too many requests. Please try again later',
+    '发布次数达到微博频次上限，请稍后再试': 'Publish rate limit reached. Please try again later',
+    '授权时未勾选发博权限，请重新授权微博': 'Posting permission was not granted during authorization. Please authorize Weibo again',
+    '微博拒绝连续重复内容，请修改内容后再试': 'Weibo rejected duplicate consecutive content. Please modify the content and try again',
+    '发微博': 'Publish Weibo post',
+    '图片微博发送': 'Send image Weibo',
+    '微博换取 Token': 'Exchange Token',
+    '测试连接': 'Test connection',
+    '{action}失败（HTTP {status}：{detail}）': '{action} failed (HTTP {status}: {detail})',
+    '正文为空，且图片格式均不受微博支持（仅支持 JPG/PNG/GIF）': 'The text is empty and none of the image formats are supported by Weibo (only JPG/PNG/GIF are supported)',
+    '内容不能为空': 'Content cannot be empty',
+    '微博默认上限 {max} 字，当前 {count} 字，请缩短内容或在设置中将长文模式改为「长文」': 'The Weibo default limit is {max} characters; currently {count}. Please shorten the content or change the long text mode to "Long text" in settings',
+    '带图微博暂不支持长文，发送时正文将截断至 140 字': 'Image Weibo does not support long text; the text will be truncated to 140 characters',
+    '微博未配置或未授权，请先在设置中填写 App Key / App Secret 并完成授权': 'Weibo is not configured or authorized. Please fill in App Key / App Secret in settings and complete authorization',
+    '微博授权已过期，请到设置中重新授权': 'Weibo authorization has expired. Please re-authorize in settings',
+    '微博不支持 {filename} 的格式（仅支持 JPG/PNG/GIF），已跳过': 'Weibo does not support the format of {filename} (only JPG/PNG/GIF are supported); skipped',
+    '微博图片': 'image',
+    '微博暂只支持发送 1 张图片，已发送第 1 张（多图将在后续版本支持）': 'Weibo currently only supports sending 1 image; the first one was sent (multiple images will be supported in a later version)',
+    '图片读取失败：{filename}（{error}）；未发送任何内容。': 'Failed to read image: {filename} ({error}); nothing was sent.',
+    '图片读取失败：{filename}；未发送任何内容。': 'Failed to read image: {filename}; nothing was sent.',
+    '带图微博不支持长文：正文 {count} 字，超过 140 字上限。请缩短正文或改为纯文本发送': 'Image Weibo does not support long text: the text is {count} characters, exceeding the 140-character limit. Please shorten the text or send as plain text',
+    '带图微博暂不支持长文，正文已截断至 140 字': 'Image Weibo does not support long text; the text has been truncated to 140 characters',
+    '正文已截断至 140 字': 'The text has been truncated to 140 characters',
+    '微博默认上限 140 字，当前 {count} 字，请缩短内容或在设置中将长文模式改为「长文」': 'The Weibo default limit is 140 characters; currently {count}. Please shorten the content or change the long text mode to "Long text" in settings',
+    '粘贴的地址中未找到授权 code，请在微博授权页登录后从地址栏复制 code 或完整回调地址': 'No authorization code found in the pasted address. After logging in on the Weibo authorization page, copy the code or the full callback address from the address bar',
+    '请先填写微博 App Key': 'Please fill in the Weibo App Key first',
+    '已生成微博授权链接': 'Weibo authorization link generated',
+    '请先填写微博 App Key 与 App Secret': 'Please fill in the Weibo App Key and App Secret first',
+    '请先粘贴授权 code（登录授权后从回调页地址栏复制）': 'Please paste the authorization code first (copy it from the callback page address bar after logging in)',
+    '授权 state 校验失败，请重新点击「打开授权页面」再试': 'Authorization state validation failed. Please click "Open Authorization Page" again and retry',
+    '微博未返回 access_token，请重试': 'Weibo did not return an access_token. Please retry',
+    '已授权微博账号{uidInfo}{expiryInfo}': 'Authorized Weibo account{uidInfo}{expiryInfo}',
+    '，token 有效期 {seconds} 秒（短效请到开放平台配置长期授权）': ', token valid for {seconds} seconds (for short-lived tokens, configure long-term authorization on the Open Platform)',
+    '请先完成微博授权': 'Please complete Weibo authorization first',
+    '连接成功': 'Connection successful',
+    '（uid={uid}）': ' (uid: {uid})',
+    '，本小时剩余请求 {remaining}{limitInfo} 次': ', {remaining}{limitInfo} requests remaining this hour',
+    '微博适配器不支持操作：{action}': 'Weibo adapter does not support the operation: {action}',
+    '⚠️ 当前插件未经测试': '⚠️ This plugin is untested',
+    '微博适配器尚未经过完整测试，使用中如遇问题，欢迎在 GitHub 上提 issue 反馈。': 'The Weibo adapter has not been fully tested. If you encounter any issues, please file an issue on GitHub.',
+    '微博开放平台': 'Weibo Open Platform',
+    '需在微博开放平台（open.weibo.com）创建应用后使用：① 注册开发者并完成个人身份认证；② 创建「网站应用」，授权回调页填 https://api.weibo.com/oauth2/default.html；③ 建议在「高级信息 → OAuth2.0 授权设置」中配置长期授权，避免 token 短时间过期。凭据仅保存在本地 data.json。': 'Requires an app created on the Weibo Open Platform (open.weibo.com): ① Register as a developer and complete personal identity verification; ② Create a "Website App" and set the authorization callback page to https://api.weibo.com/oauth2/default.html; ③ It is recommended to configure long-term authorization under "Advanced Info → OAuth2.0 Authorization Settings" to prevent tokens from expiring quickly. Credentials are stored only in local data.json.',
+    '开放平台网站应用的 App Key。': 'The App Key of your website app on the Open Platform.',
+    '开放平台网站应用的 App Secret，仅保存在本地 data.json，请勿外传。': 'The App Secret of your website app on the Open Platform. Stored only in local data.json; do not share it.',
+    '已授权{uidInfo}{expiredInfo}。': 'Authorized{uidInfo}{expiredInfo}.',
+    '，授权已过期，请重新授权': ', authorization expired, please re-authorize',
+    '尚未授权。点击「打开授权页面」登录微博后，从回调页地址栏复制 code。': 'Not authorized yet. Click "Open Authorization Page", log in to Weibo, then copy the code from the callback page address bar.',
+    '微博授权': 'Weibo Authorization',
+    '微博打开授权页面': 'Open Authorization Page',
+    '打开中...': 'Opening...',
+    '未获取到授权链接': 'Failed to obtain the authorization link',
+    '授权链接已复制，请在浏览器中打开并登录微博': 'Authorization link copied. Please open it in a browser and log in to Weibo',
+    '复制失败，请手动打开授权页：{url}': 'Copy failed. Please open the authorization page manually: {url}',
+    '已在浏览器打开微博授权页，登录后从地址栏复制 code 或完整回调地址': 'Weibo authorization page opened in the browser. After logging in, copy the code or the full callback address from the address bar',
+    '微博打开授权页失败：{error}': 'Failed to open the authorization page: {error}',
+    '授权 Code': 'Authorization Code',
+    '微博粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。': 'Paste the code from the callback page address bar, or paste the full callback address.',
+    '微博粘贴 code 或回调地址': 'Paste the code or callback address',
+    '请先粘贴授权 code': 'Please paste the authorization code first',
+    '换取中...': 'Exchanging...',
+    '授权成功': 'Authorization successful',
+    '微博换取 Token 失败：{error}': 'Failed to exchange Token: {error}',
+    '调用微博频次接口，验证授权是否有效。': 'Calls the Weibo rate-limit API to verify whether the authorization is valid.',
+    '连接中...': 'Connecting...',
+    '连接失败：{error}': 'Connection failed: {error}',
+    '可见性': 'Visibility',
+    '公开：所有人可见；仅自己可见：只有自己能看到这条微博。': 'Public: visible to everyone; Private: only you can see this Weibo post.',
+    '公开': 'Public',
+    '仅自己可见': 'Private (only me)',
+    '长文模式': 'Long text mode',
+    '正文超过 140 字时的处理方式（带图发送不支持长文，会自动截断）。': 'How to handle text over 140 characters (image posts do not support long text and will be truncated automatically).',
+    '长文（折叠为展开全文）': 'Long text (collapsed as "expand full text")',
+    '截断至 140 字': 'Truncate to 140 characters',
+    '超长拒发': 'Reject if too long'
+});
+
 export const manifest = {
     id: 'weibo',
     version: '1.0.0',
     name: '微博',
-    description: '发布内容到新浪微博',
     enabledByDefault: false,
     displayOrder: 60,
     capabilities: {
@@ -118,12 +202,12 @@ function weiboApiErrorMessage(response, actionLabel) {
     const rawError = String(body.error || body.error_description || response.text || '');
 
     // 官方规则：连续两次发布的微博不可以重复
-    if (rawError.includes('重复')) return '微博拒绝连续重复内容，请修改内容后再试';
-    if (errorCode && WEIBO_ERROR_MESSAGES[errorCode]) return WEIBO_ERROR_MESSAGES[errorCode];
-    if (response.status === 401) return '微博授权已失效，请到设置中重新授权';
+    if (rawError.includes('重复')) return t('微博拒绝连续重复内容，请修改内容后再试');
+    if (errorCode && WEIBO_ERROR_MESSAGES[errorCode]) return t(WEIBO_ERROR_MESSAGES[errorCode]);
+    if (response.status === 401) return t('微博授权已失效，请到设置中重新授权');
 
     const detail = rawError || `HTTP ${response.status}`;
-    return `${actionLabel}失败（HTTP ${response.status}：${detail}）`;
+    return t('{action}失败（HTTP {status}：{detail}）', { action: actionLabel, status: response.status, detail });
 }
 
 const BASE62_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -188,7 +272,7 @@ async function sendTextUpdate({ accessToken, visible, status, isLongText, reques
     });
 
     if (response.status < 200 || response.status >= 300) {
-        return { success: false, error: weiboApiErrorMessage(response, '发微博'), data: null };
+        return { success: false, error: weiboApiErrorMessage(response, t('发微博')), data: null };
     }
     let result = {};
     try { result = response.json || {}; } catch {}
@@ -233,7 +317,7 @@ async function uploadWithImage({ accessToken, visible, status, buffer, filename,
     });
 
     if (response.status < 200 || response.status >= 300) {
-        return { success: false, error: weiboApiErrorMessage(response, '图片微博发送'), data: null };
+        return { success: false, error: weiboApiErrorMessage(response, t('图片微博发送')), data: null };
     }
     let result = {};
     try { result = response.json || {}; } catch {}
@@ -254,8 +338,8 @@ export async function validate({ payload, config = {} }) {
 
     if (!plainText && supportedImages.length === 0) {
         errors.push(images.length > 0
-            ? '正文为空，且图片格式均不受微博支持（仅支持 JPG/PNG/GIF）'
-            : '内容不能为空');
+            ? t('正文为空，且图片格式均不受微博支持（仅支持 JPG/PNG/GIF）')
+            : t('内容不能为空'));
         return { warnings, errors };
     }
 
@@ -263,9 +347,9 @@ export async function validate({ payload, config = {} }) {
     const textUnits = weiboTextLength(plainText);
     if (textUnits > MAX_TEXT_UNITS) {
         if (longTextMode === 'error') {
-            errors.push(`微博默认上限 ${MAX_TEXT_UNITS} 字，当前 ${textUnits} 字，请缩短内容或在设置中将长文模式改为「长文」`);
+            errors.push(t('微博默认上限 {max} 字，当前 {count} 字，请缩短内容或在设置中将长文模式改为「长文」', { max: MAX_TEXT_UNITS, count: textUnits }));
         } else if (supportedImages.length > 0) {
-            warnings.push('带图微博暂不支持长文，发送时正文将截断至 140 字');
+            warnings.push(t('带图微博暂不支持长文，发送时正文将截断至 140 字'));
         }
     }
 
@@ -285,10 +369,10 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
     const accessToken = String(config.accessToken || '').trim();
 
     if (!appKey || !appSecret || !accessToken) {
-        return { success: false, error: '微博未配置或未授权，请先在设置中填写 App Key / App Secret 并完成授权' };
+        return { success: false, error: t('微博未配置或未授权，请先在设置中填写 App Key / App Secret 并完成授权') };
     }
     if (isTokenExpired(config)) {
-        return { success: false, error: '微博授权已过期，请到设置中重新授权' };
+        return { success: false, error: t('微博授权已过期，请到设置中重新授权') };
     }
 
     const warnings = [];
@@ -301,14 +385,14 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
         const allImages = attachments.filter(a => a && a.kind === 'image');
         for (const image of allImages) {
             if (!SUPPORTED_IMAGE_MIME.has(image.mimeType)) {
-                warnings.push(`微博不支持 ${image.filename || '图片'} 的格式（仅支持 JPG/PNG/GIF），已跳过`);
+                warnings.push(t('微博不支持 {filename} 的格式（仅支持 JPG/PNG/GIF），已跳过', { filename: image.filename || t('微博图片') }));
             }
         }
         const supportedImages = allImages.filter(a => SUPPORTED_IMAGE_MIME.has(a.mimeType));
         const maxImages = manifest.capabilities.maxAttachments;
         const images = supportedImages.slice(0, maxImages);
         if (supportedImages.length > maxImages) {
-            warnings.push('微博暂只支持发送 1 张图片，已发送第 1 张（多图将在后续版本支持）');
+            warnings.push(t('微博暂只支持发送 1 张图片，已发送第 1 张（多图将在后续版本支持）'));
         }
 
         const rawText = String(payload.plainText || '').trim();
@@ -321,21 +405,21 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
                     ? await payload.readAttachment(images[0].vaultPath)
                     : null;
             } catch (error) {
-                return { success: false, error: `图片读取失败：${images[0].filename}（${error.message || String(error)}）；未发送任何内容。`, warnings };
+                return { success: false, error: t('图片读取失败：{filename}（{error}）；未发送任何内容。', { filename: images[0].filename, error: error.message || String(error) }), warnings };
             }
             if (!buffer) {
-                return { success: false, error: `图片读取失败：${images[0].filename}；未发送任何内容。`, warnings };
+                return { success: false, error: t('图片读取失败：{filename}；未发送任何内容。', { filename: images[0].filename }), warnings };
             }
 
             let statusText = rawText;
             if (weiboTextLength(statusText) > MAX_TEXT_UNITS) {
                 if (longTextMode === 'error') {
-                    return { success: false, error: `带图微博不支持长文：正文 ${weiboTextLength(statusText)} 字，超过 140 字上限。请缩短正文或改为纯文本发送`, warnings };
+                    return { success: false, error: t('带图微博不支持长文：正文 {count} 字，超过 140 字上限。请缩短正文或改为纯文本发送', { count: weiboTextLength(statusText) }), warnings };
                 }
                 statusText = truncateToWeiboLimit(statusText);
-                warnings.push('带图微博暂不支持长文，正文已截断至 140 字');
+                warnings.push(t('带图微博暂不支持长文，正文已截断至 140 字'));
             }
-            if (!statusText) statusText = '📷'; // 微博要求 status 必填
+            if (!statusText) statusText = ' '; // 微博要求 status 必填，纯图片微博用空格占位
 
             const result = await uploadWithImage({
                 accessToken, visible, status: statusText,
@@ -347,7 +431,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
 
         // 纯文本：statuses/update
         if (!rawText) {
-            return { success: false, error: '内容不能为空', warnings };
+            return { success: false, error: t('内容不能为空'), warnings };
         }
         let finalText = rawText;
         let isLongText = false;
@@ -355,9 +439,9 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
         if (textUnits > MAX_TEXT_UNITS) {
             if (longTextMode === 'truncate') {
                 finalText = truncateToWeiboLimit(finalText);
-                warnings.push('正文已截断至 140 字');
+                warnings.push(t('正文已截断至 140 字'));
             } else if (longTextMode === 'error') {
-                return { success: false, error: `微博默认上限 140 字，当前 ${textUnits} 字，请缩短内容或在设置中将长文模式改为「长文」`, warnings };
+                return { success: false, error: t('微博默认上限 140 字，当前 {count} 字，请缩短内容或在设置中将长文模式改为「长文」', { count: textUnits }), warnings };
             } else {
                 isLongText = true; // longtext：交给服务端 is_longtext
             }
@@ -388,7 +472,7 @@ function extractAuthCode(raw) {
         return { code, state };
     }
     if (/^https?:\/\//i.test(input)) {
-        throw new Error('粘贴的地址中未找到授权 code，请在微博授权页登录后从地址栏复制 code 或完整回调地址');
+        throw new Error(t('粘贴的地址中未找到授权 code，请在微博授权页登录后从地址栏复制 code 或完整回调地址'));
     }
     return { code: input, state: '' };
 }
@@ -402,7 +486,7 @@ function extractAuthCode(raw) {
 export async function runAction(actionId, config = {}, requestUrlFn, options = {}) {
     if (actionId === 'getAuthorizeUrl') {
         const appKey = String(config?.appKey || '').trim();
-        if (!appKey) throw new Error('请先填写微博 App Key');
+        if (!appKey) throw new Error(t('请先填写微博 App Key'));
 
         pendingAuthState = `jsb${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
         const params = new URLSearchParams({
@@ -413,18 +497,18 @@ export async function runAction(actionId, config = {}, requestUrlFn, options = {
         });
         const base = options.mobile ? 'https://open.weibo.cn/oauth2/authorize' : `${API_BASE}/oauth2/authorize`;
         if (options.mobile) params.set('display', 'mobile');
-        return { success: true, data: { url: `${base}?${params.toString()}` }, message: '已生成微博授权链接' };
+        return { success: true, data: { url: `${base}?${params.toString()}` }, message: t('已生成微博授权链接') };
     }
 
     if (actionId === 'exchangeToken') {
         const appKey = String(config?.appKey || '').trim();
         const appSecret = String(config?.appSecret || '').trim();
-        if (!appKey || !appSecret) throw new Error('请先填写微博 App Key 与 App Secret');
+        if (!appKey || !appSecret) throw new Error(t('请先填写微博 App Key 与 App Secret'));
 
         const { code, state } = extractAuthCode(config?.code);
-        if (!code) throw new Error('请先粘贴授权 code（登录授权后从回调页地址栏复制）');
+        if (!code) throw new Error(t('请先粘贴授权 code（登录授权后从回调页地址栏复制）'));
         if (state && pendingAuthState && state !== pendingAuthState) {
-            throw new Error('授权 state 校验失败，请重新点击「打开授权页面」再试');
+            throw new Error(t('授权 state 校验失败，请重新点击「打开授权页面」再试'));
         }
 
         const response = await requestUrlFn({
@@ -441,12 +525,12 @@ export async function runAction(actionId, config = {}, requestUrlFn, options = {
             throw: false
         });
         if (response.status < 200 || response.status >= 300) {
-            throw new Error(weiboApiErrorMessage(response, '换取 Token'));
+            throw new Error(weiboApiErrorMessage(response, t('微博换取 Token')));
         }
 
         let result = {};
         try { result = response.json || {}; } catch {}
-        if (!result.access_token) throw new Error('微博未返回 access_token，请重试');
+        if (!result.access_token) throw new Error(t('微博未返回 access_token，请重试'));
         pendingAuthState = '';
 
         const uid = String(result.uid || result.id || '');
@@ -459,20 +543,23 @@ export async function runAction(actionId, config = {}, requestUrlFn, options = {
                 tokenObtainedAt: Date.now(),
                 expiresIn
             },
-            message: `已授权微博账号${uid ? ` uid=${uid}` : ''}${expiresIn ? `，token 有效期 ${expiresIn} 秒（短效请到开放平台配置长期授权）` : ''}`
+            message: t('已授权微博账号{uidInfo}{expiryInfo}', {
+                uidInfo: uid ? ` uid=${uid}` : '',
+                expiryInfo: expiresIn ? t('，token 有效期 {seconds} 秒（短效请到开放平台配置长期授权）', { seconds: expiresIn }) : ''
+            })
         };
     }
 
     if (actionId === 'testConnection') {
         const accessToken = String(config?.accessToken || '').trim();
-        if (!accessToken) throw new Error('请先完成微博授权');
+        if (!accessToken) throw new Error(t('请先完成微博授权'));
         const response = await requestUrlFn({
             url: `${API_BASE}/2/account/rate_limit_status.json?access_token=${encodeURIComponent(accessToken)}`,
             method: 'GET',
             throw: false
         });
         if (response.status < 200 || response.status >= 300) {
-            throw new Error(weiboApiErrorMessage(response, '测试连接'));
+            throw new Error(weiboApiErrorMessage(response, t('测试连接')));
         }
 
         let result = {};
@@ -481,13 +568,13 @@ export async function runAction(actionId, config = {}, requestUrlFn, options = {
         const remaining = status.user_remaining ?? status.remaining_user_hits;
         const limit = status.user_limit ?? status.limit_user_hits;
         const uid = String(config?.uid || '').trim();
-        let message = '连接成功';
-        if (uid) message += `（uid=${uid}）`;
-        if (remaining !== undefined) message += `，本小时剩余请求 ${remaining}${limit !== undefined ? `/${limit}` : ''} 次`;
+        let message = t('连接成功');
+        if (uid) message += t('（uid={uid}）', { uid });
+        if (remaining !== undefined) message += t('，本小时剩余请求 {remaining}{limitInfo} 次', { remaining, limitInfo: limit !== undefined ? `/${limit}` : '' });
         return { success: true, message };
     }
 
-    throw new Error(`微博适配器不支持操作：${actionId}`);
+    throw new Error(t('微博适配器不支持操作：{action}', { action: actionId }));
 }
 
 /**
@@ -499,16 +586,16 @@ export function renderSettings(containerEl, ctx) {
     const config = ctx.plugin.getAdapterConfig('weibo') || {};
 
     new Setting(containerEl)
-        .setName('⚠️ 当前插件未经测试')
-        .setDesc('微博适配器尚未经过完整测试，使用中如遇问题，欢迎在 GitHub 上提 issue 反馈。');
+        .setName(t('⚠️ 当前插件未经测试'))
+        .setDesc(t('微博适配器尚未经过完整测试，使用中如遇问题，欢迎在 GitHub 上提 issue 反馈。'));
 
     new Setting(containerEl)
-        .setName('微博开放平台')
-        .setDesc('需在微博开放平台（open.weibo.com）创建应用后使用：① 注册开发者并完成个人身份认证；② 创建「网站应用」，授权回调页填 https://api.weibo.com/oauth2/default.html；③ 建议在「高级信息 → OAuth2.0 授权设置」中配置长期授权，避免 token 短时间过期。凭据仅保存在本地 data.json。');
+        .setName(t('微博开放平台'))
+        .setDesc(t('需在微博开放平台（open.weibo.com）创建应用后使用：① 注册开发者并完成个人身份认证；② 创建「网站应用」，授权回调页填 https://api.weibo.com/oauth2/default.html；③ 建议在「高级信息 → OAuth2.0 授权设置」中配置长期授权，避免 token 短时间过期。凭据仅保存在本地 data.json。'));
 
     new Setting(containerEl)
         .setName('App Key')
-        .setDesc('开放平台网站应用的 App Key。')
+        .setDesc(t('开放平台网站应用的 App Key。'))
         .addText(text => text
             .setPlaceholder('App Key')
             .setValue(config.appKey || '')
@@ -516,7 +603,7 @@ export function renderSettings(containerEl, ctx) {
 
     new Setting(containerEl)
         .setName('App Secret')
-        .setDesc('开放平台网站应用的 App Secret，仅保存在本地 data.json，请勿外传。')
+        .setDesc(t('开放平台网站应用的 App Secret，仅保存在本地 data.json，请勿外传。'))
         .addText(text => {
             text.inputEl.type = 'password';
             text.setPlaceholder('App Secret')
@@ -528,17 +615,17 @@ export function renderSettings(containerEl, ctx) {
     const expiresIn = Number(config.expiresIn || 0);
     const tokenExpired = obtainedAt && expiresIn && Date.now() - obtainedAt >= expiresIn * 1000;
     const authDesc = config.accessToken
-        ? `已授权${config.uid ? ` uid=${config.uid}` : ''}${tokenExpired ? '，授权已过期，请重新授权' : ''}。`
-        : '尚未授权。点击「打开授权页面」登录微博后，从回调页地址栏复制 code。';
+        ? t('已授权{uidInfo}{expiredInfo}。', { uidInfo: config.uid ? ` uid=${config.uid}` : '', expiredInfo: tokenExpired ? t('，授权已过期，请重新授权') : '' })
+        : t('尚未授权。点击「打开授权页面」登录微博后，从回调页地址栏复制 code。');
 
     new Setting(containerEl)
-        .setName('微博授权')
+        .setName(t('微博授权'))
         .setDesc(authDesc)
         .addButton(btn => btn
-            .setButtonText('打开授权页面')
+            .setButtonText(t('微博打开授权页面'))
             .onClick(async () => {
                 try {
-                    btn.setButtonText('打开中...');
+                    btn.setButtonText(t('打开中...'));
                     btn.disabled = true;
                     const result = await runAction(
                         'getAuthorizeUrl',
@@ -547,41 +634,41 @@ export function renderSettings(containerEl, ctx) {
                         { mobile: Platform.isMobile }
                     );
                     const url = result?.data?.url || '';
-                    if (!url) throw new Error(result?.message || '未获取到授权链接');
+                    if (!url) throw new Error(result?.message || t('未获取到授权链接'));
                     if (Platform.isMobile) {
                         navigator.clipboard.writeText(url).then(() => {
-                            new Notice('授权链接已复制，请在浏览器中打开并登录微博');
+                            new Notice(t('授权链接已复制，请在浏览器中打开并登录微博'));
                         }).catch(() => {
-                            new Notice(`复制失败，请手动打开授权页：${url}`);
+                            new Notice(t('复制失败，请手动打开授权页：{url}', { url }));
                         });
                     } else {
                         window.open(url, '_blank');
-                        new Notice('已在浏览器打开微博授权页，登录后从地址栏复制 code 或完整回调地址');
+                        new Notice(t('已在浏览器打开微博授权页，登录后从地址栏复制 code 或完整回调地址'));
                     }
                 } catch (error) {
-                    new Notice(`打开授权页失败：${error.message}`);
+                    new Notice(t('微博打开授权页失败：{error}', { error: error.message }));
                 } finally {
-                    btn.setButtonText('打开授权页面');
+                    btn.setButtonText(t('微博打开授权页面'));
                     btn.disabled = false;
                 }
             }));
 
     let authCode = '';
     new Setting(containerEl)
-        .setName('授权 Code')
-        .setDesc('粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。')
+        .setName(t('授权 Code'))
+        .setDesc(t('微博粘贴回调页地址栏中的 code，或直接粘贴完整回调地址。'))
         .addText(text => text
-            .setPlaceholder('粘贴 code 或回调地址')
+            .setPlaceholder(t('微博粘贴 code 或回调地址'))
             .onChange(value => { authCode = value.trim(); }))
         .addButton(btn => btn
-            .setButtonText('换取 Token')
+            .setButtonText(t('微博换取 Token'))
             .onClick(async () => {
                 if (!authCode) {
-                    new Notice('请先粘贴授权 code');
+                    new Notice(t('请先粘贴授权 code'));
                     return;
                 }
                 try {
-                    btn.setButtonText('换取中...');
+                    btn.setButtonText(t('换取中...'));
                     btn.disabled = true;
                     const result = await runAction(
                         'exchangeToken',
@@ -595,55 +682,55 @@ export function renderSettings(containerEl, ctx) {
                         tokenObtainedAt: data.tokenObtainedAt || 0,
                         expiresIn: data.expiresIn || 0
                     });
-                    new Notice(result.message || '授权成功');
+                    new Notice(result.message || t('授权成功'));
                     ctx.refresh();
                 } catch (error) {
-                    new Notice(`换取 Token 失败：${error.message}`);
+                    new Notice(t('微博换取 Token 失败：{error}', { error: error.message }));
                 } finally {
-                    btn.setButtonText('换取 Token');
+                    btn.setButtonText(t('微博换取 Token'))
                     btn.disabled = false;
                 }
             }));
 
     new Setting(containerEl)
-        .setName('测试连接')
-        .setDesc('调用微博频次接口，验证授权是否有效。')
+        .setName(t('测试连接'))
+        .setDesc(t('调用微博频次接口，验证授权是否有效。'))
         .addButton(btn => btn
-            .setButtonText('测试连接')
+            .setButtonText(t('测试连接'))
             .onClick(async () => {
                 try {
-                    btn.setButtonText('连接中...');
+                    btn.setButtonText(t('连接中...'));
                     btn.disabled = true;
                     const result = await runAction(
                         'testConnection',
                         ctx.plugin.getAdapterConfig('weibo'),
                         ctx.requestUrl
                     );
-                    new Notice(result.message || '连接成功');
+                    new Notice(result.message || t('连接成功'));
                 } catch (error) {
-                    new Notice(`连接失败：${error.message}`);
+                    new Notice(t('连接失败：{error}', { error: error.message }));
                 } finally {
-                    btn.setButtonText('测试连接');
+                    btn.setButtonText(t('测试连接'));
                     btn.disabled = false;
                 }
             }));
 
     new Setting(containerEl)
-        .setName('可见性')
-        .setDesc('公开：所有人可见；仅自己可见：只有自己能看到这条微博。')
+        .setName(t('可见性'))
+        .setDesc(t('公开：所有人可见；仅自己可见：只有自己能看到这条微博。'))
         .addDropdown(dropdown => dropdown
-            .addOption('public', '公开')
-            .addOption('private', '仅自己可见')
+            .addOption('public', t('公开'))
+            .addOption('private', t('仅自己可见'))
             .setValue(config.visibility || 'public')
             .onChange(value => ctx.scheduleConfigSave({ visibility: value })));
 
     new Setting(containerEl)
-        .setName('长文模式')
-        .setDesc('正文超过 140 字时的处理方式（带图发送不支持长文，会自动截断）。')
+        .setName(t('长文模式'))
+        .setDesc(t('正文超过 140 字时的处理方式（带图发送不支持长文，会自动截断）。'))
         .addDropdown(dropdown => dropdown
-            .addOption('longtext', '长文（折叠为展开全文）')
-            .addOption('truncate', '截断至 140 字')
-            .addOption('error', '超长拒发')
+            .addOption('longtext', t('长文（折叠为展开全文）'))
+            .addOption('truncate', t('截断至 140 字'))
+            .addOption('error', t('超长拒发'))
             .setValue(config.longTextMode || 'longtext')
             .onChange(value => ctx.scheduleConfigSave({ longTextMode: value })));
 }

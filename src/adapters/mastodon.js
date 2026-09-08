@@ -6,12 +6,50 @@
 import { Setting, Notice } from 'obsidian';
 const { getMimeType } = require('../core/mime');
 const { buildMultipartBody } = require('../core/multipart');
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    '（{detail}）': ' ({detail})',
+    'Mastodon 实例地址': 'Mastodon instance URL',
+    '你的 Mastodon Access Token': 'Your Mastodon Access Token',
+    '可见性': 'Visibility',
+    '公开': 'Public',
+    '不列出': 'Unlisted',
+    '仅关注者': 'Followers only',
+    '私信': 'Direct message',
+    'Mastodon 未返回媒体 ID': 'Mastodon did not return a media ID',
+    '内容不能为空': 'Content cannot be empty',
+    'Mastodon 实例地址或 Access Token 未配置': 'Mastodon instance URL or Access Token is not configured',
+    'Mastodon 超过 {max} 张图片，只发送前 {max} 张': 'Over {max} images; only the first {max} will be sent',
+    '图片读取失败：{filename}；未发送任何内容。': 'Failed to read image: {filename}; nothing was sent.',
+    '图片上传失败：{filename}{detail}；未发送任何内容。': 'Image upload failed: {filename}{detail}; nothing was sent.',
+    '图片处理失败：{filename}（{error}）；未发送任何内容。': 'Image processing failed: {filename} ({error}); nothing was sent.',
+    '添加账号': 'Add account',
+    '添加一个新的 Mastodon 实例账号': 'Add a new Mastodon instance account',
+    '+ 添加': '+ Add',
+    '账号 {index}': 'Account {index}',
+    '未配置': 'Not configured',
+    '删除': 'Delete',
+    '确定删除账号「{title}」？': 'Delete account "{title}"?',
+    '显示名称': 'Display name',
+    '在发送面板中显示的文字，如「主账号」「长毛象」': 'Text shown in the send panel, e.g. "Main account" or "Mastodon"',
+    '主账号': 'Main account',
+    '实例地址': 'Instance URL',
+    '例如 https://mastodon.social': 'e.g. https://mastodon.social',
+    '测试连接': 'Test connection',
+    '验证当前账号的实例地址和 Access Token 是否有效。': 'Verify that the current account\'s instance URL and Access Token are valid.',
+    '请先配置实例地址和 Access Token': 'Please configure the instance URL and Access Token first',
+    '连接中...': 'Connecting...',
+    '未知': 'Unknown',
+    'Mastodon 连接成功（{display}）': 'Mastodon connection successful ({display})',
+    'Mastodon 连接失败：{error}': 'Mastodon connection failed: {error}'
+});
 
 export const manifest = {
     id: 'mastodon',
     version: '1.0.0',
     name: 'Mastodon',
-    description: '发布内容到 Mastodon',
     displayOrder: 30,
     enabledByDefault: false,
     capabilities: {
@@ -89,7 +127,7 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
     }
 
     if (!result.id) {
-        return { id: null, error: 'Mastodon 未返回媒体 ID' };
+        return { id: null, error: t('Mastodon 未返回媒体 ID') };
     }
     return { id: result.id, error: '' };
 }
@@ -106,7 +144,7 @@ export async function validate({ payload }) {
 
 
     if (!payload.plainText && images.length === 0) {
-        errors.push('内容不能为空');
+        errors.push(t('内容不能为空'));
     }
 
     return { warnings, errors };
@@ -125,7 +163,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
     const visibility = config.visibility || 'public';
 
     if (!serverUrl || !accessToken) {
-        return { success: false, error: 'Mastodon 实例地址或 Access Token 未配置' };
+        return { success: false, error: t('Mastodon 实例地址或 Access Token 未配置') };
     }
 
     const textContent = String(payload.plainText || '').trim();
@@ -140,7 +178,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
         const images = allImages.slice(0, MAX_MASTODON_IMAGES);
 
         if (allImages.length > MAX_MASTODON_IMAGES) {
-            warnings.push(`超过 ${MAX_MASTODON_IMAGES} 张图片，只发送前 ${MAX_MASTODON_IMAGES} 张`);
+            warnings.push(t('Mastodon 超过 {max} 张图片，只发送前 {max} 张', { max: MAX_MASTODON_IMAGES }));
         }
 
         for (const img of images) {
@@ -149,23 +187,26 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
                     ? await payload.readAttachment(img.vaultPath)
                     : null;
                 if (!buffer) {
-                    return { success: false, error: `图片读取失败：${img.filename}；未发送任何内容。` };
+                    return { success: false, error: t('图片读取失败：{filename}；未发送任何内容。', { filename: img.filename }) };
                 }
                 const uploadResult = await uploadImageToMastodon(buffer, img.filename, baseUrl, accessToken, requestUrl);
                 if (!uploadResult.id) {
                     return {
                         success: false,
-                        error: `图片上传失败：${img.filename}${uploadResult.error ? `（${uploadResult.error}）` : ''}；未发送任何内容。`
+                        error: t('图片上传失败：{filename}{detail}；未发送任何内容。', {
+                            filename: img.filename,
+                            detail: uploadResult.error ? t('（{detail}）', { detail: uploadResult.error }) : ''
+                        })
                     };
                 }
                 mediaIds.push(uploadResult.id);
             } catch (error) {
-                return { success: false, error: `图片处理失败：${img.filename}（${error.message || String(error)}）；未发送任何内容。` };
+                return { success: false, error: t('图片处理失败：{filename}（{error}）；未发送任何内容。', { filename: img.filename, error: error.message || String(error) }) };
             }
         }
 
         if (!textContent && mediaIds.length === 0) {
-            return { success: false, error: '内容不能为空' };
+            return { success: false, error: t('内容不能为空') };
         }
 
         const response = await requestUrl({
@@ -176,7 +217,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                status: textContent || '📷',
+                ...(textContent ? { status: textContent } : {}),
                 visibility,
                 ...(mediaIds.length > 0 ? { media_ids: mediaIds } : {})
             }),
@@ -215,10 +256,10 @@ export function renderSettings(containerEl, ctx) {
 
     // 添加账号按钮
     new Setting(containerEl)
-        .setName('添加账号')
-        .setDesc('添加一个新的 Mastodon 实例账号')
+        .setName(t('添加账号'))
+        .setDesc(t('添加一个新的 Mastodon 实例账号'))
         .addButton(btn => btn
-            .setButtonText('+ 添加')
+            .setButtonText(t('+ 添加'))
             .onClick(async () => {
                 const newAcct = {
                     id: `mstd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -239,18 +280,18 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
 
     // 卡片标题行
     const headerEl = cardEl.createDiv({ cls: 'js-bridge-mstd-card-header' });
-    const titleText = acct.label || acct.serverUrl || `账号 ${index + 1}`;
+    const titleText = acct.label || acct.serverUrl || t('账号 {index}', { index: index + 1 });
     headerEl.createEl('span', { text: titleText, cls: 'js-bridge-mstd-card-title' });
-    headerEl.createEl('span', { text: acct.serverUrl || '未配置', cls: 'js-bridge-mstd-card-url' });
+    headerEl.createEl('span', { text: acct.serverUrl || t('未配置'), cls: 'js-bridge-mstd-card-url' });
 
     // 删除按钮
     const deleteBtn = headerEl.createEl('button', {
         type: 'button',
-        text: '删除',
+        text: t('删除'),
         cls: 'js-bridge-mstd-card-delete'
     });
     deleteBtn.addEventListener('click', async () => {
-        if (!confirm(`确定删除账号「${titleText}」？`)) return;
+        if (!confirm(t('确定删除账号「{title}」？', { title: titleText }))) return;
         // 读取最新数据，避免闭包捕获过期快照导致编辑后删除其他账号时数据回退
         const freshAccounts = ctx.plugin.getMastodonAccounts();
         const updated = freshAccounts.filter(a => a.id !== acct.id);
@@ -262,10 +303,10 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
 
     // 字段：显示名称
     new Setting(cardEl)
-        .setName('显示名称')
-        .setDesc('在发送面板中显示的文字，如「主账号」「长毛象」')
+        .setName(t('显示名称'))
+        .setDesc(t('在发送面板中显示的文字，如「主账号」「长毛象」'))
         .addText(text => text
-            .setPlaceholder('主账号')
+            .setPlaceholder(t('主账号'))
             .setValue(acct.label || '')
             .onChange(value => {
                 updateMastodonAccount(ctx, acct.id, { label: value.trim() });
@@ -273,8 +314,8 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
 
     // 字段：实例地址
     new Setting(cardEl)
-        .setName('实例地址')
-        .setDesc('例如 https://mastodon.social')
+        .setName(t('实例地址'))
+        .setDesc(t('例如 https://mastodon.social'))
         .addText(text => text
             .setPlaceholder('https://mastodon.social')
             .setValue(acct.serverUrl || '')
@@ -287,7 +328,7 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
         .setName('Access Token')
         .addText(text => {
             text.inputEl.type = 'password';
-            text.setPlaceholder('你的 Mastodon Access Token')
+            text.setPlaceholder(t('你的 Mastodon Access Token'))
                 .setValue(acct.accessToken || '')
                 .onChange(value => {
                     updateMastodonAccount(ctx, acct.id, { accessToken: value.trim() });
@@ -296,12 +337,12 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
 
     // 字段：可见性
     new Setting(cardEl)
-        .setName('可见性')
+        .setName(t('可见性'))
         .addDropdown(dropdown => dropdown
-            .addOption('public', '公开')
-            .addOption('unlisted', '不列出')
-            .addOption('private', '仅关注者')
-            .addOption('direct', '私信')
+            .addOption('public', t('公开'))
+            .addOption('unlisted', t('不列出'))
+            .addOption('private', t('仅关注者'))
+            .addOption('direct', t('私信'))
             .setValue(acct.visibility || 'public')
             .onChange(value => {
                 updateMastodonAccount(ctx, acct.id, { visibility: value });
@@ -309,19 +350,19 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
 
     // 测试连接按钮
     new Setting(cardEl)
-        .setName('测试连接')
-        .setDesc('验证当前账号的实例地址和 Access Token 是否有效。')
+        .setName(t('测试连接'))
+        .setDesc(t('验证当前账号的实例地址和 Access Token 是否有效。'))
         .addButton(btn => btn
-            .setButtonText('测试连接')
+            .setButtonText(t('测试连接'))
             .onClick(async () => {
                 const currentConfig = ctx.plugin.getMastodonAccount(acct.id) || {};
                 const serverUrl = String(currentConfig.serverUrl || '').trim();
                 const accessToken = String(currentConfig.accessToken || '').trim();
                 if (!serverUrl || !accessToken) {
-                    new Notice('请先配置实例地址和 Access Token');
+                    new Notice(t('请先配置实例地址和 Access Token'));
                     return;
                 }
-                btn.setButtonText('连接中...');
+                btn.setButtonText(t('连接中...'));
                 btn.disabled = true;
                 try {
                     const baseUrl = serverUrl.replace(/\/+$/, '');
@@ -333,17 +374,17 @@ function renderMastodonAccountCard(containerEl, ctx, acct, index) {
                     });
                     if (response.status >= 200 && response.status < 300) {
                         const result = response.json || {};
-                        const display = result.display_name || result.username || '未知';
-                        new Notice(`Mastodon 连接成功（${display}）`);
+                        const display = result.display_name || result.username || t('未知');
+                        new Notice(t('Mastodon 连接成功（{display}）', { display }));
                     } else {
                         let errMsg = '';
                         try { errMsg = response.json?.error || response.text || `HTTP ${response.status}`; } catch { errMsg = `HTTP ${response.status}`; }
-                        new Notice(`Mastodon 连接失败：${errMsg}`);
+                        new Notice(t('Mastodon 连接失败：{error}', { error: errMsg }));
                     }
                 } catch (error) {
-                    new Notice(`Mastodon 连接失败：${error.message || String(error)}`);
+                    new Notice(t('Mastodon 连接失败：{error}', { error: error.message || String(error) }));
                 } finally {
-                    btn.setButtonText('测试连接');
+                    btn.setButtonText(t('测试连接'));
                     btn.disabled = false;
                 }
             }));

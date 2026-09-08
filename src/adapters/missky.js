@@ -4,12 +4,35 @@
  */
 const { getMimeType } = require('../core/mime');
 const { buildMultipartBody } = require('../core/multipart');
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    'Misskey 实例地址': 'Misskey instance URL',
+    '你的 Misskey API Token': 'Your Misskey API Token',
+    '可见性': 'Visibility',
+    '公开': 'Public',
+    '主页': 'Home',
+    '仅关注者': 'Followers only',
+    '测试连接': 'Test connection',
+    '连接中...': 'Connecting...',
+    '验证 Misskey 实例地址和 API Token 是否有效。': 'Verify that the Misskey instance URL and API Token are valid.',
+    '内容不能为空': 'Content cannot be empty',
+    'Misskey 实例地址或 API Token 未配置': 'Misskey instance URL or API Token is not configured',
+    '超过 {count} 张图片，只发送前 {count} 张': 'Over {count} images, only sending the first {count}',
+    '图片读取失败，已跳过：{name}': 'Failed to read image, skipped: {name}',
+    '图片上传失败，已跳过：{name}': 'Failed to upload image, skipped: {name}',
+    '图片处理失败，已跳过：{name}': 'Failed to process image, skipped: {name}',
+    'Misskey 适配器不支持操作：{action}': 'Misskey adapter does not support action: {action}',
+    '请先配置 Misskey 实例地址和 API Token': 'Please configure the Misskey instance URL and API Token first',
+    '未知': 'Unknown',
+    'Misskey 连接成功（用户：{name}）': 'Misskey connection successful (user: {name})'
+});
 
 export const manifest = {
     id: 'missky',
     version: '1.0.0',
     name: 'Misskey',
-    description: '发布内容到 Misskey / Calckey / Firefish 实例',
     enabledByDefault: false,
     displayOrder: 40,
     capabilities: {
@@ -101,7 +124,7 @@ export async function validate({ payload }) {
     const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
 
     if (!payload.plainText && attachments.length === 0) {
-        errors.push('内容不能为空');
+        errors.push(t('内容不能为空'));
     }
 
     return { warnings, errors };
@@ -122,7 +145,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
         : 'public';
 
     if (!serverUrl || !apiToken) {
-        return { success: false, error: 'Misskey 实例地址或 API Token 未配置' };
+        return { success: false, error: t('Misskey 实例地址或 API Token 未配置') };
     }
 
     const textContent = String(payload.plainText || '').trim();
@@ -137,7 +160,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
         const images = allImages.slice(0, MAX_MISSKEY_IMAGES);
 
         if (allImages.length > MAX_MISSKEY_IMAGES) {
-            warnings.push(`超过 ${MAX_MISSKEY_IMAGES} 张图片，只发送前 ${MAX_MISSKEY_IMAGES} 张`);
+            warnings.push(t('超过 {count} 张图片，只发送前 {count} 张', { count: MAX_MISSKEY_IMAGES }));
         }
 
         for (const img of images) {
@@ -146,22 +169,22 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
                     ? await payload.readAttachment(img.vaultPath)
                     : null;
                 if (!buffer) {
-                    warnings.push(`图片读取失败，已跳过：${img.filename}`);
+                    warnings.push(t('图片读取失败，已跳过：{name}', { name: img.filename }));
                     continue;
                 }
                 const fileId = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl);
                 if (fileId) {
                     fileIds.push(fileId);
                 } else {
-                    warnings.push(`图片上传失败，已跳过：${img.filename}`);
+                    warnings.push(t('图片上传失败，已跳过：{name}', { name: img.filename }));
                 }
             } catch (error) {
-                warnings.push(`图片处理失败，已跳过：${img.filename}`);
+                warnings.push(t('图片处理失败，已跳过：{name}', { name: img.filename }));
             }
         }
 
         if (!textContent && fileIds.length === 0) {
-            return { success: false, error: '内容不能为空' };
+            return { success: false, error: t('内容不能为空') };
         }
 
         const response = await requestUrl({
@@ -193,11 +216,11 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
 
 export async function runAction(actionId, config = {}, requestUrlFn) {
     if (actionId !== 'testConnection') {
-        throw new Error(`Misskey 适配器不支持操作：${actionId}`);
+        throw new Error(t('Misskey 适配器不支持操作：{action}', { action: actionId }));
     }
     const serverUrl = String(config.serverUrl || '').trim();
     const apiToken = String(config.apiToken || '').trim();
-    if (!serverUrl || !apiToken) throw new Error('请先配置 Misskey 实例地址和 API Token');
+    if (!serverUrl || !apiToken) throw new Error(t('请先配置 Misskey 实例地址和 API Token'));
     const baseUrl = serverUrl.replace(/\/+$/, '');
     const response = await requestUrlFn({
         url: `${baseUrl}/api/i`,
@@ -213,8 +236,8 @@ export async function runAction(actionId, config = {}, requestUrlFn) {
     }
     let result = {};
     try { result = response.json || {}; } catch {}
-    const username = result.username || result.name || '未知';
-    return { success: true, message: `Misskey 连接成功（用户：${username}）` };
+    const username = result.username || result.name || t('未知');
+    return { success: true, message: t('Misskey 连接成功（用户：{name}）', { name: username }) };
 }
 
 export default { manifest, execute, validate, runAction };

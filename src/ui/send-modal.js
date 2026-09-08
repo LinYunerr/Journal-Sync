@@ -15,7 +15,55 @@
  */
 
 const { Modal, Notice } = require('obsidian');
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本文件用户可见文案的英文翻译（发送面板 UI 与发送流程 Notice）
+registerTranslations('en', {
+    '默认预设': 'Default preset',
+    '选择发布目标': 'Choose publish targets',
+    '发布': 'Publish',
+    '发布（Ctrl/Cmd+Enter）': 'Publish (Ctrl/Cmd+Enter)',
+    '选择图片占位符：': 'Choose an image placeholder:',
+    '预设{index}': 'Preset {index}',
+    '点击应用分组，双击重命名': 'Click to apply this preset; double-click to rename',
+    '新增当前选择为预设分组': 'Save the current selection as a new preset',
+    '删除当前选中预设': 'Delete the selected preset',
+    'Telegram：': 'Telegram: ',
+    'Mastodon：': 'Mastodon: ',
+    'Telegraph：': 'Telegraph: ',
+    '点击使用 Telegraph 方式发送': 'Click to send via Telegraph',
+    '预览': 'Preview',
+    '当前为显示网址预览，点击关闭预览': 'Link preview is on; click to turn it off',
+    '当前为关闭网址预览，点击显示预览': 'Link preview is off; click to turn it on',
+    '富文本': 'Rich text',
+    '当前为富文本发送，点击切换为纯文本': 'Rich-text mode; click to switch to plain text',
+    '当前为纯文本发送，点击切换为富文本': 'Plain-text mode; click to switch to rich text',
+    '尚未获取频道列表，请先在插件设置中获取频道。': 'No channel list yet. Please fetch channels in the plugin settings first.',
+    '点击此处关闭 Telegraph 发送': 'Click here to disable Telegraph sending',
+    '双击编辑标题': 'Double-click to edit the title',
+    'Telegraph 模式：单击前缀关闭，双击标题编辑': 'Telegraph mode: click the prefix to disable; double-click the title to edit',
+    '⚠️ {count} 项预警，确认发送': '⚠️ {count} warning(s). Confirm to send',
+    '发送日志保存失败：无法写入快照': 'Failed to save send log: cannot write snapshot',
+    '发送日志保存失败：{error}': 'Failed to save send log: {error}',
+    '以下 Telegram 频道已不存在，已自动跳过：{channels}': 'The following Telegram channels no longer exist and were skipped: {channels}',
+    '请至少选择一个发送目标': 'Please select at least one publish target',
+    '未选择任何发送目标': 'No publish target selected',
+    '没有可发送的内容，请保留文字或有效图片。': 'Nothing to send. Please keep some text or valid images.',
+    '图片预检失败：{error}': 'Image pre-check failed: {error}',
+    '发送预检失败：{error}': 'Send pre-check failed: {error}',
+    '发送预检提示：{detail}': 'Send pre-check notice: {detail}',
+    '发送预检未通过：{detail}': 'Send pre-check failed: {detail}',
+    '🚀 已提交后台发送中...': '🚀 Send dispatched in the background...',
+    '❌ 发送存在失败：{summary}': '❌ Send completed with failures: {summary}',
+    '✅ 发送成功：{summary}': '✅ Sent successfully: {summary}',
+    '微博': 'Weibo',
+    '没有可发送的内容': 'Nothing to send',
+    '、': ', ',
+    '；': '; '
+});
+
 const { buildPayload, getMimeType } = require('../core/payload');
+const { collectTargets, dispatchSends, buildDiagTargets, buildSummary } = require('../core/send-dispatcher');
 const sendLog = require('../core/send-log');
 
 function hasRemoteImageReference(content) {
@@ -170,7 +218,7 @@ class JournalSyncSendModal extends Modal {
         if (!activePreset) {
             activePreset = {
                 id: `preset-${Date.now()}`,
-                name: '默认预设',
+                name: t('默认预设'),
                 items: []
             };
             presets.push(activePreset);
@@ -214,7 +262,7 @@ class JournalSyncSendModal extends Modal {
         const publishPanel = contentEl.createDiv({ cls: 'js-bridge-panel' });
 
         const publishTitleRow = publishPanel.createDiv({ cls: 'js-bridge-panel-title-row' });
-        publishTitleRow.createEl('h4', { text: '选择发布目标', cls: 'js-bridge-section-title' });
+        publishTitleRow.createEl('h4', { text: t('选择发布目标'), cls: 'js-bridge-section-title' });
 
         this.presetControlsEl = publishTitleRow.createDiv({ cls: 'publish-preset-controls' });
         this.renderPresetControls();
@@ -234,11 +282,11 @@ class JournalSyncSendModal extends Modal {
         const btnArea = contentEl.createDiv({ cls: 'js-bridge-btn-area' });
 
         this.sendBtn = btnArea.createEl('button', {
-            text: '发布',
+            text: t('发布'),
             cls: 'primary-btn simple-send-btn mod-cta'
         });
         this.sendBtn.addEventListener('click', () => this.doSend());
-        this.sendBtn.title = '发布（Ctrl/Cmd+Enter）';
+        this.sendBtn.title = t('发布（Ctrl/Cmd+Enter）');
 
         // Ctrl/Cmd+Enter 快捷发送；注册在冒泡阶段，让输入框自身的 Enter 保存逻辑先执行。
         this._sendKeyHandler = (e) => {
@@ -418,7 +466,9 @@ class JournalSyncSendModal extends Modal {
             this.content = text;
         });
 
-        // 监听粘贴事件：拦截剪贴板中的图片，转为 @图片N token
+        // 监听粘贴事件：拦截剪贴板中的图片转为 @图片N token；
+        // 其余粘贴统一转为纯文本，避免网页/Word 复制的富文本混入
+        // （内容提取 walk() 只认 textContent 和 <br>，富文本会丢换行）。
         richDiv.addEventListener('paste', (e) => {
             const items = e.clipboardData?.items;
             if (!items) return;
@@ -430,16 +480,66 @@ class JournalSyncSendModal extends Modal {
                     break;
                 }
             }
-            if (!imageItem) return; // 纯文本粘贴走默认行为
 
+            if (imageItem) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const file = imageItem.getAsFile();
+                if (file) {
+                    this.addPastedImage(file, richDiv);
+                }
+                return;
+            }
+
+            // 非图片粘贴：以纯文本插入，不保留任何格式
             e.preventDefault();
-            e.stopPropagation();
 
-            const file = imageItem.getAsFile();
-            if (!file) return;
+            const text = e.clipboardData.getData('text/plain');
+            if (!text) return; // 无纯文本可插入，也不恢复默认行为，避免格式化内容混入
 
-            this.addPastedImage(file, richDiv);
+            this.insertTextAtCursor(richDiv, text);
         });
+    }
+
+    /**
+     * 在当前光标处插入纯文本。
+     * 换行统一规范为单个 \n 字符；编辑器为 pre-wrap，文本节点内的换行可直接渲染。
+     * 注意：execCommand('insertText') 会把 \n 转成 <div> 块级元素，而内容提取
+     * walk() 只认 textContent 和 <br>，会丢换行，因此逐段插入、段间用
+     * insertLineBreak（pre-wrap 下为 \n 文本节点，否则为 <br>，walk() 均识别）。
+     * execCommand 成功时自动触发 input 事件（同步 this.content）；
+     * 失败时兑底用 Range 插入文本节点，并手动 dispatch input 事件。
+     */
+    insertTextAtCursor(richDiv, rawText) {
+        const text = rawText.replace(/\r\n?/g, '\n');
+        const lines = text.split('\n');
+
+        let ok = true;
+        let insertedAny = false;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i]) {
+                ok = document.execCommand('insertText', false, lines[i]);
+                if (!ok) break;
+                insertedAny = true;
+            }
+            if (i < lines.length - 1) {
+                ok = document.execCommand('insertLineBreak');
+                if (!ok) break;
+                insertedAny = true;
+            }
+        }
+        // execCommand 全程可用（或已插入部分内容后中断）时不走兑底，
+        // 避免重复插入；已插入部分会通过 input 事件同步。
+        if (ok || insertedAny) return;
+
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+            sel.getRangeAt(0).insertNode(document.createTextNode(text));
+        } else {
+            richDiv.appendChild(document.createTextNode(text));
+        }
+        richDiv.dispatchEvent(new Event('input', { bubbles: true }));
     }
     showMentionDropdown(dropdownEl, richDiv, range, matchedText) {
         dropdownEl.empty();
@@ -451,7 +551,7 @@ class JournalSyncSendModal extends Modal {
         dropdownEl.style.top = `${rect.bottom - editorRect.top + richDiv.offsetTop + 4}px`;
         dropdownEl.style.left = `${Math.min(Math.max(10, rect.left - editorRect.left + richDiv.offsetLeft), editorRect.width - 220)}px`;
 
-        dropdownEl.createDiv({ text: '选择图片占位符：', cls: 'mention-dropdown-title' });
+        dropdownEl.createDiv({ text: t('选择图片占位符：'), cls: 'mention-dropdown-title' });
 
         this.images.forEach((img) => {
             const tokenName = img.token;
@@ -674,7 +774,7 @@ class JournalSyncSendModal extends Modal {
                 setTimeout(() => { input.focus(); input.select(); }, 20);
 
                 const saveName = async () => {
-                    const newName = input.value.trim() || `预设${index + 1}`;
+                    const newName = input.value.trim() || t('预设{index}', { index: index + 1 });
                     preset.name = newName;
                     this.editingPresetId = '';
                     await this.plugin.saveSettings();
@@ -697,7 +797,7 @@ class JournalSyncSendModal extends Modal {
                 text: preset.name,
                 cls: `publish-preset-btn${preset.id === activeId ? ' active' : ''}`
             });
-            btn.title = '点击应用分组，双击重命名';
+            btn.title = t('点击应用分组，双击重命名');
 
             btn.addEventListener('click', async () => {
                 if (this.editingPresetId) return;
@@ -724,11 +824,11 @@ class JournalSyncSendModal extends Modal {
                 type: 'button',
                 cls: 'publish-preset-action add'
             });
-            addBtn.title = '新增当前选择为预设分组';
+            addBtn.title = t('新增当前选择为预设分组');
             addBtn.addEventListener('click', async () => {
                 const newPreset = {
                     id: `preset-${Date.now()}`,
-                    name: `预设${presets.length + 1}`,
+                    name: t('预设{index}', { index: presets.length + 1 }),
                     items: this.buildCurrentPresetItems()
                 };
                 presets.push(newPreset);
@@ -745,7 +845,7 @@ class JournalSyncSendModal extends Modal {
                 type: 'button',
                 cls: 'publish-preset-action remove'
             });
-            removeBtn.title = '删除当前选中预设';
+            removeBtn.title = t('删除当前选中预设');
             removeBtn.addEventListener('click', async () => {
                 const currentPresets = this.plugin.settings.publishPresets || [];
                 const currentActiveId = this.plugin.settings.activePresetId;
@@ -802,7 +902,7 @@ class JournalSyncSendModal extends Modal {
                 cls: `plugin-toggle-block${isSelected ? ' active' : ''}`
             });
 
-            block.createSpan({ cls: 'plugin-toggle-title', text: adapter.manifest.name });
+            block.createSpan({ cls: 'plugin-toggle-title', text: t(adapter.manifest.name) });
 
             block.addEventListener('click', async () => {
                 if (this.selectedTargets.has(id)) {
@@ -826,7 +926,7 @@ class JournalSyncSendModal extends Modal {
         if (accounts.length === 0) return;
 
         const labelRow = this.mstdSectionEl.createDiv({ cls: 'mstd-account-label-row' });
-        labelRow.createEl('div', { text: 'Mastodon：', cls: 'target-sub-label' });
+        labelRow.createEl('div', { text: t('Mastodon：'), cls: 'target-sub-label' });
 
         const accountGrid = this.mstdSectionEl.createDiv({ cls: 'target-list mstd-account-list' });
 
@@ -866,7 +966,7 @@ class JournalSyncSendModal extends Modal {
         const channels = Array.isArray(tgConfig?.channels) ? tgConfig.channels : [];
 
         const tgLabelRow = this.tgSectionEl.createDiv({ cls: 'tg-channel-label-row' });
-        tgLabelRow.createEl('div', { text: 'Telegram：', cls: 'target-sub-label' });
+        tgLabelRow.createEl('div', { text: t('Telegram：'), cls: 'target-sub-label' });
 
         // 按钮组：Telegraph + 富文本，紧贴右侧
         const tgBtnGroup = tgLabelRow.createDiv({ cls: 'tg-btn-group' });
@@ -877,19 +977,19 @@ class JournalSyncSendModal extends Modal {
             text: 'Telegraph',
             cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === 'telegraph' ? ' active expanded' : ''}`
         });
-        telegraphBtn.title = '点击使用 Telegraph 方式发送';
+        telegraphBtn.title = t('点击使用 Telegraph 方式发送');
 
         // 网址预览开关：放在富文本左侧、Telegraph 右侧，样式与其它两个按钮一致。
         const previewToggleBtn = tgBtnGroup.createEl('button', {
             type: 'button',
-            text: '预览',
+            text: t('预览'),
             cls: `tg-input-mode-btn tg-preview-btn${this.tgShowLinkPreview ? ' active' : ''}`
         });
-        previewToggleBtn.title = this.tgShowLinkPreview ? '当前为显示网址预览，点击关闭预览' : '当前为关闭网址预览，点击显示预览';
+        previewToggleBtn.title = this.tgShowLinkPreview ? t('当前为显示网址预览，点击关闭预览') : t('当前为关闭网址预览，点击显示预览');
         previewToggleBtn.addEventListener('click', () => {
             this.tgShowLinkPreview = !this.tgShowLinkPreview;
             previewToggleBtn.classList.toggle('active', this.tgShowLinkPreview);
-            previewToggleBtn.title = this.tgShowLinkPreview ? '当前为显示网址预览，点击关闭预览' : '当前为关闭网址预览，点击显示预览';
+            previewToggleBtn.title = this.tgShowLinkPreview ? t('当前为显示网址预览，点击关闭预览') : t('当前为关闭网址预览，点击显示预览');
         });
 
         // 富文本开关：仅在 Telegram「启用富文本发送」开启时显示。
@@ -897,10 +997,10 @@ class JournalSyncSendModal extends Modal {
         if (tgConfig.richTextEnabled !== false) {
             const richToggleBtn = tgBtnGroup.createEl('button', {
                 type: 'button',
-                text: '富文本',
+                text: t('富文本'),
                 cls: `tg-input-mode-btn${this.tgSendMode === 'rich' ? ' active' : ''}`
             });
-            richToggleBtn.title = this.tgSendMode === 'rich' ? '当前为富文本发送，点击切换为纯文本' : '当前为纯文本发送，点击切换为富文本';
+            richToggleBtn.title = this.tgSendMode === 'rich' ? t('当前为富文本发送，点击切换为纯文本') : t('当前为纯文本发送，点击切换为富文本');
             richToggleBtn.addEventListener('click', () => {
                 if (this.tgSendMode === 'rich') {
                     this.tgSendMode = 'plain';
@@ -908,7 +1008,7 @@ class JournalSyncSendModal extends Modal {
                     this.tgSendMode = 'rich';
                 }
                 richToggleBtn.classList.toggle('active', this.tgSendMode === 'rich');
-                richToggleBtn.title = this.tgSendMode === 'rich' ? '当前为富文本发送，点击切换为纯文本' : '当前为纯文本发送，点击切换为富文本';
+                richToggleBtn.title = this.tgSendMode === 'rich' ? t('当前为富文本发送，点击切换为纯文本') : t('当前为纯文本发送，点击切换为富文本');
                 // 取消 Telegraph 激活态并收起
                 telegraphBtn.classList.remove('active', 'expanded');
                 this._collapseTelegraphBtn(telegraphBtn);
@@ -952,7 +1052,7 @@ class JournalSyncSendModal extends Modal {
         if (channels.length === 0) {
             this.tgSectionEl.createDiv({
                 cls: 'target-sub',
-                text: '尚未获取频道列表，请先在插件设置中获取频道。'
+                text: t('尚未获取频道列表，请先在插件设置中获取频道。')
             });
             return;
         }
@@ -1013,11 +1113,11 @@ class JournalSyncSendModal extends Modal {
             this.telegraphTitle = this._getDefaultTelegraphTitle();
         }
         btn.empty();
-        const prefix = btn.createSpan({ cls: 'tg-telegraph-prefix', text: 'Telegraph：' });
-        prefix.title = '点击此处关闭 Telegraph 发送';
+        const prefix = btn.createSpan({ cls: 'tg-telegraph-prefix', text: t('Telegraph：') });
+        prefix.title = t('点击此处关闭 Telegraph 发送');
         const titleSpan = btn.createSpan({ cls: 'tg-telegraph-title', text: this.telegraphTitle });
-        titleSpan.title = '双击编辑标题';
-        btn.title = 'Telegraph 模式：单击前缀关闭，双击标题编辑';
+        titleSpan.title = t('双击编辑标题');
+        btn.title = t('Telegraph 模式：单击前缀关闭，双击标题编辑');
     }
 
     /**
@@ -1026,7 +1126,7 @@ class JournalSyncSendModal extends Modal {
     _collapseTelegraphBtn(btn) {
         btn.empty();
         btn.textContent = 'Telegraph';
-        btn.title = '点击使用 Telegraph 方式发送';
+        btn.title = t('点击使用 Telegraph 方式发送');
     }
 
     /**
@@ -1070,7 +1170,7 @@ class JournalSyncSendModal extends Modal {
 
     _resetSendButton() {
         if (!this.sendBtn) return;
-        this.sendBtn.textContent = '发布';
+        this.sendBtn.textContent = t('发布');
         this.sendBtn.classList.remove('mod-warning');
         this.sendBtn.removeAttribute('title');
     }
@@ -1093,7 +1193,7 @@ class JournalSyncSendModal extends Modal {
         if (this.sendBtn) {
             this.sendBtn.textContent = messages.length === 1
                 ? `⚠️ ${messages[0]}`
-                : `⚠️ ${messages.length} 项预警，确认发送`;
+                : t('⚠️ {count} 项预警，确认发送', { count: messages.length });
             this.sendBtn.title = messages.join('\n');
             this.sendBtn.classList.add('mod-warning');
         }
@@ -1144,10 +1244,10 @@ class JournalSyncSendModal extends Modal {
         try {
             const ok = await sendLog.writeSnapshot({ plugin: this.plugin }, entry);
             if (!ok) {
-                new Notice('发送日志保存失败：无法写入快照', 10000);
+                new Notice(t('发送日志保存失败：无法写入快照'), 10000);
             }
         } catch (err) {
-            new Notice('发送日志保存失败：' + (err?.message || err), 10000);
+            new Notice(t('发送日志保存失败：{error}', { error: err?.message || err }), 10000);
         }
     }
 
@@ -1195,40 +1295,23 @@ class JournalSyncSendModal extends Modal {
     async _doSendInternal() {
         const plugin = this.plugin;
         // 二次校验：设置可能在弹窗打开后被停用，停用适配器不得发送。
-        const targetAdapters = Array.from(this.selectedTargets).filter(adapterId =>
-            adapterId !== 'telegram' &&
-            adapterId !== 'mastodon' &&
-            plugin.adapterRegistry.has(adapterId) &&
-            plugin.isAdapterEnabled(adapterId)
-        );
-        let tgChannels = [];
-        if (plugin.adapterRegistry.has('telegram') && plugin.isAdapterEnabled('telegram')) {
-            const tgConfig = plugin.getAdapterConfig('telegram');
-            const validIds = new Set((Array.isArray(tgConfig.channels) ? tgConfig.channels : []).map(ch => String(ch.id)));
-            const staleIds = Array.from(this.selectedTgChannels).filter(id => !validIds.has(String(id)));
-            if (staleIds.length > 0) {
-                new Notice(`以下 Telegram 频道已不存在，已自动跳过：${staleIds.join('、')}`, 8000);
-            }
-            tgChannels = Array.from(this.selectedTgChannels).filter(id => validIds.has(String(id)));
-        }
-        if (tgChannels.length > 0) {
-            targetAdapters.push('telegram');
-        }
-
-        // Mastodon 多账号
-        const mstdAccountIds = plugin.isAdapterEnabled('mastodon')
-            ? Array.from(this.selectedMastodonAccounts).filter(id => plugin.getMastodonAccount(id))
-            : [];
-        if (mstdAccountIds.length > 0) {
-            targetAdapters.push('mastodon');
+        // 目标收集/过滤（停用平台、stale 频道、失效账号）由 send-dispatcher 纯函数完成
+        const { targetAdapters, tgChannels, mstdAccountIds, staleTgChannelIds } = collectTargets({
+            selectedTargets: this.selectedTargets,
+            selectedTgChannels: this.selectedTgChannels,
+            selectedMastodonAccounts: this.selectedMastodonAccounts,
+            plugin
+        });
+        if (staleTgChannelIds.length > 0) {
+            new Notice(t('以下 Telegram 频道已不存在，已自动跳过：{channels}', { channels: staleTgChannelIds.join(t('、')) }), 8000);
         }
 
         if (targetAdapters.length === 0 && tgChannels.length === 0 && mstdAccountIds.length === 0) {
-            new Notice('请至少选择一个发送目标');
+            new Notice(t('请至少选择一个发送目标'));
             await this._writeSendLog(this._buildLogEntryBase({
                 dispatched: false,
                 failStage: 'no-target',
-                failReason: '未选择任何发送目标',
+                failReason: t('未选择任何发送目标'),
                 images: await this._collectLogImages(this.content),
                 diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
             }));
@@ -1248,12 +1331,23 @@ class JournalSyncSendModal extends Modal {
             return vaultReadImageFile(vaultPath);
         };
 
+        // 量大小优先走文件元数据（TFile.stat.size / blob.size），避免为预检读取完整二进制。
+        const statAttachment = (vaultPath) => {
+            const img = images.find(i => i.vaultPath === vaultPath && i.blob);
+            if (img && img.blob) return img.blob.size || null;
+            const file = plugin.app.vault.getAbstractFileByPath(vaultPath);
+            if (!file || Array.isArray(file.children)) return null;
+            const size = Number(file.stat?.size);
+            return Number.isFinite(size) && size > 0 ? size : null;
+        };
+
         // 构建统一 payload；图片实体沿用发送面板当前状态，保证编辑后的 token 与附件一致。
         const payload = buildPayload({
             content: rawContent,
             richDraft: { ...this.richDraft, images },
             title: this.notionTitle || '',
-            readAttachment
+            readAttachment,
+            statAttachment
         });
 
         // 统一检查最终要发送的内容，避免用户在弹窗中删空后仍创建空页面，
@@ -1264,11 +1358,11 @@ class JournalSyncSendModal extends Modal {
             || hasRemoteImageReference(payload.content)
         );
         if (!hasSendableContent) {
-            new Notice('没有可发送的内容，请保留文字或有效图片。');
+            new Notice(t('没有可发送的内容，请保留文字或有效图片。'));
             await this._writeSendLog(this._buildLogEntryBase({
                 dispatched: false,
                 failStage: 'empty-content',
-                failReason: '没有可发送的内容',
+                failReason: t('没有可发送的内容'),
                 images: await this._collectLogImages(this.content),
                 diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
             }));
@@ -1290,11 +1384,11 @@ class JournalSyncSendModal extends Modal {
         try {
             capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
         } catch (error) {
-            new Notice(`图片预检失败：${error.message || String(error)}`, 10000);
+            new Notice(t('图片预检失败：{error}', { error: error.message || String(error) }), 10000);
             await this._writeSendLog(this._buildLogEntryBase({
                 dispatched: false,
                 failStage: 'attachment-warnings',
-                failReason: `图片预检失败：${error.message || String(error)}`,
+                failReason: t('图片预检失败：{error}', { error: error.message || String(error) }),
                 images: await this._collectLogImages(this.content),
                 diagnostics: { targets: [], validationWarnings: [], attachmentWarnings: [] }
             }));
@@ -1334,7 +1428,7 @@ class JournalSyncSendModal extends Modal {
             }
             validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
-            new Notice(`发送预检失败：${error.message || String(error)}`, 10000);
+            new Notice(t('发送预检失败：{error}', { error: error.message || String(error) }), 10000);
             await this._writeSendLog(this._buildLogEntryBase({
                 dispatched: false,
                 failStage: 'validate-exception',
@@ -1349,14 +1443,14 @@ class JournalSyncSendModal extends Modal {
             return;
         }
         if (validation.warnings.length > 0) {
-            new Notice(`发送预检提示：${validation.warnings.join('；')}`, 10000);
+            new Notice(t('发送预检提示：{detail}', { detail: validation.warnings.join(t('；')) }), 10000);
         }
         if (validation.errors.length > 0) {
-            new Notice(`发送预检未通过：${validation.errors.join('；')}`, 10000);
+            new Notice(t('发送预检未通过：{detail}', { detail: validation.errors.join(t('；')) }), 10000);
             await this._writeSendLog(this._buildLogEntryBase({
                 dispatched: false,
                 failStage: 'validate-errors',
-                failReason: validation.errors.join('；'),
+                failReason: validation.errors.join(t('；')),
                 images: await this._collectLogImages(this.content),
                 diagnostics: {
                     targets: [],
@@ -1369,101 +1463,29 @@ class JournalSyncSendModal extends Modal {
 
         // 1. 立即关闭弹窗，不阻塞用户操作
         this.close();
-        new Notice('🚀 已提交后台发送中...', 3000);
+        new Notice(t('🚀 已提交后台发送中...'), 3000);
 
         // 记录点击发布的时间戳，供发送日志使用（发送完成时再取会偏晚）
         const dispatchStartedAt = new Date().toISOString();
 
         // 2. 在独立异步任务中运行网络传输，保证关窗后进程绝不中断
+        //    调度（组间并行、组内串行）由 send-dispatcher 完成
+        //    （telegram 频道在 adapter 内部并行发送）
         (async () => {
-            const results = {};
+            const results = await dispatchSends({
+                plugin,
+                payload,
+                targetAdapters,
+                tgChannels,
+                mstdAccountIds,
+                targetConfigOverrides
+            });
 
-            // 通用适配器（flomo, misskey, notion 等）
-            for (const adapterId of targetAdapters) {
-                if (adapterId === 'telegram') continue; // telegram 通过 channelIds 在 adapter 内循环
-                if (adapterId === 'mastodon') continue;  // mastodon 按账号循环，下方处理
-                try {
-                    const result = await plugin.executeAdapter(
-                        adapterId,
-                        payload,
-                        targetConfigOverrides[adapterId] || {}
-                    );
-                    results[adapterId] = result;
-                } catch (error) {
-                    results[adapterId] = { success: false, error: error.message };
-                }
-            }
-
-            // Telegram（adapter 内部按 channelIds 循环）
-            if (tgChannels.length > 0) {
-                try {
-                    const result = await plugin.executeAdapter('telegram', payload, targetConfigOverrides.telegram);
-                    results['telegram'] = result;
-                } catch (error) {
-                    results['telegram'] = { success: false, error: error.message };
-                }
-            }
-            // Mastodon 多账号：每个账号独立调用 adapter
-            for (const acctId of mstdAccountIds) {
-                const acct = plugin.getMastodonAccount(acctId);
-                if (!acct) continue;
-                const displayLabel = acct.label || acct.serverUrl || acctId;
-                const key = `mastodon:${acctId}`;
-                try {
-                    const result = await plugin.executeAdapter('mastodon', payload, {
-                        serverUrl: acct.serverUrl,
-                        accessToken: acct.accessToken,
-                        visibility: acct.visibility || 'public'
-                    });
-                    result.displayLabel = displayLabel;
-                    results[key] = result;
-                } catch (error) {
-                    results[key] = { success: false, error: error.message, displayLabel };
-                }
-            }
             // 发送完成，在 Obsidian 弹出非阻塞结果 Notice 提示
             const anyFailure = Object.values(results).some(r => !r.success && !r.skipped);
             // 写入发送日志快照（在 finally 释放 Blob 前完成图片缓存采集）
             try {
-                const diagTargets = [];
-                for (const adapterId of targetAdapters) {
-                    if (adapterId === 'telegram' || adapterId === 'mastodon') continue;
-                    const result = results[adapterId];
-                    if (!result) continue;
-                    diagTargets.push({
-                        kind: 'adapter',
-                        id: adapterId,
-                        label: adapterId,
-                        success: Boolean(result.success) && !result.skipped,
-                        error: result.error || null,
-                        durationMs: null
-                    });
-                }
-                const tgResult = results['telegram'];
-                if (tgResult && Array.isArray(tgResult.results)) {
-                    for (const channel of tgResult.results) {
-                        diagTargets.push({
-                            kind: 'telegram-channel',
-                            id: channel.channelId,
-                            label: `telegram ${channel.channelId}`,
-                            success: Boolean(channel.success),
-                            error: channel.error || null,
-                            durationMs: null
-                        });
-                    }
-                }
-                for (const acctId of mstdAccountIds) {
-                    const result = results[`mastodon:${acctId}`];
-                    if (!result) continue;
-                    diagTargets.push({
-                        kind: 'mastodon-account',
-                        id: acctId,
-                        label: result.displayLabel || acctId,
-                        success: Boolean(result.success) && !result.skipped,
-                        error: result.error || null,
-                        durationMs: null
-                    });
-                }
+                const diagTargets = buildDiagTargets({ targetAdapters, mstdAccountIds, results });
                 await this._writeSendLog(this._buildLogEntryBase({
                     dispatched: true,
                     failStage: null,
@@ -1479,27 +1501,12 @@ class JournalSyncSendModal extends Modal {
             } catch (e) {
                 // 日志写入绝不影响发送结果本身
             }
-            const summary = Object.entries(results)
-                .flatMap(([id, result]) => {
-                    const channelResults = Array.isArray(result.results) ? result.results : null;
-                    if (id === 'telegram' && channelResults) {
-                        return channelResults.map(channel => {
-                            return `Telegram ${channel.channelId}: ${channel.success ? '成功' : `失败(${channel.error || '未知错误'})`}`;
-                        });
-                    }
-                    // Mastodon 多账号结果使用 displayLabel 展示，key 仅为内部唯一标识
-                    const displayId = result.displayLabel || id;
-                    const warn = Array.isArray(result.warnings) && result.warnings.length > 0 ? `（${result.warnings.join('；')}）` : '';
-                    return result.success
-                        ? (result.skipped ? `${displayId}: 跳过` : `${displayId}: 成功${warn}`)
-                        : `${displayId}: 失败(${result.error || '未知错误'})`;
-                })
-                .join('；\n');
+            const summary = buildSummary(results);
 
             if (anyFailure) {
-                new Notice(`❌ 发送存在失败：${summary}`, 20000);
+                new Notice(t('❌ 发送存在失败：{summary}', { summary }), 20000);
             } else {
-                new Notice(`✅ 发送成功：${summary}`, 6000);
+                new Notice(t('✅ 发送成功：{summary}', { summary }), 6000);
             }
         })().finally(() => {
             // 后台发送完成后释放对粘贴图片 Blob 的引用；发送期间必须保留它们。
@@ -1513,19 +1520,19 @@ class JournalSyncSendModal extends Modal {
     }
 
     onClose() {
-        this._clearAttachmentWarningState();
-        if (this._sendKeyHandler) {
-            this.modalEl.removeEventListener('keydown', this._sendKeyHandler);
-            this._sendKeyHandler = null;
-        }
         // 快捷发送可能绕过预览浮层的点击关闭路径，关窗时统一释放其 Esc 监听。
         this.hideImagePreview();
         this._imageGridRenderId += 1;
         // 释放所有缩略图预览 URL，避免内存泄漏。
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
-        // 关闭窗口后不再保留粘贴图片的内存 Blob；后台发送使用自己的 images 引用。
         this.images = [];
+        // 附件警告确认态计时器与快捷键监听在关窗时统一清理，避免关窗后仍触发。
+        this._clearAttachmentWarningState();
+        if (this._sendKeyHandler) {
+            this.modalEl.removeEventListener('keydown', this._sendKeyHandler);
+            this._sendKeyHandler = null;
+        }
         this.contentEl.empty();
     }
 }

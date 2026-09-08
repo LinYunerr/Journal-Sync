@@ -1,5 +1,17 @@
 'use strict';
 
+const { t, registerTranslations } = require('./i18n');
+
+registerTranslations('en', {
+    '未命名图片': 'Unnamed image',
+    '适配器不存在': 'Adapter not found',
+    '{name} 图片超过 {max} 张，只发送前 {max} 张，确认发送': '{name}: over {max} images; only the first {max} will be sent. Confirm to send',
+    '{name} 图片文件超过 {size} MB：{preview}{suffix}，确认发送': '{name}: image files exceed {size} MB: {preview}{suffix}. Confirm to send',
+    ' 等 {count} 张': ' ...and {count} more',
+    '{id}: 适配器不存在': '{id}: adapter not found',
+    '、': ', '
+});
+
 class AdapterRegistry {
   constructor() {
     this._adapters = new Map();
@@ -42,13 +54,25 @@ class AdapterRegistry {
     const readSize = async (image) => {
       if (Number.isFinite(image?.size)) return image.size;
       const key = image?.vaultPath || image?.filename;
-      if (!key || typeof payload.readAttachment !== 'function') return null;
+      if (!key) return null;
       if (sizeCache.has(key)) return sizeCache.get(key);
 
       const pending = Promise.resolve()
-        .then(() => payload.readAttachment(key))
-        .then(buffer => {
-          const size = buffer?.byteLength || 0;
+        .then(() => {
+          if (typeof payload.statAttachment !== 'function') return null;
+          return payload.statAttachment(key);
+        })
+        .catch(() => null)
+        .then(statSize => {
+          const bytes = Number(statSize);
+          if (Number.isFinite(bytes) && bytes > 0) return bytes;
+          // statAttachment 缺失、返回 null 或抛错：回退读取完整二进制的旧路径。
+          if (typeof payload.readAttachment !== 'function') return null;
+          return Promise.resolve()
+            .then(() => payload.readAttachment(key))
+            .then(buffer => buffer?.byteLength || 0);
+        })
+        .then(size => {
           if (size > 0) image.size = size;
           return size || null;
         })
@@ -70,19 +94,22 @@ class AdapterRegistry {
         && maxAttachments > 0
         && images.length > maxAttachments
       ) {
-        adapterWarnings.push(`${name} 图片超过 ${maxAttachments} 张，只发送前 ${maxAttachments} 张，确认发送`);
+        adapterWarnings.push(t('{name} 图片超过 {max} 张，只发送前 {max} 张，确认发送', { name, max: maxAttachments }));
       }
 
       if (capabilities.warnOnAttachmentSize === true && maxAttachmentSize > 0) {
+        const sizes = await Promise.all(images.map(image => readSize(image)));
         const oversized = [];
-        for (const image of images) {
-          const size = await readSize(image);
-          if (size > maxAttachmentSize) oversized.push(image.filename || image.vaultPath || '未命名图片');
+        for (let i = 0; i < images.length; i++) {
+          if (sizes[i] > maxAttachmentSize) {
+            const image = images[i];
+            oversized.push(image.filename || image.vaultPath || t('未命名图片'));
+          }
         }
         if (oversized.length > 0) {
-          const preview = oversized.slice(0, 3).join('、');
-          const suffix = oversized.length > 3 ? ` 等 ${oversized.length} 张` : '';
-          adapterWarnings.push(`${name} 图片文件超过 ${Math.round(maxAttachmentSize / 1024 / 1024)} MB：${preview}${suffix}，确认发送`);
+          const preview = oversized.slice(0, 3).join(t('、'));
+          const suffix = oversized.length > 3 ? t(' 等 {count} 张', { count: oversized.length }) : '';
+          adapterWarnings.push(t('{name} 图片文件超过 {size} MB：{preview}{suffix}，确认发送', { name, size: Math.round(maxAttachmentSize / 1024 / 1024), preview, suffix }));
         }
       }
 
@@ -110,8 +137,8 @@ class AdapterRegistry {
     for (const id of targetIds) {
       const adapter = this.get(id);
       if (!adapter) {
-        perAdapter[id] = { warnings: [], errors: ['适配器不存在'] };
-        errors.push(`${id}: 适配器不存在`);
+        perAdapter[id] = { warnings: [], errors: [t('适配器不存在')] };
+        errors.push(t('{id}: 适配器不存在', { id }));
         continue;
       }
 

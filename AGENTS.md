@@ -23,7 +23,8 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
 | Area | Files |
 | --- | --- |
 | Plugin lifecycle, commands, journal creation, content extraction, adapter dispatch, vault image resolution | `src/main.js` |
-| Publishing dialog, target presets, image grid, Telegram channel selection, send orchestration | `src/ui/send-modal.js` |
+| Publishing dialog, target presets, image grid, Telegram channel selection | `src/ui/send-modal.js` |
+| Send dispatch (target collection/filtering, background send orchestration, result aggregation); pure logic, tested by `tests/send-dispatcher.test.js` | `src/core/send-dispatcher.js` |
 | Unified payload builder (content + images), used by send-modal.js | `src/core/payload.js` |
 | Telegraph API client, used by telegram.js | `src/core/telegraph.js` |
 | Settings page shell, enable toggles, manifest-driven generic rendering, debounced persistence | `src/ui/settings-tab.js` |
@@ -36,6 +37,7 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
 | Rich-draft builder from uploaded image refs | `src/core/rich-draft.js` |
 | Editor content extraction (selection / page / heading scope) | `src/core/content.js` |
 | Settings deep-merge (upgrade never resets user config) | `src/core/settings.js` |
+| i18n engine (Chinese-key identity, en dictionary, `{var}` interpolation); each file registers its own entries via `registerTranslations` | `src/core/i18n.js` |
 | Per-platform manifests, settings schema or custom panels, HTTP requests and validation | `src/adapters/flomo.js`, `telegram.js`, `mastodon.js`, `missky.js`, `notion.js`, `bluesky.js`, `weibo.js`, `threads.js` |
 | Plugin metadata | `manifest.json` |
 | Plugin styling | `styles.css` |
@@ -43,8 +45,20 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
 
 ## Architecture
 
-- `src/main.js` is the CommonJS plugin entry point. It registers the three commands: `journal-sync-new`, `journal-sync-send`, and `journal-sync-log`.
-- `src/adapters/` contains isolated adapters. Each adapter exposes a `manifest` (including its settings schema) and an `execute()` implementation, then is registered in `src/main.js`; the full export contract is described in Settings Architecture below.
+- 
+### 汇报约定（用户是产品经理）
+
+用户是产品经理，不是程序员。任何汇报都无需详细描述代码细节（文件、函数、变量、实现方式等），直接说结论、影响和需要用户做什么即可。
+
+### i18n (Chinese/English UI)
+
+`src/core/i18n.js` implements the translation engine: Chinese source strings are the dictionary keys (zh is identity), `t(key, vars)` interpolates `{var}` placeholders, and missing en entries fall back to the Chinese original. Each source file registers its own en entries at module load via `registerTranslations('en', {...})` — never centralize all translations in `i18n.js`. Rules enforced by `tests/i18n.test.js`:
+
+- Every static `t('...')` key must have a corresponding en registration (otherwise English UI shows Chinese).
+- Never pass a template-string key like `` t(`...${x}`) `` — it can never match the dictionary. Use a `{var}` placeholder key with vars instead.
+- The en dictionary is global and last-registration-wins: two adapters must not register the same key with different values. Prefix platform-specific keys with the platform name (e.g. `微博换取 Token`) when the same Chinese phrase is used by multiple adapters.
+- `manifest.settings.fields` labels/descriptions stay as raw Chinese; the generic renderer in `settings-tab.js` wraps them with `t()` at render time. `manifest.name` is translated at consumption points (`settings-tab` tabs, `send-modal` target blocks, `log-modal` target labels) via `t(manifest.name)`.
+- UI language is `settings.uiLanguage` (`'auto'` follows Obsidian's `getLanguage()`, else `'zh'`/`'en'`), resolved by `main.js _applyLanguage()` on load and on settings change. Do not call `t()` at module top level (language is not set yet at module load).
 - Pure logic (diary filename/heading, vault paths, image-ref parsing, rich-draft, content extraction, settings deep-merge, MIME, multipart) lives in `src/core/` as standalone modules, not inside `src/main.js`. `src/main.js` keeps only lifecycle, command registration, and vault/adapter orchestration. This keeps the pure helpers unit-testable and reusable.
 
 ## Payload And Send Pipeline
@@ -63,7 +77,8 @@ Use `README.md` and `README.zh-CN.md` for installation and user-facing behavior.
     mimeType: string,
     kind: 'image'
   }],
-  readAttachment: (vaultPath) => Promise<ArrayBuffer> | ArrayBuffer | null
+  readAttachment: (vaultPath) => Promise<ArrayBuffer> | ArrayBuffer | null,
+  statAttachment: (vaultPath) => Promise<number|null> | number|null  // byte size via TFile.stat / Blob.size; null = unknown
 }
 ```
 
@@ -75,15 +90,17 @@ Invariants:
 4. `readAttachment` takes a vault-relative path. Do not introduce OS absolute paths or Node filesystem APIs.
 5. Flomo publishes `plainText` (plus remote image URLs extracted from original content). Never send leftover `@图片N` tokens in Flomo body text.
 
-Send flow in `send-modal.js`:
+Send flow in `send-modal.js` (dispatch logic lives in `src/core/send-dispatcher.js`):
 
 1. Rebuild referenced images from the current editor body.
-2. `buildPayload()`.
-3. `getAttachmentWarnings(targetAdapters, payload)` using each adapter's `manifest.capabilities`.
+2. `buildPayload()` — including `readAttachment` and `statAttachment`.
+3. `getAttachmentWarnings(targetAdapters, payload)` using each adapter's `manifest.capabilities`. Size checks read `statAttachment` first (TFile.stat.size / Blob.size) and fall back to `readAttachment` byteLength only when stat returns null.
 4. On warning, the publish button enters a 5-second confirm state; after timeout the next click must re-check, not send.
 5. After confirm, `validateAll(targetAdapters, payload, configs)`: `error` blocks the send, `warning` is a Notice.
-6. Close the modal and call `executeAdapter(id, payload, extraConfig)` in the background, in target order.
-7. Results are aggregated per adapter. Telegram multi-channel results are expanded; partial success is allowed. No rollback or automatic retry.
+6. Close the modal and dispatch in the background via `dispatchSends()` (user decision 2026-09-07): **generic adapters run in parallel with each other; telegram is one call (channels loop in parallel inside the adapter) and mastodon accounts loop serially — these three groups run in parallel.** Per-platform internals stay the platform's own business.
+7. Results are aggregated per adapter (`buildDiagTargets` / `buildSummary`). Telegram multi-channel results are expanded; partial success is allowed. No rollback or automatic retry.
+
+Editor paste handling: image pastes become `@图片N` tokens; all other pastes are inserted as plain text only (no formatted HTML), because content extraction only reads textContent/`<br>`.
 
 Telegram channel selection, send mode, and Telegraph title are send-modal-only. Pass them once as `extraConfig`; do not persist them. When a Telegraph account is created during send, persist only `{ telegraphAccessToken }` through `saveConfig`.
 
@@ -131,7 +148,7 @@ Run the production build after changes that can affect the plugin or its output,
 npm run build
 ```
 
-Do not rebuild for Markdown-only changes such as plans, notes, `README.md`, or `AGENTS.md`. This production build writes `main.js` and removes `console` and `debugger` calls. There is currently no `lint` script; `npm test` runs the full unit-test suite (`tests/bluesky.test.js` over the pure helpers in `src/adapters/bluesky-core.js`, and `tests/core.test.js` over the `src/core/` pure helpers — payload token matching, `deepMergeSettings`, diary filename/heading, MIME, multipart). For source changes, also inspect the relevant changed code and build output; test the affected flow manually in Obsidian when practical.
+Do not rebuild for Markdown-only changes such as plans, notes, `README.md`, or `AGENTS.md`. This production build writes `main.js` and removes `console` and `debugger` calls. There is currently no `lint` script; `npm test` runs the full unit-test suite (`tests/bluesky.test.js` over the pure helpers in `src/adapters/bluesky-core.js`; `tests/core.test.js` over the `src/core/` pure helpers — payload token matching, `deepMergeSettings`, diary filename/heading, MIME, multipart; `tests/telegram-markdown.test.js`; `tests/send-dispatcher.test.js` over `src/core/send-dispatcher.js` — target filtering, group-parallel/serial dispatch, result aggregation; and `tests/i18n.test.js` — i18n engine behavior plus source-level guards: every static `t()` key must have an en registration, no cross-file dictionary conflicts, no dynamic template-string keys). For source changes, also inspect the relevant changed code and build output; test the affected flow manually in Obsidian when practical.
 
 ### After-Build Report
 
@@ -184,7 +201,7 @@ Current conformance:
 
 ### Product decisions pending
 
-2. **[implemented 2026-09-06, branch `logcreate`]** Send-result review: the `JournalSync-Log` command opens a send-log modal listing the last 10 send snapshots (each click of 发布 that reached dispatch, plus failed pre-dispatch attempts marked 未发出). Each entry has a single 重新编辑 button that reopens the send modal prefilled from the snapshot (content and image tokens restored verbatim — no token renumbering; target selection restored via preset pointer only, never channel lists; Telegram one-shot options restored). Snapshots live in `<plugin-dir>/send-log/<dir>/snapshot.json` with cached copies of all referenced images, capped at 10 entries. The snapshot's diagnostics layer records per-target results (adapter/channel/account, success, error) for debugging but is not surfaced in the UI. Decisions: pre-warning first-click confirmations are not logged; log write failure only Notices and never affects the send; restoring a deleted preset falls back to the current active preset.
+2. **[implemented 2026-09-06, branch `logcreate`; per-target results surfaced in UI 2026-09-07]** Send-result review: the `JournalSync-Log` command opens a send-log modal listing the last 10 send snapshots (each click of 发布 that reached dispatch, plus failed pre-dispatch attempts marked 未发出). Each entry has a single 重新编辑 button that reopens the send modal prefilled from the snapshot (content and image tokens restored verbatim — no token renumbering; target selection restored via preset pointer only, never channel lists; Telegram one-shot options restored). Snapshots live in `<plugin-dir>/send-log/<dir>/snapshot.json` with cached copies of all referenced images, capped at 10 entries. The snapshot's diagnostics layer records per-target results (adapter/channel/account, success, error); since 2026-09-07 the log modal renders these per-target results (✓/✗ + readable name + truncated error) under each dispatched entry, and shows `failReason` for pre-dispatch failures.
 3. **[user decision pending]** Telegram plain-mode chunked image sending violates the all-or-nothing rule above. Any fix changes send behavior for large image sets; needs a decision on approach.
 4. **[declined by user, 2026-09-06]** CI on push/PR (former item 8): not pursued for now. Do not add CI workflows without a new explicit request.
 
@@ -195,13 +212,21 @@ Numbering here is independent of the "Product decisions pending" section above (
 4. ~~`getMimeType` is declared five times (`core/payload.js`, `mastodon.js`, `misskey.js`, `notion.js`, `telegram.js`); payload.js already exports it. Mastodon and misskey also duplicate near-identical multipart body construction. Extract shared versions into `src/core/` and import them from adapters; do not re-declare.~~ **[implemented 2026-09-06]** Unified `getMimeType` (image + video) in `src/core/mime.js`; shared `buildMultipartBody` in `src/core/multipart.js`. payload.js, mastodon, missky, notion, telegram all import from core now. Telegram keeps a thin `telegramImageMimeType` wrapper because its plain-mode fallback is `image/jpeg`, not `application/octet-stream`.
 5. ~~Pure helpers are stranded inside `src/main.js` (`parseImageRefs`, `getSelectedOrBlockContent`, `buildDiaryFilename` with its date/sanitize helpers, `deepMergeSettings`, `buildRichDraftFromUploadedMarkdown`). They have no dependency on the Plugin class and cannot be unit-tested in place. Direction: move them into `src/core/` modules and require them from main.js. This is the prerequisite for item 6.~~ **[implemented 2026-09-06]** Moved to `src/core/`: `diary.js` (filename/heading + date/sanitize), `vault-path.js`, `image-refs.js`, `rich-draft.js`, `content.js`, `settings.js`. `src/main.js` now imports them and keeps only lifecycle + orchestration.
 6. ~~Core invariants have no test coverage (only Bluesky is tested). Once item 5 lands, add tests for: payload token matching (`@图片1` is not a prefix of `@图片10`; non-contiguous tokens; unreferenced tokens filtered out), `deepMergeSettings` semantics (non-empty user arrays never absorb default arrays; empty-string/null/undefined scalars are replaced by defaults — intentional upgrade behavior), and diary filename/heading placeholder rendering.~~ **[implemented 2026-09-06]** `tests/core.test.js` covers payload token matching, `deepMergeSettings`, diary filename/heading, MIME, and multipart. `npm test` runs it alongside `tests/bluesky.test.js`.
-7. Minor: `package.json` declares `"obsidian": "latest"` (pin a caret range instead); `send-modal.js` (~1530 lines) mixes preset management, image grid, telegram/telegraph UI, and send orchestration — split it when next touched for other reasons, not as a standalone refactor.
+7. Minor: `package.json` declares `"obsidian": "latest"` (pin a caret range instead) — **[declined by user 2026-09-07, do not change without a new decision]**. The send-orchestration half of old item 7 is done: dispatch logic now lives in `src/core/send-dispatcher.js` (see Send flow). What remains in `send-modal.js` (~1540 lines) is preset management, image grid, telegram/telegraph UI, and modal glue — still split-worthy when next touched for other reasons.
 
 ### Completed 2026-09-06
 
 - Failure result Notice duration extended 10 s → 20 s (success stays 6 s); dead `id === 'Telegram'` branch in send-modal result aggregation removed.
+- Chinese/English UI adaptation (i18n) landed: `src/core/i18n.js` engine, per-file en dictionaries, `uiLanguage` setting. A bad-merge class of regressions (deleted `require('obsidian')` in settings-tab, deleted `this.settings` init / `saveSettings()` / `buildRichDraftFromUploadedMarkdown` import / `diaryPath`/`filenameRule`/`autoUploadImages` defaults in main.js) was found in review and repaired; the three UI files' missing en dictionaries (send-modal 41 keys, settings-tab ~37, main.js 12) were filled in; cross-adapter dictionary conflicts (telegram/mastodon/bluesky image-count warnings, weibo/threads OAuth flow keys, `未知错误`, `图片`) resolved by platform-prefixing keys; `manifest.name` now translated at all consumption points. `tests/i18n.test.js` gained three source-level guard tests (key coverage, cross-file conflicts, dynamic template-string keys), bringing the suite to 85 cases.
 - `plugin.requestUrl` pass-through in main.js removed (verified single caller — the settings-tab panel context — which now imports obsidian's `requestUrl` directly; adapters were already direct). No behavior change.
 - Backlog items 4, 5, 6 implemented (see Agreed technical debt above): unified MIME + multipart in `src/core/`, pure helpers moved out of `src/main.js` into `src/core/`, and `tests/core.test.js` added. `npm test` runs both test files.
 
-Remaining backlog: item 3 (Telegram plain-mode atomicity, user decision pending) and item 7 (minor: pin `obsidian` dep, split `send-modal.js` when next touched).
+Remaining backlog: item 3 (Telegram plain-mode atomicity, user decision pending) and item 7 (minor: pin `obsidian` dep — declined 2026-09-07; further `send-modal.js` splitting when next touched).
+
+### Completed 2026-09-07
+
+- Editor paste now inserts plain text only (image pastes still become `@图片N` tokens); formatted HTML from web/Word sources can no longer lose newlines via the textContent-only extraction.
+- Attachment size pre-check reads file metadata first (`TFile.stat.size` / pasted `Blob.size`) via the new optional `payload.statAttachment`; `readAttachment` byteLength is only a fallback. Oversized checks within one adapter run in parallel.
+- Cross-platform sends are now parallel (user decision 2026-09-07): generic adapters run concurrently; telegram (one call, channels in parallel inside) and mastodon (accounts serial) run as parallel groups. Notice texts, log snapshot fields, and Blob release timing unchanged.
+- Dispatch logic extracted to `src/core/send-dispatcher.js` with `tests/send-dispatcher.test.js` (20 cases) added to `npm test`.
 

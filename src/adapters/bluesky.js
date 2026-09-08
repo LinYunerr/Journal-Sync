@@ -16,11 +16,51 @@ const {
     buildLinkFacets
 } = require('./bluesky-core');
 
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    '；': '; ',
+    '账号': 'Account',
+    'Bluesky handle（如 alice.bsky.social）、DID 或注册邮箱。': 'Bluesky handle (e.g. alice.bsky.social), DID, or registered email.',
+    '在 Bluesky 设置 → Privacy & security → App passwords 中生成，请勿填写账号主密码。': 'Generate it in Bluesky Settings → Privacy & security → App passwords. Do not use your account main password.',
+    'Service 地址': 'Service URL',
+    '默认官方服务 https://bsky.social，自建 PDS 可修改。': 'Default official service https://bsky.social; can be changed for a self-hosted PDS.',
+    '测试连接': 'Test connection',
+    '使用当前配置登录一次 Bluesky，验证账号与 App Password 是否有效。': 'Log in to Bluesky once with the current config to verify the account and App Password are valid.',
+    '连接中...': 'Connecting...',
+    '账号开启了邮箱两步验证，请使用 App Password 或关闭邮箱两步验证后重试': 'Email two-step verification is enabled on the account. Use an App Password or disable email two-step verification and retry.',
+    '触发 Bluesky 限流，请 {seconds} 秒后重试': 'Bluesky rate limit triggered, retry in {seconds} seconds',
+    '触发 Bluesky 限流，请稍后再试': 'Bluesky rate limit triggered, please try again later',
+    'Bluesky 账号或 App Password 无效': 'Bluesky account or App Password is invalid',
+    '{actionLabel}失败（HTTP {status}：{detail}）': '{actionLabel} failed (HTTP {status}: {detail})',
+    'Bluesky 登录': 'Bluesky login',
+    'Bluesky 登录响应缺少会话信息': 'Bluesky login response is missing session info',
+    '图片上传': 'Image upload',
+    'Bluesky 未返回图片引用': 'Bluesky did not return an image reference',
+    'Bluesky 图片': 'Image',
+    'Bluesky 不支持 {name} 的格式，已跳过': 'Bluesky does not support the format of {name}, skipped',
+    'Bluesky 超过 {max} 张图片，只发送前 {max} 张': 'Over {max} images, only the first {max} will be sent',
+    '正文为空，且图片格式均不受 Bluesky 支持（仅支持 JPEG/PNG/WebP/GIF）': 'Body is empty, and none of the image formats are supported by Bluesky (only JPEG/PNG/WebP/GIF)',
+    '内容不能为空': 'Content cannot be empty',
+    'Bluesky 单帖上限 {max} 字符（当前 {current}），请缩短内容': 'Bluesky single-post limit is {max} characters (currently {current}), please shorten the content',
+    'Bluesky 单帖 UTF-8 上限 {max} 字节（当前 {current}），请缩短内容': 'Bluesky single-post UTF-8 limit is {max} bytes (currently {current}), please shorten the content',
+    '图片读取接口不可用': 'Image reading interface is unavailable',
+    '图片读取失败：{name}（{detail}）': 'Failed to read image: {name} ({detail})',
+    '图片读取失败：{name}（文件为空）': 'Failed to read image: {name} (file is empty)',
+    'Bluesky 单张图片上限 2 MB：{name}（当前 {size} 字节）': 'Bluesky single-image limit is 2 MB: {name} (currently {size} bytes)',
+    'Bluesky 账号或 App Password 未配置': 'Bluesky account or App Password is not configured',
+    '图片上传失败：{name}（{error}）；未发送任何内容。': 'Image upload failed: {name} ({error}); nothing was sent.',
+    '发帖': 'Post',
+    'Bluesky 适配器不支持操作：{action}': 'Bluesky adapter does not support action: {action}',
+    '请先填写 Bluesky 账号与 App Password': 'Please fill in the Bluesky account and App Password first',
+    '已连接 {name}': 'Connected to {name}'
+});
+
 const manifest = {
     id: 'bluesky',
     version: '1.0.0',
     name: 'Bluesky',
-    description: '发布内容到 Bluesky (AT Protocol)',
     enabledByDefault: false,
     displayOrder: 50,
     capabilities: {
@@ -92,19 +132,19 @@ function xrpcErrorMessage(response, actionLabel) {
     const message = String(body.message || '');
 
     if (error === 'AuthFactorTokenRequired') {
-        return '账号开启了邮箱两步验证，请使用 App Password 或关闭邮箱两步验证后重试';
+        return t('账号开启了邮箱两步验证，请使用 App Password 或关闭邮箱两步验证后重试');
     }
     if (response.status === 429) {
         const retryAfter = response.headers && (response.headers['retry-after'] || response.headers['Retry-After']);
-        return retryAfter ? `触发 Bluesky 限流，请 ${retryAfter} 秒后重试` : '触发 Bluesky 限流，请稍后再试';
+        return retryAfter ? t('触发 Bluesky 限流，请 {seconds} 秒后重试', { seconds: retryAfter }) : t('触发 Bluesky 限流，请稍后再试');
     }
     if (response.status === 401 || error === 'AuthenticationRequired') {
-        return 'Bluesky 账号或 App Password 无效';
+        return t('Bluesky 账号或 App Password 无效');
     }
     if (error === 'InvalidRecordError' && message) return message;
 
     const detail = message || error || `HTTP ${response.status}`;
-    return `${actionLabel}失败（HTTP ${response.status}：${detail}）`;
+    return t('{actionLabel}失败（HTTP {status}：{detail}）', { actionLabel, status: response.status, detail });
 }
 
 /**
@@ -120,13 +160,13 @@ async function createSession(serviceUrl, identifier, appPassword, requestUrl) {
     });
 
     if (response.status < 200 || response.status >= 300) {
-        throw new Error(xrpcErrorMessage(response, 'Bluesky 登录'));
+        throw new Error(xrpcErrorMessage(response, t('Bluesky 登录')));
     }
 
     let result = {};
     try { result = response.json || {}; } catch {}
     if (!result.accessJwt || !result.did) {
-        throw new Error('Bluesky 登录响应缺少会话信息');
+        throw new Error(t('Bluesky 登录响应缺少会话信息'));
     }
     return result;
 }
@@ -147,14 +187,14 @@ async function uploadBlob(serviceUrl, accessJwt, buffer, mimeType, requestUrl) {
     });
 
     if (response.status < 200 || response.status >= 300) {
-        return { blob: null, error: xrpcErrorMessage(response, '图片上传') };
+        return { blob: null, error: xrpcErrorMessage(response, t('图片上传')) };
     }
 
     let result = {};
     try { result = response.json || {}; } catch {}
     const blob = result.blob;
     if (!blob || !blob.ref || !blob.ref.$link) {
-        return { blob: null, error: 'Bluesky 未返回图片引用' };
+        return { blob: null, error: t('Bluesky 未返回图片引用') };
     }
     return { blob, error: '' };
 }
@@ -166,7 +206,7 @@ function buildPostUrl(uri, session) {
 }
 
 function imageLabel(image) {
-    return image?.filename || image?.vaultPath || '图片';
+    return image?.filename || image?.vaultPath || t('Bluesky 图片');
 }
 
 /**
@@ -186,25 +226,25 @@ async function preparePayload(payload = {}) {
 
     for (const image of images) {
         if (!isSupportedImageMime(image.mimeType)) {
-            warnings.push(`Bluesky 不支持 ${imageLabel(image)} 的格式，已跳过`);
+            warnings.push(t('Bluesky 不支持 {name} 的格式，已跳过', { name: imageLabel(image) }));
         }
     }
     if (supportedImages.length > MAX_IMAGES) {
-        warnings.push(`超过 ${MAX_IMAGES} 张图片，只发送前 ${MAX_IMAGES} 张`);
+        warnings.push(t('Bluesky 超过 {max} 张图片，只发送前 {max} 张', { max: MAX_IMAGES }));
     }
 
     if (!text && selectedImages.length === 0) {
         errors.push(images.length > 0
-            ? '正文为空，且图片格式均不受 Bluesky 支持（仅支持 JPEG/PNG/WebP/GIF）'
-            : '内容不能为空');
+            ? t('正文为空，且图片格式均不受 Bluesky 支持（仅支持 JPEG/PNG/WebP/GIF）')
+            : t('内容不能为空'));
     }
 
     const { graphemes, utf8Bytes } = measurePostText(text);
     if (graphemes > MAX_GRAPHEMES) {
-        errors.push(`Bluesky 单帖上限 ${MAX_GRAPHEMES} 字符（当前 ${graphemes}），请缩短内容`);
+        errors.push(t('Bluesky 单帖上限 {max} 字符（当前 {current}），请缩短内容', { max: MAX_GRAPHEMES, current: graphemes }));
     }
     if (utf8Bytes > MAX_TEXT_BYTES) {
-        errors.push(`Bluesky 单帖 UTF-8 上限 ${MAX_TEXT_BYTES} 字节（当前 ${utf8Bytes}），请缩短内容`);
+        errors.push(t('Bluesky 单帖 UTF-8 上限 {max} 字节（当前 {current}），请缩短内容', { max: MAX_TEXT_BYTES, current: utf8Bytes }));
     }
 
     if (errors.length > 0) {
@@ -212,7 +252,7 @@ async function preparePayload(payload = {}) {
     }
 
     if (selectedImages.length > 0 && typeof payload.readAttachment !== 'function') {
-        errors.push('图片读取接口不可用');
+        errors.push(t('图片读取接口不可用'));
         return { text, images: [], warnings, errors };
     }
 
@@ -223,17 +263,17 @@ async function preparePayload(payload = {}) {
             buffer = await payload.readAttachment(image.vaultPath);
         } catch (error) {
             const detail = error?.message || String(error);
-            errors.push(`图片读取失败：${imageLabel(image)}（${detail}）`);
+            errors.push(t('图片读取失败：{name}（{detail}）', { name: imageLabel(image), detail }));
             continue;
         }
 
         const size = Number(buffer?.byteLength) || 0;
         if (size <= 0) {
-            errors.push(`图片读取失败：${imageLabel(image)}（文件为空）`);
+            errors.push(t('图片读取失败：{name}（文件为空）', { name: imageLabel(image) }));
             continue;
         }
         if (size > MAX_IMAGE_BYTES) {
-            errors.push(`Bluesky 单张图片上限 2 MB：${imageLabel(image)}（当前 ${size} 字节）`);
+            errors.push(t('Bluesky 单张图片上限 2 MB：{name}（当前 {size} 字节）', { name: imageLabel(image), size }));
             continue;
         }
         preparedImages.push({ attachment: image, buffer });
@@ -263,7 +303,7 @@ async function execute({ config = {}, payload = {}, requestUrl }) {
     const serviceUrl = normalizeServiceUrl(config.serviceUrl);
 
     if (!identifier || !appPassword) {
-        return { success: false, error: 'Bluesky 账号或 App Password 未配置' };
+        return { success: false, error: t('Bluesky 账号或 App Password 未配置') };
     }
 
     const warnings = [];
@@ -272,7 +312,7 @@ async function execute({ config = {}, payload = {}, requestUrl }) {
         const prepared = await preparePayload(payload);
         warnings.push(...prepared.warnings);
         if (prepared.errors.length > 0) {
-            return { success: false, error: prepared.errors.join('；'), warnings };
+            return { success: false, error: prepared.errors.join(t('；')), warnings };
         }
 
         const session = await createSession(serviceUrl, identifier, appPassword, requestUrl);
@@ -282,7 +322,7 @@ async function execute({ config = {}, payload = {}, requestUrl }) {
         for (const { attachment: image, buffer } of prepared.images) {
             const upload = await uploadBlob(serviceUrl, session.accessJwt, buffer, image.mimeType, requestUrl);
             if (!upload.blob) {
-                return { success: false, error: `图片上传失败：${imageLabel(image)}（${upload.error}）；未发送任何内容。`, warnings };
+                return { success: false, error: t('图片上传失败：{name}（{error}）；未发送任何内容。', { name: imageLabel(image), error: upload.error }), warnings };
             }
             blobs.push(upload.blob);
         }
@@ -321,7 +361,7 @@ async function execute({ config = {}, payload = {}, requestUrl }) {
             try { result = response.json || {}; } catch {}
             return { success: true, url: buildPostUrl(result.uri, session), mediaCount: blobs.length, warnings };
         }
-        return { success: false, error: xrpcErrorMessage(response, '发帖'), warnings };
+        return { success: false, error: xrpcErrorMessage(response, t('发帖')), warnings };
     } catch (error) {
         return { success: false, error: error.message || String(error), warnings };
     }
@@ -332,16 +372,16 @@ async function execute({ config = {}, payload = {}, requestUrl }) {
  */
 async function runAction(actionId, config, requestUrlFn) {
     if (actionId !== 'testConnection') {
-        throw new Error(`Bluesky 适配器不支持操作：${actionId}`);
+        throw new Error(t('Bluesky 适配器不支持操作：{action}', { action: actionId }));
     }
     const identifier = String(config?.identifier || '').trim();
     const appPassword = String(config?.appPassword || '').trim();
     if (!identifier || !appPassword) {
-        throw new Error('请先填写 Bluesky 账号与 App Password');
+        throw new Error(t('请先填写 Bluesky 账号与 App Password'));
     }
     const serviceUrl = normalizeServiceUrl(config.serviceUrl);
     const session = await createSession(serviceUrl, identifier, appPassword, requestUrlFn);
-    return { success: true, message: `已连接 ${session.handle || identifier}` };
+    return { success: true, message: t('已连接 {name}', { name: session.handle || identifier }) };
 }
 
 module.exports = { manifest, execute, validate, runAction };

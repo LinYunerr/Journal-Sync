@@ -38,8 +38,25 @@ const {
 } = require('./core/vault-path');
 const { parseImageRefs } = require('./core/image-refs');
 const { getSelectedOrBlockContent } = require('./core/content');
+const { t, setLanguage, registerTranslations } = require('./core/i18n');
 const { deepMergeSettings } = require('./core/settings');
 const { buildRichDraftFromUploadedMarkdown } = require('./core/rich-draft');
+
+// 本文件用户可见文案的英文翻译（ribbon 提示、命令 Notice、图片读取错误）
+registerTranslations('en', {
+  'Journal Sync: 新建日记记录': 'Journal Sync: New journal entry',
+  '读取失败': 'Failed to read',
+  'Vault 中未找到该文件': 'File not found in the vault',
+  '已创建 Journal Sync 日记记录块。': 'Created the Journal Sync journal entry.',
+  '请先打开或选中一份笔记': 'Please open or select a note first',
+  '没有可发送的内容：请先选中文本，或将光标置于所选级别的标题下。': 'Nothing to send. Please select some text or place the cursor under a heading of the chosen level.',
+  '部分图片无法读取（{count} 处），本次发送将跳过{suffix}': 'Some images could not be read ({count} spot(s)); this send will skip them{suffix}',
+  '图片读取失败后没有剩余可发送内容。': 'No sendable content left after failed image reads.',
+  '日志快照已失效': 'The log snapshot is no longer valid',
+  '：{names}': ': {names}',
+  '、': ', ',
+  ' 等': ' ...'
+});
 
 // 适配器（各自独立，按需 require）；数组顺序即注册顺序：flomo、telegram、mastodon、missky、notion、bluesky、weibo、threads
 const ADAPTER_MODULES = [
@@ -55,9 +72,9 @@ const ADAPTER_MODULES = [
 
 // ──────────────────────────────────────────────
 // 默认设置（已迁移用户原 Journal Sync 所有配置）
-// ──────────────────────────────────────────────
-
 const DEFAULT_SETTINGS = {
+  // 界面语言：'auto' = 跟随 Obsidian 应用语言；'zh' / 'en' = 手动指定
+  uiLanguage: 'auto',
   diaryPath: '日记',
   filenameRule: 'YYYY-MM-DD 日记',
   autoUploadImages: true,
@@ -119,8 +136,10 @@ class JournalSyncPlugin extends Plugin {
       this.adapterRegistry.register(adapter);
     }
 
-    // 深度合并默认迁移设置（老用户 data.json 的已有值不受影响）
+    // 深度合并默认迁移设置（老用户 data.json 的已有值不受影响），再解析界面语言
     this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
+    // 解析界面语言：'auto' 跟随 Obsidian 应用语言，否则用用户指定值
+    this._applyLanguage();
     // 迁移 Mastodon 单账号旧格式 → accounts 数组
     this._migrateMastodonAccounts();
     // 仅在合并或迁移真正改写了设置时落盘，避免每次启动无故重写 data.json
@@ -128,8 +147,7 @@ class JournalSyncPlugin extends Plugin {
       await this.saveSettings();
     }
 
-    // Ribbon 按钮：新建日记
-    this.addRibbonIcon('pencil', 'Journal Sync: 新建日记记录', () => this.createTodayDiaryEntry());
+    this.ribbonIconEl = this.addRibbonIcon('pencil', t('Journal Sync: 新建日记记录'), () => this.createTodayDiaryEntry());
 
     // 命令：新建日记
     this.addCommand({
@@ -159,6 +177,35 @@ class JournalSyncPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+
+  /**
+   * 解析界面语言并注入 i18n 引擎。
+   * 'auto' 跟随 Obsidian 应用语言（getLanguage() 返回 ISO 码，如 'zh'/'en'）；
+   * 否则使用用户手动指定的 'zh' / 'en'。
+   * 语言变更后的 UI 刷新：settings-tab 语言下拉 onChange 调用本方法后自行重渲染设置页；
+   * ribbon 悬浮提示在 onload 求值一次，由本方法在语言变化时直接刷新。
+   */
+  _applyLanguage() {
+    const choice = this.settings?.uiLanguage || 'auto';
+    let lang = 'zh';
+    if (choice === 'zh' || choice === 'en') {
+      lang = choice;
+    } else {
+      // auto：Obsidian 应用语言以 zh 开头视为中文，其余默认英文
+      try {
+        const appLang = (this.app?.getLanguage?.() || '').toLowerCase();
+        lang = appLang.startsWith('zh') ? 'zh' : 'en';
+      } catch (e) {
+        lang = 'en';
+      }
+    }
+    setLanguage(lang);
+    // ribbon 提示在 onload 求值一次，语言切换后在此刷新（Obsidian 用 aria-label 显示悬浮提示）
+    if (this.ribbonIconEl) {
+      this.ribbonIconEl.setAttribute('aria-label', t('Journal Sync: 新建日记记录'));
+    }
   }
 
   // ── 适配器管理 ──────────────────────────────
@@ -270,13 +317,13 @@ class JournalSyncPlugin extends Plugin {
         failed.push({
           target: ref.target,
           raw: ref.raw,
-          reason: error?.message || '读取失败'
+          reason: error?.message || t('读取失败')
         });
         failedRefs.push(ref);
         continue;
       }
       if (!file) {
-        failed.push({ target: ref.target, raw: ref.raw, reason: 'Vault 中未找到该文件' });
+        failed.push({ target: ref.target, raw: ref.raw, reason: t('Vault 中未找到该文件') });
         failedRefs.push(ref);
         continue;
       }
@@ -322,7 +369,7 @@ class JournalSyncPlugin extends Plugin {
    */
   async executeAdapter(adapterId, payload, extraConfig = {}) {
     const adapter = this.adapterRegistry.get(adapterId);
-    if (!adapter) return { success: false, error: '适配器不存在' };
+    if (!adapter) return { success: false, error: t('适配器不存在') };
 
     const config = { ...this.getAdapterConfig(adapterId), ...extraConfig };
     const saveConfig = async (patch = {}) => this.setAdapterConfig(adapterId, {
@@ -372,7 +419,7 @@ class JournalSyncPlugin extends Plugin {
         view.editor.focus();
       }, 50);
 
-      new Notice('已创建 Journal Sync 日记记录块。');
+      new Notice(t('已创建 Journal Sync 日记记录块。'));
     } catch (error) {
       new Notice(error.message || String(error));
     }
@@ -393,13 +440,13 @@ class JournalSyncPlugin extends Plugin {
         editor = activeView?.editor;
       }
       if (!editor) {
-        new Notice('请先打开或选中一份笔记');
+        new Notice(t('请先打开或选中一份笔记'));
         return;
       }
 
       const current = getSelectedOrBlockContent(editor, this.settings.sendScope);
       if (!current || !current.content.trim()) {
-        new Notice('没有可发送的内容：请先选中文本，或将光标置于所选级别的标题下。');
+        new Notice(t('没有可发送的内容：请先选中文本，或将光标置于所选级别的标题下。'));
         return;
       }
 
@@ -419,14 +466,19 @@ class JournalSyncPlugin extends Plugin {
 
       if (processResult.failed.length > 0) {
         const failedNames = [...new Set(processResult.failed.map(item => item.target).filter(Boolean))];
-        const suffix = failedNames.length > 0 ? `：${failedNames.slice(0, 3).join('、')}${failedNames.length > 3 ? ' 等' : ''}` : '';
-        new Notice(`部分图片无法读取（${processResult.failed.length} 处），本次发送将跳过${suffix}`, 10000);
+        const suffix = failedNames.length > 0
+          ? t('：{names}', { names: failedNames.slice(0, 3).join(t('、')) }) + (failedNames.length > 3 ? t(' 等') : '')
+          : '';
+        new Notice(t('部分图片无法读取（{count} 处），本次发送将跳过{suffix}', {
+          count: processResult.failed.length,
+          suffix
+        }), 10000);
       }
 
       const preparedContent = processResult.content ?? current.content;
       const preparedImages = processResult.richDraft?.images || [];
       if (!preparedContent.trim() && preparedImages.length === 0) {
-        new Notice('图片读取失败后没有剩余可发送内容。');
+        new Notice(t('图片读取失败后没有剩余可发送内容。'));
         return;
       }
 
@@ -455,7 +507,7 @@ class JournalSyncPlugin extends Plugin {
     try {
       const snapshot = entry?.snapshot || await sendLog.readSnapshot({ plugin: this }, entry?.dirName);
       if (!snapshot) {
-        new Notice('日志快照已失效');
+        new Notice(t('日志快照已失效'));
         return false;
       }
 

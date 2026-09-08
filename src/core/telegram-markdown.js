@@ -121,7 +121,9 @@ function extractQuotes(markdown) {
 function convertToTelegramHtml(markdown, { rich = false } = {}) {
   const { text, quotes } = extractQuotes(String(markdown || ''));
 
-  let html = rich ? mdgramRich(decodeHtmlEntities(text)) : mdgram(decodeHtmlEntities(text));
+  let html = rich
+    ? mdgramRich(decodeHtmlEntities(text), { paragraphMode: 'br' })
+    : mdgram(decodeHtmlEntities(text));
 
   // 还原引用块
   quotes.forEach((content, idx) => {

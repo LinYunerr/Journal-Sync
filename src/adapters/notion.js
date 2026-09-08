@@ -5,6 +5,63 @@
  */
 import { Setting, Notice } from 'obsidian';
 const { getMimeType } = require('../core/mime');
+const { t, registerTranslations } = require('../core/i18n');
+
+// 本适配器用户可见字符串的英文翻译（manifest 字段由 settings-tab 通用渲染器包 t()）
+registerTranslations('en', {
+    '未知': 'Unknown',
+    '图片 {filename} 创建上传失败：{error}': 'Image {filename} upload creation failed: {error}',
+    '图片 {filename} 创建上传失败：未返回上传 ID': 'Image {filename} upload creation failed: no upload ID returned',
+    '图片 {filename} 上传失败：{error}': 'Image {filename} upload failed: {error}',
+    'Notion 中找到多个"{dateTitle}"每日页面，请保留一个后重试': 'Found multiple Notion daily pages named "{dateTitle}"; keep one and retry',
+    'Notion 未返回新页面 ID': 'Notion did not return a new page ID',
+    '无法读取图片：{name}': 'Unable to read image: {name}',
+    'Notion 可能不支持图片格式：{filename}': 'Notion may not support this image format: {filename}',
+    'Notion Token 未配置': 'Notion Token is not configured',
+    'Notion 请求接口不可用': 'Notion request interface is unavailable',
+    'Notion Data Source ID 或标题字段未配置': 'Notion Data Source ID or title property is not configured',
+    '{filename} 超过 {size} MB 预警阈值': '{filename} exceeds the {size} MB warning threshold',
+    'Notion 父页面 ID 未配置': 'Notion parent page ID is not configured',
+    '请先填写 Notion Token 和 Data Source ID': 'Please fill in the Notion Token and Data Source ID first',
+    'Notion Token': 'Notion Token',
+    '使用 Notion Personal Access Token，仅保存在 Obsidian 插件设置中。': 'Uses a Notion Personal Access Token; it is stored only in Obsidian plugin settings.',
+    '测试连接': 'Test connection',
+    '验证 Notion Token 是否有效。': 'Verifies whether the Notion Token is valid.',
+    '请先配置 Notion Token': 'Please configure the Notion Token first',
+    '连接中...': 'Connecting...',
+    'Notion 连接成功（{name}）': 'Notion connected successfully ({name})',
+    'Notion 连接失败：{error}': 'Notion connection failed: {error}',
+    '保存目标': 'Save target',
+    '选择每次发送创建 Notion 页面，或在 Data Source 中创建一条记录页面。': 'Choose to create a Notion page for each send, or create a record page in a Data Source.',
+    '保存为页面': 'Save as page',
+    '保存到数据库': 'Save to database',
+    '日记父页面 Page ID': 'Daily parent page Page ID',
+    '创建子页面或每日页面的 Notion 父页面 ID。请先将该页面连接到你的 Notion Integration。': 'The Notion parent page ID for creating child pages or daily pages. Connect this page to your Notion Integration first.',
+    '页面写入方式': 'Page write mode',
+    '新建子页面会为每次发送创建一个页面；每日追加会查找或创建当天 YYYY-MM-DD 页面并持续追加内容。': 'New child page creates a page for each send; daily append finds or creates the current YYYY-MM-DD page and keeps appending content.',
+    '每次新建子页面': 'Create a new child page each time',
+    '追加到每日日记页面': 'Append to the daily journal page',
+    '页面标题来源': 'Page title source',
+    '按发送范围标题：标题块用该标题，整页用文件名，选中文本允许无标题。正文首标题：从正文第一个 Markdown 标题取名。无标题：不设置标题。': 'Send scope title: title blocks use that title, whole pages use the file name, and selected text may have no title. First body heading: uses the first Markdown heading in the body. No title: does not set a title.',
+    '按发送范围标题': 'Use send scope title',
+    '按正文第一个标题': 'Use the first heading in the body',
+    '无标题': 'No title',
+    'Data Source ID': 'Data Source ID',
+    '目标 Notion Data Source 的 ID，而不是旧版教程中的 database ID。': 'The ID of the target Notion Data Source, not the database ID from older tutorials.',
+    '读取标题字段': 'Read title property',
+    '当前标题字段：{name}': 'Current title property: {name}',
+    '读取 Data Source 后选择 title 类型字段。': 'After reading the Data Source, select a title-type property.',
+    '读取字段': 'Read fields',
+    '读取中...': 'Reading...',
+    '该 Data Source 没有 title 类型字段': 'This Data Source has no title-type property',
+    '已读取 {count} 个标题字段': 'Read {count} title properties',
+    '读取 Notion 字段失败：{error}': 'Failed to read Notion fields: {error}',
+    '数据库标题字段': 'Database title property',
+    '每条数据库记录均会创建一个完整页面，正文和图片写入该页面的 blocks。': 'Each database record creates a full page; the body and images are written to that page\'s blocks.',
+    '标题块使用该标题，整页使用文件名，选中文本允许无标题。': 'Title blocks use that title, whole pages use the file name, and selected text may have no title.',
+    '超过 5 MB 时自动压缩图片': 'Auto-compress images over 5 MB',
+    '发送前在内存中将可处理的 JPEG、PNG、WebP 压缩为 WebP，不会修改 Vault 原文件。GIF 和 SVG 不压缩。': 'Compresses processable JPEG, PNG, and WebP images to WebP in memory before sending; original Vault files are not modified. GIF and SVG are not compressed.'
+});
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2026-03-11';
@@ -15,7 +72,6 @@ export const manifest = {
     id: 'notion',
     version: '1.0.0',
     name: 'Notion',
-    description: '发送内容到 Notion 页面或 Data Source',
     enabledByDefault: false,
     displayOrder: 70,
     capabilities: {
@@ -42,7 +98,7 @@ export const defaultConfig = {
 
 function getResponseError(response) {
     const json = response?.json || {};
-    return json.message || json.error || response?.text || `HTTP ${response?.status || '未知'}`;
+    return json.message || json.error || response?.text || `HTTP ${response?.status || t('未知')}`;
 }
 
 function getHeader(response, name) {
@@ -287,9 +343,9 @@ async function uploadFile(requestUrl, token, file) {
         body: JSON.stringify({ mode: 'single_part', filename: file.filename, content_type: file.mimeType }),
         throw: false
     });
-    if (createResponse.status < 200 || createResponse.status >= 300) throw new Error(`图片 ${file.filename} 创建上传失败：${getResponseError(createResponse)}`);
+    if (createResponse.status < 200 || createResponse.status >= 300) throw new Error(t('图片 {filename} 创建上传失败：{error}', { filename: file.filename, error: getResponseError(createResponse) }));
     const fileUploadId = createResponse.json?.id;
-    if (!fileUploadId) throw new Error(`图片 ${file.filename} 创建上传失败：未返回上传 ID`);
+    if (!fileUploadId) throw new Error(t('图片 {filename} 创建上传失败：未返回上传 ID', { filename: file.filename }));
 
     const boundary = `----JournalSyncNotion${Date.now()}${Math.random().toString(16).slice(2)}`;
     const safeFilename = String(file.filename || 'image').replace(/[\"\r\n]/g, '_');
@@ -312,7 +368,7 @@ async function uploadFile(requestUrl, token, file) {
         body: body.buffer,
         throw: false
     });
-    if (sendResponse.status < 200 || sendResponse.status >= 300) throw new Error(`图片 ${file.filename} 上传失败：${getResponseError(sendResponse)}`);
+    if (sendResponse.status < 200 || sendResponse.status >= 300) throw new Error(t('图片 {filename} 上传失败：{error}', { filename: file.filename, error: getResponseError(sendResponse) }));
     return fileUploadId;
 }
 
@@ -359,7 +415,7 @@ async function findDailyPage(requestUrl, token, parentPageId, dateTitle) {
         cursor = response.json?.has_more ? String(response.json?.next_cursor || '') : '';
     } while (cursor);
 
-    if (matches.length > 1) throw new Error(`Notion 中找到多个"${dateTitle}"每日页面，请保留一个后重试`);
+    if (matches.length > 1) throw new Error(t('Notion 中找到多个"{dateTitle}"每日页面，请保留一个后重试', { dateTitle }));
     return matches[0] || null;
 }
 
@@ -382,7 +438,7 @@ async function createPage(requestUrl, token, parent, title, children) {
     });
     if (response.status < 200 || response.status >= 300) throw new Error(getResponseError(response));
     const pageId = response.json?.id;
-    if (!pageId) throw new Error('Notion 未返回新页面 ID');
+    if (!pageId) throw new Error(t('Notion 未返回新页面 ID'));
     if (children.length > MAX_BLOCKS_PER_REQUEST) await appendBlocks(requestUrl, token, pageId, children);
     return pageId;
 }
@@ -420,7 +476,7 @@ async function prepareLocalImages(payload, autoCompress) {
         if (!vaultPath || typeof payload.readAttachment !== 'function') continue;
 
         const buffer = await payload.readAttachment(vaultPath);
-        if (!buffer) throw new Error(`无法读取图片：${img.filename || vaultPath}`);
+        if (!buffer) throw new Error(t('无法读取图片：{name}', { name: img.filename || vaultPath }));
 
         const source = new Uint8Array(buffer);
         let uploadBuffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
@@ -482,7 +538,7 @@ export async function validate({ payload }) {
         // 预检无法知道文件大小（需要读取），只检查类型
         const ext = String(img.filename || '').split('.').pop().toLowerCase();
         if (!['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext)) {
-            warnings.push(`Notion 可能不支持图片格式：${img.filename}`);
+            warnings.push(t('Notion 可能不支持图片格式：{filename}', { filename: img.filename }));
         }
     }
 
@@ -498,8 +554,8 @@ export async function validate({ payload }) {
  */
 export async function execute({ config = {}, payload = {}, requestUrl }) {
     const token = String(config.token || '').trim();
-    if (!token) return { success: false, error: 'Notion Token 未配置' };
-    if (!requestUrl) return { success: false, error: 'Notion 请求接口不可用' };
+    if (!token) return { success: false, error: t('Notion Token 未配置') };
+    if (!requestUrl) return { success: false, error: t('Notion 请求接口不可用') };
 
     try {
         // 准备图片（含压缩）
@@ -517,12 +573,12 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
         const targetType = config.targetType || 'page';
 
         if (targetType === 'database') {
-            if (!config.dataSourceId || !config.titleProperty) return { success: false, error: 'Notion Data Source ID 或标题字段未配置' };
+            if (!config.dataSourceId || !config.titleProperty) return { success: false, error: t('Notion Data Source ID 或标题字段未配置') };
             const pageId = await createPage(requestUrl, token, { type: 'data_source_id', id: config.dataSourceId, titleProperty: config.titleProperty }, normalizedTitle, children);
-            return { success: true, pageId, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
+            return { success: true, pageId, warnings: imageWarnings.map(item => t('{filename} 超过 {size} MB 预警阈值', { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
         }
 
-        if (!config.pageId) return { success: false, error: 'Notion 父页面 ID 未配置' };
+        if (!config.pageId) return { success: false, error: t('Notion 父页面 ID 未配置') };
         if (config.pageWriteMode === 'daily_append') {
             const today = new Date();
             const dateTitle = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -530,14 +586,14 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
             let dailyPage = await findDailyPage(requestUrl, token, config.pageId, dateTitle);
             if (!dailyPage) {
                 const pageId = await createPage(requestUrl, token, { type: 'page_id', id: config.pageId }, dateTitle, appendChildren);
-                return { success: true, pageId, daily: true, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
+                return { success: true, pageId, daily: true, warnings: imageWarnings.map(item => t('{filename} 超过 {size} MB 预警阈值', { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
             }
             await appendBlocks(requestUrl, token, dailyPage.id, appendChildren);
-            return { success: true, pageId: dailyPage.id, daily: true, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
+            return { success: true, pageId: dailyPage.id, daily: true, warnings: imageWarnings.map(item => t('{filename} 超过 {size} MB 预警阈值', { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
         }
 
         const pageId = await createPage(requestUrl, token, { type: 'page_id', id: config.pageId }, normalizedTitle, children);
-        return { success: true, pageId, warnings: imageWarnings.map(item => `${item.filename} 超过 ${Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024)} MB 预警阈值`) };
+        return { success: true, pageId, warnings: imageWarnings.map(item => t('{filename} 超过 {size} MB 预警阈值', { filename: item.filename, size: Math.round(MAX_NOTION_ATTACHMENT_SIZE / 1024 / 1024) })) };
     } catch (error) {
         return { success: false, error: error.message || String(error) };
     }
@@ -546,7 +602,7 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
 export async function retrieveDataSource({ config = {}, requestUrl }) {
     const token = String(config.token || '').trim();
     const dataSourceId = String(config.dataSourceId || '').trim();
-    if (!token || !dataSourceId) throw new Error('请先填写 Notion Token 和 Data Source ID');
+    if (!token || !dataSourceId) throw new Error(t('请先填写 Notion Token 和 Data Source ID'));
     const response = await notionRequest(requestUrl, token, {
         url: `${NOTION_API_BASE}/data_sources/${dataSourceId}`,
         method: 'GET',
@@ -570,8 +626,8 @@ export function renderSettings(containerEl, ctx) {
     const config = ctx.plugin.getAdapterConfig('notion') || {};
 
     new Setting(containerEl)
-        .setName('Notion Token')
-        .setDesc('使用 Notion Personal Access Token，仅保存在 Obsidian 插件设置中。')
+        .setName(t('Notion Token'))
+        .setDesc(t('使用 Notion Personal Access Token，仅保存在 Obsidian 插件设置中。'))
         .addText(text => {
             text.inputEl.type = 'password';
             text.setPlaceholder('ntn_...').setValue(config.token || '').onChange(value => {
@@ -580,18 +636,18 @@ export function renderSettings(containerEl, ctx) {
         });
 
     new Setting(containerEl)
-        .setName('测试连接')
-        .setDesc('验证 Notion Token 是否有效。')
+        .setName(t('测试连接'))
+        .setDesc(t('验证 Notion Token 是否有效。'))
         .addButton(btn => btn
-            .setButtonText('测试连接')
+            .setButtonText(t('测试连接'))
             .onClick(async () => {
                 const currentConfig = ctx.plugin.getAdapterConfig('notion') || {};
                 const token = String(currentConfig.token || '').trim();
                 if (!token) {
-                    new Notice('请先配置 Notion Token');
+                    new Notice(t('请先配置 Notion Token'));
                     return;
                 }
-                btn.setButtonText('连接中...');
+                btn.setButtonText(t('连接中...'));
                 btn.disabled = true;
                 try {
                     const response = await notionRequest(ctx.requestUrl, token, {
@@ -602,25 +658,25 @@ export function renderSettings(containerEl, ctx) {
                     });
                     if (response.status >= 200 && response.status < 300) {
                         const result = response.json || {};
-                        const name = result.name || result.bot?.owner?.name || '未知';
-                        new Notice(`Notion 连接成功（${name}）`);
+                        const name = result.name || result.bot?.owner?.name || t('未知');
+                        new Notice(t('Notion 连接成功（{name}）', { name }));
                     } else {
-                        new Notice(`Notion 连接失败：${getResponseError(response)}`);
+                        new Notice(t('Notion 连接失败：{error}', { error: getResponseError(response) }));
                     }
                 } catch (error) {
-                    new Notice(`Notion 连接失败：${error.message || String(error)}`);
+                    new Notice(t('Notion 连接失败：{error}', { error: error.message || String(error) }));
                 } finally {
-                    btn.setButtonText('测试连接');
+                    btn.setButtonText(t('测试连接'));
                     btn.disabled = false;
                 }
             }));
 
     new Setting(containerEl)
-        .setName('保存目标')
-        .setDesc('选择每次发送创建 Notion 页面，或在 Data Source 中创建一条记录页面。')
+        .setName(t('保存目标'))
+        .setDesc(t('选择每次发送创建 Notion 页面，或在 Data Source 中创建一条记录页面。'))
         .addDropdown(dropdown => dropdown
-            .addOption('page', '保存为页面')
-            .addOption('database', '保存到数据库')
+            .addOption('page', t('保存为页面'))
+            .addOption('database', t('保存到数据库'))
             .setValue(config.targetType || 'page')
             .onChange(async value => {
                 await ctx.saveConfig({ targetType: value });
@@ -629,17 +685,17 @@ export function renderSettings(containerEl, ctx) {
 
     if ((config.targetType || 'page') === 'page') {
         new Setting(containerEl)
-            .setName('日记父页面 Page ID')
-            .setDesc('创建子页面或每日页面的 Notion 父页面 ID。请先将该页面连接到你的 Notion Integration。')
+            .setName(t('日记父页面 Page ID'))
+            .setDesc(t('创建子页面或每日页面的 Notion 父页面 ID。请先将该页面连接到你的 Notion Integration。'))
             .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.pageId || '').onChange(value => {
                 ctx.scheduleConfigSave({ pageId: value.trim() });
             }));
         new Setting(containerEl)
-            .setName('页面写入方式')
-            .setDesc('新建子页面会为每次发送创建一个页面；每日追加会查找或创建当天 YYYY-MM-DD 页面并持续追加内容。')
+            .setName(t('页面写入方式'))
+            .setDesc(t('新建子页面会为每次发送创建一个页面；每日追加会查找或创建当天 YYYY-MM-DD 页面并持续追加内容。'))
             .addDropdown(dropdown => dropdown
-                .addOption('new_page', '每次新建子页面')
-                .addOption('daily_append', '追加到每日日记页面')
+                .addOption('new_page', t('每次新建子页面'))
+                .addOption('daily_append', t('追加到每日日记页面'))
                 .setValue(config.pageWriteMode || 'new_page')
                 .onChange(async value => {
                     await ctx.saveConfig({ pageWriteMode: value });
@@ -647,48 +703,48 @@ export function renderSettings(containerEl, ctx) {
                 }));
         if ((config.pageWriteMode || 'new_page') === 'new_page') {
             new Setting(containerEl)
-                .setName('页面标题来源')
-                .setDesc('按发送范围标题：标题块用该标题，整页用文件名，选中文本允许无标题。正文首标题：从正文第一个 Markdown 标题取名。无标题：不设置标题。')
+                .setName(t('页面标题来源'))
+                .setDesc(t('按发送范围标题：标题块用该标题，整页用文件名，选中文本允许无标题。正文首标题：从正文第一个 Markdown 标题取名。无标题：不设置标题。'))
                 .addDropdown(dropdown => dropdown
-                    .addOption('scope', '按发送范围标题')
-                    .addOption('first_heading', '按正文第一个标题')
-                    .addOption('none', '无标题')
+                    .addOption('scope', t('按发送范围标题'))
+                    .addOption('first_heading', t('按正文第一个标题'))
+                    .addOption('none', t('无标题'))
                     .setValue(config.titleSource || 'scope')
                     .onChange(async value => ctx.saveConfig({ titleSource: value })));
         }
     } else {
         new Setting(containerEl)
-            .setName('Data Source ID')
-            .setDesc('目标 Notion Data Source 的 ID，而不是旧版教程中的 database ID。')
+            .setName(t('Data Source ID'))
+            .setDesc(t('目标 Notion Data Source 的 ID，而不是旧版教程中的 database ID。'))
             .addText(text => text.setPlaceholder('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').setValue(config.dataSourceId || '').onChange(value => {
                 ctx.scheduleConfigSave({ dataSourceId: value.trim() });
             }));
         new Setting(containerEl)
-            .setName('读取标题字段')
-            .setDesc(config.titleProperty ? `当前标题字段：${config.titleProperty}` : '读取 Data Source 后选择 title 类型字段。')
-            .addButton(button => button.setButtonText('读取字段').onClick(async () => {
+            .setName(t('读取标题字段'))
+            .setDesc(config.titleProperty ? t('当前标题字段：{name}', { name: config.titleProperty }) : t('读取 Data Source 后选择 title 类型字段。'))
+            .addButton(button => button.setButtonText(t('读取字段')).onClick(async () => {
                 try {
-                    button.setButtonText('读取中...');
+                    button.setButtonText(t('读取中...'));
                     button.disabled = true;
                     const result = await retrieveDataSource({ config: ctx.plugin.getAdapterConfig('notion'), requestUrl: ctx.requestUrl });
-                    if (result.titles.length === 0) throw new Error('该 Data Source 没有 title 类型字段');
+                    if (result.titles.length === 0) throw new Error(t('该 Data Source 没有 title 类型字段'));
                     const activeConfig = ctx.plugin.getAdapterConfig('notion');
                     const selected = result.titles.includes(activeConfig.titleProperty) ? activeConfig.titleProperty : result.titles[0];
                     await ctx.saveConfig({ titleProperty: selected, titleProperties: result.titles });
-                    new Notice(`已读取 ${result.titles.length} 个标题字段`);
+                    new Notice(t('已读取 {count} 个标题字段', { count: result.titles.length }));
                     ctx.refresh();
                 } catch (error) {
-                    new Notice(`读取 Notion 字段失败：${error.message}`);
+                    new Notice(t('读取 Notion 字段失败：{error}', { error: error.message }));
                 } finally {
-                    button.setButtonText('读取字段');
+                    button.setButtonText(t('读取字段'));
                     button.disabled = false;
                 }
             }));
         const titleProperties = Array.isArray(config.titleProperties) ? config.titleProperties : [];
         if (titleProperties.length > 0) {
             new Setting(containerEl)
-                .setName('数据库标题字段')
-                .setDesc('每条数据库记录均会创建一个完整页面，正文和图片写入该页面的 blocks。')
+                .setName(t('数据库标题字段'))
+                .setDesc(t('每条数据库记录均会创建一个完整页面，正文和图片写入该页面的 blocks。'))
                 .addDropdown(dropdown => {
                     for (const property of titleProperties) dropdown.addOption(property, property);
                     dropdown.setValue(config.titleProperty || titleProperties[0]).onChange(async value => {
@@ -697,19 +753,19 @@ export function renderSettings(containerEl, ctx) {
                 });
         }
         new Setting(containerEl)
-            .setName('页面标题来源')
-            .setDesc('标题块使用该标题，整页使用文件名，选中文本允许无标题。')
+            .setName(t('页面标题来源'))
+            .setDesc(t('标题块使用该标题，整页使用文件名，选中文本允许无标题。'))
             .addDropdown(dropdown => dropdown
-                .addOption('scope', '按发送范围标题')
-                .addOption('first_heading', '按正文第一个标题')
-                .addOption('none', '无标题')
+                .addOption('scope', t('按发送范围标题'))
+                .addOption('first_heading', t('按正文第一个标题'))
+                .addOption('none', t('无标题'))
                 .setValue(config.titleSource || 'scope')
                 .onChange(async value => ctx.saveConfig({ titleSource: value })));
     }
 
     new Setting(containerEl)
-        .setName('超过 5 MB 时自动压缩图片')
-        .setDesc('发送前在内存中将可处理的 JPEG、PNG、WebP 压缩为 WebP，不会修改 Vault 原文件。GIF 和 SVG 不压缩。')
+        .setName(t('超过 5 MB 时自动压缩图片'))
+        .setDesc(t('发送前在内存中将可处理的 JPEG、PNG、WebP 压缩为 WebP，不会修改 Vault 原文件。GIF 和 SVG 不压缩。'))
         .addToggle(toggle => toggle.setValue(Boolean(config.autoCompressLargeImages)).onChange(async value => {
             await ctx.saveConfig({ autoCompressLargeImages: value });
         }));

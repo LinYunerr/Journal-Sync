@@ -14,9 +14,9 @@ const { getMimeType } = require('./mime');
  * @param {object} [options.richDraft]  - 富文本草稿 { version, blocks, images }
  * @param {string} [options.title]      - 笔记/范围标题
  * @param {Function} [options.readAttachment] - (vaultPath) => ArrayBuffer
- * @returns {object} unified payload
+ * @param {Function} [options.statAttachment] - (vaultPath) => Promise<number|null>|number|null，返回附件字节数，未知返回 null
  */
-function buildPayload({ content = '', richDraft, title = '', readAttachment } = {}) {
+function buildPayload({ content = '', richDraft, title = '', readAttachment, statAttachment } = {}) {
   const plainText = String(content || '')
     .replace(/@图片\d+/g, '')
     .replace(/!\[\[[^\]]+\]\]/g, '')
@@ -31,7 +31,8 @@ function buildPayload({ content = '', richDraft, title = '', readAttachment } = 
     plainText,
     title: String(title || ''),
     attachments,
-    readAttachment: typeof readAttachment === 'function' ? readAttachment : null
+    readAttachment: typeof readAttachment === 'function' ? readAttachment : null,
+    statAttachment: typeof statAttachment === 'function' ? statAttachment : null
   };
 }
 

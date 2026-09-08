@@ -11,6 +11,14 @@
 
 'use strict';
 
+const { t, registerTranslations } = require('./i18n');
+
+registerTranslations('en', {
+    '上传失败': 'Upload failed',
+    'Telegraph 图片上传失败: {error}': 'Telegraph image upload failed: {error}',
+    'Telegraph API {method} 失败 (HTTP {status})': 'Telegraph API {method} failed (HTTP {status})'
+});
+
 const TELEGRAPH_API_BASE = 'https://api.telegra.ph';
 const TELEGRAPH_UPLOAD_URL = 'https://telegra.ph/upload';
 
@@ -37,7 +45,7 @@ async function telegraphApi(method, params, requestUrlFn) {
 
   const data = response.json;
   if (!data || data.ok !== true) {
-    throw new Error(data?.error || `Telegraph API ${method} 失败 (HTTP ${response.status})`);
+    throw new Error(data?.error || t('Telegraph API {method} 失败 (HTTP {status})', { method, status: response.status }));
   }
   return data.result;
 }
@@ -111,8 +119,8 @@ async function uploadImage(arrayBuffer, filename, requestUrlFn) {
 
   const data = response.json;
   if (!Array.isArray(data) || data.length === 0 || !data[0].src) {
-    const errMsg = Array.isArray(data) && data[0]?.error ? data[0].error : '上传失败';
-    throw new Error(`Telegraph 图片上传失败: ${errMsg}`);
+    const errMsg = Array.isArray(data) && data[0]?.error ? data[0].error : t('上传失败');
+    throw new Error(t('Telegraph 图片上传失败: {error}', { error: errMsg }));
   }
 
   return `https://telegra.ph${data[0].src}`;
