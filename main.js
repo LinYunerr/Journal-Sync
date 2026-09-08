@@ -1,6 +1,6 @@
 /*!
- * Journal Sync v1.0.8
- * Build: 2026-09-07 (production)
+ * Journal Sync v1.0.9
+ * Build: 2026-09-08 (production)
  * https://github.com/LinYunerr/Journal-Sync
  */
 var __defProp = Object.defineProperty;
