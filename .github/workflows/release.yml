@@ -64,6 +64,16 @@ jobs:
             echo "notes=Release ${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # 提取 [tag] 小节；node 脚本经 heredoc 传入，避免 bash/正则转义问题
+          NOTES=$(node <<'EOF'
+          const fs = require('fs');
+          const cl = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const tag = process.env.RELEASE_TAG;
+          const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const section = cl.match(new RegExp('##\\s*\\[' + esc + '\\].*?(?=\\n##\\s*\\[|$)', 's'));
+          console.log(section ? section[0].trim() : 'Release ' + tag);
+          EOF
+          )
           # 写文件而非内联传参：notes 含反引号/换行时内联会触发 bash 命令替换
           printf '%s\n' "$NOTES" > release-notes.md
           {
