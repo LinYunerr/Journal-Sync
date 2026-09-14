@@ -70,9 +70,9 @@
 
 .js-bridge-plugin-tabs {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   margin: 0 0 28px;
-  overflow-x: auto;
   padding: 4px 0;
 }
 
