@@ -9,7 +9,7 @@ The plugin runs entirely in Obsidian. It must not require a separate backend ser
 ## Release Status
 
 - This plugin is published in the public GitHub repository `Journal-Sync`.
-- The current source version is `1.0.8` (`manifest.json` / `package.json`). Treat that as the working version; GitHub Releases may lag until the user explicitly publishes.
+- Treat `manifest.json` and `package.json` as the source of truth for the current working version. They must stay aligned; the current version is `1.0.10-beta.1`. GitHub Releases may lag until the user explicitly publishes.
 - The repository includes both source code and the generated `main.js`; GitHub Releases attach `main.js`, `manifest.json`, and `styles.css`.
 - Publication status is context, not standing permission to write Git history. Do not commit, tag, push, or create a GitHub Release unless the user explicitly requests Git publication in the current task.
 - Continue to use the existing build and verification flow for ordinary changes. A completed build does not imply that Git operations should follow.
@@ -177,7 +177,7 @@ For iterative local development, use `npm run dev`. Do not leave the watch proce
 - When adding a platform, create `src/adapters/<id>.js` with a `manifest` (including `settings.fields`) plus `execute`/`validate` and optional `runAction`; export `renderSettings` and `defaultConfig` only for panels the schema cannot express. Then add one `require` line to `ADAPTER_MODULES` in `src/main.js` and rebuild. No changes to `settings-tab.js` or `DEFAULT_SETTINGS` are needed.
 - Keep `package.json`, `manifest.json`, and `versions.json` aligned when releasing. The release tag must exactly match `manifest.json.version` and must not use a `v` prefix.
 - Do not manually alter generated `main.js`; verify it changes only as a result of `npm run build`.
-- `.github/workflows/release.yml` builds tagged versions and attaches only `main.js`, `manifest.json`, and `styles.css` to the GitHub Release. Release notes are extracted from `CHANGELOG.md` (section matching the tag), falling back to a plain title if no changelog entry exists.
+- `.github/workflows/release.yml` builds tagged versions and attaches only `main.js`, `manifest.json`, and `styles.css` to the GitHub Release. Tags containing `-` (e.g. `1.0.10-beta.1`) are automatically published as GitHub Pre-releases (`--prerelease`). Release notes are extracted from `CHANGELOG.md` (section matching the tag), falling back to a plain title if no changelog entry exists.
 - To trigger the release workflow, push a git tag matching `manifest.json.version` (no `v` prefix). The workflow verifies version alignment across tag, `manifest.json`, `package.json`, and `versions.json`, then builds and creates the GitHub Release automatically—no manual release steps.
 - Every release must have a corresponding `## [version]` section in `CHANGELOG.md` with human-readable update notes; the release workflow uses it as the GitHub Release body.
 
@@ -195,14 +195,15 @@ The user has decided the atomicity policy for all adapters:
 Current conformance:
 
 - Mastodon conforms (upload failure aborts before the status post; the error already states 未发送任何内容). Note: images uploaded before the failure remain orphaned server-side; this is accepted, not a bug to fix.
-- Telegram plain mode **does not conform**: it sends images in chunks of up to 10, so a failure on a later chunk leaves earlier chunks already posted; and when text exceeds the 1024-char caption limit, text is sent as a separate message after images, so a text failure leaves images posted (and vice versa). Aligning Telegram plain mode to the all-or-nothing rule is **[user decision pending]** on *how* (e.g. pre-flight validation vs. restructure), because Telegram's API has no transactional send and any alignment adds failure modes.
+- Misskey conforms (image read/upload failure aborts before creating the note and states 未发送任何内容).
+- Telegram plain mode: sends images in chunks of up to 10, and when text exceeds the 1024-char caption limit, text is sent as a separate message after images (with a pre-send confirmation warning). **[resolved by user 2026-11-27]**: the user confirmed accepting this behavior with the pre-send warning; do not rewrite plain-mode chunked/split sending.
 - Telegram rich mode conforms (single API call).
 - Telegram Telegraph mode conforms (page creation and channel posts are sequential, but a channel-post failure aborts remaining channels; already-posted channels stay — this is cross-target partial success, allowed).
 
 ### Product decisions pending
 
 2. **[implemented 2026-09-06, branch `logcreate`; per-target results surfaced in UI 2026-09-07]** Send-result review: the `JournalSync-Log` command opens a send-log modal listing the last 10 send snapshots (each click of 发布 that reached dispatch, plus failed pre-dispatch attempts marked 未发出). Each entry has a single 重新编辑 button that reopens the send modal prefilled from the snapshot (content and image tokens restored verbatim — no token renumbering; target selection restored via preset pointer only, never channel lists; Telegram one-shot options restored). Snapshots live in `<plugin-dir>/send-log/<dir>/snapshot.json` with cached copies of all referenced images, capped at 10 entries. The snapshot's diagnostics layer records per-target results (adapter/channel/account, success, error); since 2026-09-07 the log modal renders these per-target results (✓/✗ + readable name + truncated error) under each dispatched entry, and shows `failReason` for pre-dispatch failures.
-3. **[user decision pending]** Telegram plain-mode chunked image sending violates the all-or-nothing rule above. Any fix changes send behavior for large image sets; needs a decision on approach.
+3. **[resolved by user 2026-11-27]** Telegram plain-mode >1024-char split / chunked image sending is accepted as-is with the pre-send confirmation warning (`getPreSendWarnings`).
 4. **[declined by user, 2026-09-06]** CI on push/PR (former item 8): not pursued for now. Do not add CI workflows without a new explicit request.
 
 ### Agreed technical debt

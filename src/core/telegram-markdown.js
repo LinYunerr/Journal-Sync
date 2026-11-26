@@ -164,10 +164,28 @@ function restoreImageTokens(html, validIds) {
   });
 }
 
+function extractTelegramPlainText(content) {
+  return String(content || '')
+    .split(/@图片\d+/g)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function willTelegramPlainSplitCaption(payload = {}) {
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const hasImage = attachments.some(item => item?.kind === 'image' && item?.filename);
+  if (!hasImage) return false;
+  const textPart = extractTelegramPlainText(payload.content);
+  return Array.from(textPart).length > CAPTION_LIMIT;
+}
+
 module.exports = {
   convertToTelegramHtml,
   restoreImageTokens,
   extractQuotes,
+  extractTelegramPlainText,
+  willTelegramPlainSplitCaption,
   truncate,
   textLength,
   MESSAGE_LIMIT,

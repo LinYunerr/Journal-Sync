@@ -43,7 +43,8 @@ registerTranslations('en', {
     '连接中...': 'Connecting...',
     '未知': 'Unknown',
     'Mastodon 连接成功（{display}）': 'Mastodon connection successful ({display})',
-    'Mastodon 连接失败：{error}': 'Mastodon connection failed: {error}'
+    'Mastodon 连接失败：{error}': 'Mastodon connection failed: {error}',
+    'Mastodon 账号「{name}」实例地址或 Access Token 未配置': 'Mastodon account "{name}" is missing instance URL or Access Token'
 });
 
 export const manifest = {
@@ -135,7 +136,7 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
 /**
  * 预检验证
  */
-export async function validate({ payload }) {
+export async function validate({ payload, config = {} }) {
     const warnings = [];
     const errors = [];
 
@@ -145,6 +146,19 @@ export async function validate({ payload }) {
 
     if (!payload.plainText && images.length === 0) {
         errors.push(t('内容不能为空'));
+    }
+
+    if (Array.isArray(config?.accounts)) {
+        for (const acct of config.accounts) {
+            if (!String(acct?.serverUrl || '').trim() || !String(acct?.accessToken || '').trim()) {
+                const name = acct?.label || String(acct?.serverUrl || '').trim() || acct?.id || t('未配置');
+                errors.push(t('Mastodon 账号「{name}」实例地址或 Access Token 未配置', { name }));
+            }
+        }
+    } else if (config && (Object.prototype.hasOwnProperty.call(config, 'serverUrl') || Object.prototype.hasOwnProperty.call(config, 'accessToken'))) {
+        if (!String(config.serverUrl || '').trim() || !String(config.accessToken || '').trim()) {
+            errors.push(t('Mastodon 实例地址或 Access Token 未配置'));
+        }
     }
 
     return { warnings, errors };

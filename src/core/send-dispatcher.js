@@ -159,6 +159,23 @@ async function dispatchSends({ plugin, payload, targetAdapters, tgChannels, mstd
 }
 
 /**
+ * 截断 Telegram 频道名称为前 maxChars 个字符（超长追加 …）。
+ */
+function truncateChannelLabel(name, maxChars = 12) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return '';
+    const chars = Array.from(trimmed);
+    if (chars.length <= maxChars) return trimmed;
+    return chars.slice(0, maxChars).join('') + '…';
+}
+
+function formatTelegramChannelName(channel) {
+    const title = String(channel?.channelTitle || '').trim();
+    if (title) return truncateChannelLabel(title, 12);
+    return String(channel?.channelId || '');
+}
+
+/**
  * 构建发送日志快照的 diagnostics.targets 字段。
  *
  * @param {object} input
@@ -183,17 +200,26 @@ function buildDiagTargets({ targetAdapters, mstdAccountIds, results }) {
         });
     }
     const tgResult = results['telegram'];
-    if (tgResult && Array.isArray(tgResult.results)) {
+    if (tgResult && Array.isArray(tgResult.results) && tgResult.results.length > 0) {
         for (const channel of tgResult.results) {
             diagTargets.push({
                 kind: 'telegram-channel',
                 id: channel.channelId,
-                label: `telegram ${channel.channelId}`,
+                label: `telegram ${formatTelegramChannelName(channel)}`,
                 success: Boolean(channel.success),
                 error: channel.error || null,
                 durationMs: null
             });
         }
+    } else if (tgResult) {
+        diagTargets.push({
+            kind: 'adapter',
+            id: 'telegram',
+            label: 'telegram',
+            success: Boolean(tgResult.success) && !tgResult.skipped,
+            error: tgResult.error || null,
+            durationMs: null
+        });
     }
     for (const acctId of mstdAccountIds || []) {
         const result = results[`mastodon:${acctId}`];
@@ -222,7 +248,7 @@ function buildSummary(results) {
             const channelResults = Array.isArray(result.results) ? result.results : null;
             if (id === 'telegram' && channelResults) {
                 return channelResults.map(channel => {
-                    return t('Telegram {channel}: {result}', { channel: channel.channelId, result: channel.success ? t('成功') : t('失败({error})', { error: channel.error || t('发送未知错误') }) });
+                    return t('Telegram {channel}: {result}', { channel: formatTelegramChannelName(channel), result: channel.success ? t('成功') : t('失败({error})', { error: channel.error || t('发送未知错误') }) });
                 });
             }
             // Mastodon 多账号结果使用 displayLabel 展示，key 仅为内部唯一标识
@@ -241,5 +267,6 @@ module.exports = {
     collectTargets,
     dispatchSends,
     buildDiagTargets,
-    buildSummary
+    buildSummary,
+    truncateChannelLabel
 };

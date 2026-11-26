@@ -7,7 +7,8 @@ const {
     collectTargets,
     dispatchSends,
     buildDiagTargets,
-    buildSummary
+    buildSummary,
+    truncateChannelLabel
 } = require('../src/core/send-dispatcher');
 
 // ── 测试用 stub plugin ────────────────────────────────────
@@ -446,4 +447,50 @@ test('buildSummary formats success, skip, failure, warnings and telegram channel
 
 test('buildSummary uses key id when no displayLabel', () => {
     assert.equal(buildSummary({ weibo: { success: false, error: null } }), 'weibo: 失败(发送未知错误)');
+});
+
+test('truncateChannelLabel keeps <=12 chars and truncates longer Unicode labels', () => {
+    assert.equal(truncateChannelLabel('每日观察笔记'), '每日观察笔记');
+    assert.equal(truncateChannelLabel('123456789012'), '123456789012');
+    assert.equal(truncateChannelLabel('一二三四五六七八九十甲乙丙丁'), '一二三四五六七八九十甲乙…');
+    assert.equal(truncateChannelLabel('ChannelName12345'), 'ChannelName1…');
+    assert.equal(truncateChannelLabel('😀😁😂🤣😃😄😅😆😉😊😋😎😍'), '😀😁😂🤣😃😄😅😆😉😊😋😎…');
+});
+
+test('buildSummary and buildDiagTargets display truncated channelTitle and fall back to channelId', () => {
+    const results = {
+        telegram: {
+            success: false,
+            results: [
+                { channelId: '-100111', channelTitle: '短频道', success: true },
+                { channelId: '-100222', channelTitle: '这是一个超过十二个字的长频道名称', success: false, error: 'bad' },
+                { channelId: '-100333', success: true }
+            ]
+        }
+    };
+    const summary = buildSummary(results);
+    assert.deepEqual(summary.split('；\n'), [
+        'Telegram 短频道: 成功',
+        'Telegram 这是一个超过十二个字的长…: 失败(bad)',
+        'Telegram -100333: 成功'
+    ]);
+    const diagTargets = buildDiagTargets({ targetAdapters: ['telegram'], mstdAccountIds: [], results });
+    assert.deepEqual(diagTargets, [
+        { kind: 'telegram-channel', id: '-100111', label: 'telegram 短频道', success: true, error: null, durationMs: null },
+        { kind: 'telegram-channel', id: '-100222', label: 'telegram 这是一个超过十二个字的长…', success: false, error: 'bad', durationMs: null },
+        { kind: 'telegram-channel', id: '-100333', label: 'telegram -100333', success: true, error: null, durationMs: null }
+    ]);
+});
+
+test('buildDiagTargets records pre-channel telegram failure when results array is absent', () => {
+    const diagTargets = buildDiagTargets({
+        targetAdapters: ['telegram'],
+        mstdAccountIds: [],
+        results: {
+            telegram: { success: false, error: 'Telegraph 创建页面失败' }
+        }
+    });
+    assert.deepEqual(diagTargets, [
+        { kind: 'adapter', id: 'telegram', label: 'telegram', success: false, error: 'Telegraph 创建页面失败', durationMs: null }
+    ]);
 });

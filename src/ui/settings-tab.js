@@ -166,9 +166,9 @@ class JournalSyncSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName(t('日记文件名规则'))
             .setDesc(t('支持 YYYY MM DD 占位符，例如 YYYY-MM-DD 日记'))
-            .addText(text => text.setPlaceholder(t('YYYY-MM-DD 日记')).setValue(this.plugin.settings.filenameRule || 'YYYY-MM-DD 日记').onChange(value => {
+            .addText(text => text.setPlaceholder(t('YYYY-MM-DD 日记')).setValue(this.plugin.settings.filenameRule || t('YYYY-MM-DD 日记')).onChange(value => {
                 this._scheduleSettingsSave(() => {
-                    this.plugin.settings.filenameRule = value.trim() || 'YYYY-MM-DD 日记';
+                    this.plugin.settings.filenameRule = value.trim() || t('YYYY-MM-DD 日记');
                 });
             }));
 

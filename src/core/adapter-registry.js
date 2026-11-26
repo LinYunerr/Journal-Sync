@@ -38,13 +38,14 @@ class AdapterRegistry {
   }
 
   /**
-   * 按适配器能力声明识别图片数量和文件大小预警。
+   * 按适配器能力声明识别图片数量和文件大小预警，并调用可选适配器级发送前预警钩子。
    * 这里只负责发现并生成提示，不改变 payload，也不决定是否发送。
    * @param {string[]} targetIds
    * @param {object} payload
+   * @param {object} [configs] - { [adapterId]: config }
    * @returns {Promise<{ warnings: string[], perAdapter: object }>}
    */
-  async getAttachmentWarnings(targetIds, payload = {}) {
+  async getAttachmentWarnings(targetIds, payload = {}, configs = {}) {
     const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
     const images = attachments.filter(item => item?.kind === 'image');
     const warnings = [];
@@ -110,6 +111,13 @@ class AdapterRegistry {
           const preview = oversized.slice(0, 3).join(t('、'));
           const suffix = oversized.length > 3 ? t(' 等 {count} 张', { count: oversized.length }) : '';
           adapterWarnings.push(t('{name} 图片文件超过 {size} MB：{preview}{suffix}，确认发送', { name, size: Math.round(maxAttachmentSize / 1024 / 1024), preview, suffix }));
+        }
+      }
+
+      if (typeof adapter?.getPreSendWarnings === 'function') {
+        const extra = await adapter.getPreSendWarnings({ payload, config: configs[id] || {} });
+        if (Array.isArray(extra)) {
+          adapterWarnings.push(...extra.filter(Boolean));
         }
       }
 

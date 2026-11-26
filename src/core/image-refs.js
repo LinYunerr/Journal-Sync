@@ -51,4 +51,17 @@ function parseImageRefs(markdown) {
     return filtered.sort((a, b) => a.index - b.index);
 }
 
-module.exports = { parseImageRefs };
+function matchImageMentionTrigger(textBefore) {
+    const match = String(textBefore || '').match(/@(?:图|图片|i(?:m(?:a(?:g(?:e)?)?|g)?)?)?$/i);
+    return match ? match[0] : '';
+}
+
+function removeImageTokenFromText(text, token) {
+    const source = String(text || '');
+    const tok = String(token || '');
+    if (!tok) return source;
+    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return source.replace(new RegExp(`${escaped}(?!\\d)`, 'g'), '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+module.exports = { parseImageRefs, matchImageMentionTrigger, removeImageTokenFromText };

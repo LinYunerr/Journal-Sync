@@ -1,6 +1,6 @@
 /*!
- * Journal Sync v1.0.9
- * Build: 2026-09-08 (production)
+ * Journal Sync v1.0.10-beta.1
+ * Build: 2026-11-26 (production)
  * https://github.com/LinYunerr/Journal-Sync
  */
 var __defProp = Object.defineProperty;
@@ -113,13 +113,14 @@ var require_adapter_registry = __commonJS({
         return ((_a = adapter.manifest) == null ? void 0 : _a.capabilities) || null;
       }
       /**
-       * 按适配器能力声明识别图片数量和文件大小预警。
+       * 按适配器能力声明识别图片数量和文件大小预警，并调用可选适配器级发送前预警钩子。
        * 这里只负责发现并生成提示，不改变 payload，也不决定是否发送。
        * @param {string[]} targetIds
        * @param {object} payload
+       * @param {object} [configs] - { [adapterId]: config }
        * @returns {Promise<{ warnings: string[], perAdapter: object }>}
        */
-      async getAttachmentWarnings(targetIds, payload = {}) {
+      async getAttachmentWarnings(targetIds, payload = {}, configs = {}) {
         var _a, _b;
         const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
         const images = attachments.filter((item) => (item == null ? void 0 : item.kind) === "image");
@@ -169,6 +170,12 @@ var require_adapter_registry = __commonJS({
               const preview = oversized.slice(0, 3).join(t9("\u3001"));
               const suffix = oversized.length > 3 ? t9(" \u7B49 {count} \u5F20", { count: oversized.length }) : "";
               adapterWarnings.push(t9("{name} \u56FE\u7247\u6587\u4EF6\u8D85\u8FC7 {size} MB\uFF1A{preview}{suffix}\uFF0C\u786E\u8BA4\u53D1\u9001", { name, size: Math.round(maxAttachmentSize / 1024 / 1024), preview, suffix }));
+            }
+          }
+          if (typeof (adapter == null ? void 0 : adapter.getPreSendWarnings) === "function") {
+            const extra = await adapter.getPreSendWarnings({ payload, config: configs[id] || {} });
+            if (Array.isArray(extra)) {
+              adapterWarnings.push(...extra.filter(Boolean));
             }
           }
           perAdapter[id] = adapterWarnings;
@@ -537,6 +544,18 @@ var require_send_dispatcher = __commonJS({
       }
       return results;
     }
+    function truncateChannelLabel(name, maxChars = 12) {
+      const trimmed = String(name || "").trim();
+      if (!trimmed) return "";
+      const chars = Array.from(trimmed);
+      if (chars.length <= maxChars) return trimmed;
+      return chars.slice(0, maxChars).join("") + "\u2026";
+    }
+    function formatTelegramChannelName(channel) {
+      const title = String((channel == null ? void 0 : channel.channelTitle) || "").trim();
+      if (title) return truncateChannelLabel(title, 12);
+      return String((channel == null ? void 0 : channel.channelId) || "");
+    }
     function buildDiagTargets({ targetAdapters, mstdAccountIds, results }) {
       const diagTargets = [];
       for (const adapterId of targetAdapters || []) {
@@ -553,17 +572,26 @@ var require_send_dispatcher = __commonJS({
         });
       }
       const tgResult = results["telegram"];
-      if (tgResult && Array.isArray(tgResult.results)) {
+      if (tgResult && Array.isArray(tgResult.results) && tgResult.results.length > 0) {
         for (const channel of tgResult.results) {
           diagTargets.push({
             kind: "telegram-channel",
             id: channel.channelId,
-            label: `telegram ${channel.channelId}`,
+            label: `telegram ${formatTelegramChannelName(channel)}`,
             success: Boolean(channel.success),
             error: channel.error || null,
             durationMs: null
           });
         }
+      } else if (tgResult) {
+        diagTargets.push({
+          kind: "adapter",
+          id: "telegram",
+          label: "telegram",
+          success: Boolean(tgResult.success) && !tgResult.skipped,
+          error: tgResult.error || null,
+          durationMs: null
+        });
       }
       for (const acctId of mstdAccountIds || []) {
         const result = results[`mastodon:${acctId}`];
@@ -584,7 +612,7 @@ var require_send_dispatcher = __commonJS({
         const channelResults = Array.isArray(result.results) ? result.results : null;
         if (id === "telegram" && channelResults) {
           return channelResults.map((channel) => {
-            return t9("Telegram {channel}: {result}", { channel: channel.channelId, result: channel.success ? t9("\u6210\u529F") : t9("\u5931\u8D25({error})", { error: channel.error || t9("\u53D1\u9001\u672A\u77E5\u9519\u8BEF") }) });
+            return t9("Telegram {channel}: {result}", { channel: formatTelegramChannelName(channel), result: channel.success ? t9("\u6210\u529F") : t9("\u5931\u8D25({error})", { error: channel.error || t9("\u53D1\u9001\u672A\u77E5\u9519\u8BEF") }) });
           });
         }
         const displayId = result.displayLabel || id;
@@ -596,8 +624,63 @@ var require_send_dispatcher = __commonJS({
       collectTargets,
       dispatchSends,
       buildDiagTargets,
-      buildSummary
+      buildSummary,
+      truncateChannelLabel
     };
+  }
+});
+
+// src/core/image-refs.js
+var require_image_refs = __commonJS({
+  "src/core/image-refs.js"(exports2, module2) {
+    "use strict";
+    function parseImageRefs2(markdown) {
+      const refs = [];
+      const wiki = /!\[\[([^\]]+)\]\]/g;
+      const md = /!\[[^\]]*\]\(([^)]+)\)/g;
+      const bare = /(^|\n)([^\n]+?\.(?:png|jpe?g|gif|webp|svg))(?=\n|$)/gi;
+      let m;
+      while ((m = wiki.exec(markdown)) !== null) {
+        const t9 = String(m[1] || "").split("|")[0].trim();
+        if (!t9) continue;
+        refs.push({ raw: m[0], target: t9, type: "wiki", index: m.index, end: m.index + m[0].length });
+      }
+      while ((m = md.exec(markdown)) !== null) {
+        const t9 = String(m[1] || "").trim().replace(/^<|>$/g, "");
+        if (!t9) continue;
+        try {
+          refs.push({ raw: m[0], target: decodeURIComponent(t9), type: "markdown", index: m.index, end: m.index + m[0].length });
+        } catch (e) {
+          refs.push({ raw: m[0], target: t9, type: "markdown", index: m.index, end: m.index + m[0].length });
+        }
+      }
+      while ((m = bare.exec(markdown)) !== null) {
+        const t9 = String(m[2] || "").trim();
+        if (!t9 || /[\[\]()]/.test(t9)) continue;
+        const idx = m.index + m[1].length;
+        refs.push({ raw: m[2], target: t9, type: "bare", index: idx, end: idx + m[2].length });
+      }
+      const codeRanges = [];
+      const fenceRe = /```[^\n]*[\s\S]*?```/g;
+      let fm;
+      while ((fm = fenceRe.exec(markdown)) !== null) {
+        codeRanges.push([fm.index, fm.index + fm[0].length]);
+      }
+      const filtered = codeRanges.length === 0 ? refs : refs.filter((ref) => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
+      return filtered.sort((a, b) => a.index - b.index);
+    }
+    function matchImageMentionTrigger(textBefore) {
+      const match = String(textBefore || "").match(/@(?:图|图片|i(?:m(?:a(?:g(?:e)?)?|g)?)?)?$/i);
+      return match ? match[0] : "";
+    }
+    function removeImageTokenFromText(text, token) {
+      const source = String(text || "");
+      const tok = String(token || "");
+      if (!tok) return source;
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return source.replace(new RegExp(`${escaped}(?!\\d)`, "g"), "").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    module2.exports = { parseImageRefs: parseImageRefs2, matchImageMentionTrigger, removeImageTokenFromText };
   }
 });
 
@@ -615,7 +698,10 @@ var require_send_modal = __commonJS({
       "\u9884\u8BBE{index}": "Preset {index}",
       "\u70B9\u51FB\u5E94\u7528\u5206\u7EC4\uFF0C\u53CC\u51FB\u91CD\u547D\u540D": "Click to apply this preset; double-click to rename",
       "\u65B0\u589E\u5F53\u524D\u9009\u62E9\u4E3A\u9884\u8BBE\u5206\u7EC4": "Save the current selection as a new preset",
+      "\u91CD\u547D\u540D\u5F53\u524D\u9009\u4E2D\u9884\u8BBE": "Rename the selected preset",
       "\u5220\u9664\u5F53\u524D\u9009\u4E2D\u9884\u8BBE": "Delete the selected preset",
+      "\u786E\u8BA4\u5220\u9664": "Confirm delete",
+      "\u518D\u6B21\u70B9\u51FB\u786E\u8BA4\u5220\u9664\u5F53\u524D\u9884\u8BBE": "Click again to confirm deleting the selected preset",
       "Telegram\uFF1A": "Telegram: ",
       "Mastodon\uFF1A": "Mastodon: ",
       "Telegraph\uFF1A": "Telegraph: ",
@@ -628,8 +714,8 @@ var require_send_modal = __commonJS({
       "\u5F53\u524D\u4E3A\u7EAF\u6587\u672C\u53D1\u9001\uFF0C\u70B9\u51FB\u5207\u6362\u4E3A\u5BCC\u6587\u672C": "Plain-text mode; click to switch to rich text",
       "\u5C1A\u672A\u83B7\u53D6\u9891\u9053\u5217\u8868\uFF0C\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u83B7\u53D6\u9891\u9053\u3002": "No channel list yet. Please fetch channels in the plugin settings first.",
       "\u70B9\u51FB\u6B64\u5904\u5173\u95ED Telegraph \u53D1\u9001": "Click here to disable Telegraph sending",
-      "\u53CC\u51FB\u7F16\u8F91\u6807\u9898": "Double-click to edit the title",
-      "Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u53CC\u51FB\u6807\u9898\u7F16\u8F91": "Telegraph mode: click the prefix to disable; double-click the title to edit",
+      "\u70B9\u51FB\u7F16\u8F91\u6807\u9898": "Click to edit the title",
+      "Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u5355\u51FB\u6807\u9898\u7F16\u8F91": "Telegraph mode: click the prefix to disable; click the title to edit",
       "\u26A0\uFE0F {count} \u9879\u9884\u8B66\uFF0C\u786E\u8BA4\u53D1\u9001": "\u26A0\uFE0F {count} warning(s). Confirm to send",
       "\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A\u65E0\u6CD5\u5199\u5165\u5FEB\u7167": "Failed to save send log: cannot write snapshot",
       "\u53D1\u9001\u65E5\u5FD7\u4FDD\u5B58\u5931\u8D25\uFF1A{error}": "Failed to save send log: {error}",
@@ -651,6 +737,7 @@ var require_send_modal = __commonJS({
     });
     var { buildPayload, getMimeType: getMimeType5 } = require_payload();
     var { collectTargets, dispatchSends, buildDiagTargets, buildSummary } = require_send_dispatcher();
+    var { matchImageMentionTrigger, removeImageTokenFromText } = require_image_refs();
     var sendLog2 = require_send_log();
     function hasRemoteImageReference(content) {
       return /!\[[^\]]*\]\(\s*https?:\/\/[^)]+\)/i.test(String(content || ""));
@@ -680,6 +767,8 @@ var require_send_modal = __commonJS({
         this.selectedTgChannels = /* @__PURE__ */ new Set();
         this.selectedMastodonAccounts = /* @__PURE__ */ new Set();
         this.editingPresetId = "";
+        this._presetDeleteConfirmId = "";
+        this._presetDeleteTimer = null;
         this.images = [];
         this._objectUrls = /* @__PURE__ */ new Set();
         this._imageGridRenderId = 0;
@@ -819,6 +908,7 @@ ${tokenStr}` : tokenStr;
         this.mstdSectionEl = publishPanel.createDiv({ cls: "mstd-account-block" });
         this.tgSectionEl = publishPanel.createDiv({ cls: "tg-channel-block" });
         this.renderAllTargetSections();
+        this.warningBannerEl = contentEl.createDiv({ cls: "js-bridge-warning-banner hidden" });
         const btnArea = contentEl.createDiv({ cls: "js-bridge-btn-area" });
         this.sendBtn = btnArea.createEl("button", {
           text: t9("\u53D1\u5E03"),
@@ -944,9 +1034,9 @@ ${tokenStr}` : tokenStr;
             return;
           }
           const textBefore = node.textContent.slice(0, range.startOffset);
-          const match = textBefore.match(/@(?:图|图片)?$/);
-          if (match) {
-            this.showMentionDropdown(mentionDropdown, richDiv, range, match[0]);
+          const matched = matchImageMentionTrigger(textBefore);
+          if (matched) {
+            this.showMentionDropdown(mentionDropdown, richDiv, range, matched);
           } else {
             mentionDropdown.addClass("hidden");
           }
@@ -1188,8 +1278,7 @@ ${tokenStr}` : tokenStr;
             }
             const [removedImage] = this.images.splice(index, 1);
             if (removedImage) {
-              const tokenPattern = new RegExp(removedImage.token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-              this.content = this.content.replace(tokenPattern, "").replace(/\n{3,}/g, "\n\n").trim();
+              this.content = removeImageTokenFromText(this.content, removedImage.token);
               (_a = this.editorEl) == null ? void 0 : _a.querySelectorAll(".image-token-chip").forEach((chip) => {
                 if (chip.getAttribute("data-token") === removedImage.token) chip.remove();
               });
@@ -1197,6 +1286,7 @@ ${tokenStr}` : tokenStr;
                 ...this.richDraft,
                 blocks: (this.richDraft.blocks || []).filter((block) => block.imageId !== removedImage.id),
                 images: (this.richDraft.images || []).filter((image) => {
+                  if (image.token && removedImage.token) return image.token !== removedImage.token;
                   return (image.vaultPath || image.filename) !== removedImage.vaultPath;
                 })
               };
@@ -1227,6 +1317,11 @@ ${tokenStr}` : tokenStr;
           document.removeEventListener("keydown", this._previewEscHandler, true);
           this._previewEscHandler = null;
         }
+      }
+      _clearPresetDeleteConfirm() {
+        if (this._presetDeleteTimer) window.clearTimeout(this._presetDeleteTimer);
+        this._presetDeleteTimer = null;
+        this._presetDeleteConfirmId = "";
       }
       renderPresetControls() {
         if (!this.presetControlsEl) return;
@@ -1269,6 +1364,7 @@ ${tokenStr}` : tokenStr;
           btn.title = t9("\u70B9\u51FB\u5E94\u7528\u5206\u7EC4\uFF0C\u53CC\u51FB\u91CD\u547D\u540D");
           btn.addEventListener("click", async () => {
             if (this.editingPresetId) return;
+            this._clearPresetDeleteConfirm();
             this.plugin.settings.activePresetId = preset.id;
             await this.plugin.saveSettings();
             this.loadActivePresetSelection();
@@ -1279,6 +1375,7 @@ ${tokenStr}` : tokenStr;
           });
           btn.addEventListener("dblclick", (e) => {
             e.stopPropagation();
+            this._clearPresetDeleteConfirm();
             this.editingPresetId = preset.id;
             this.renderPresetControls();
           });
@@ -1290,6 +1387,7 @@ ${tokenStr}` : tokenStr;
           });
           addBtn.title = t9("\u65B0\u589E\u5F53\u524D\u9009\u62E9\u4E3A\u9884\u8BBE\u5206\u7EC4");
           addBtn.addEventListener("click", async () => {
+            this._clearPresetDeleteConfirm();
             const newPreset = {
               id: `preset-${Date.now()}`,
               name: t9("\u9884\u8BBE{index}", { index: presets.length + 1 }),
@@ -1303,13 +1401,37 @@ ${tokenStr}` : tokenStr;
           });
         }
         if (presets.length > 0 && activeId) {
+          const editBtn = this.presetControlsEl.createEl("button", {
+            type: "button",
+            cls: "publish-preset-action edit"
+          });
+          editBtn.title = t9("\u91CD\u547D\u540D\u5F53\u524D\u9009\u4E2D\u9884\u8BBE");
+          editBtn.addEventListener("click", () => {
+            this._clearPresetDeleteConfirm();
+            this.editingPresetId = activeId;
+            this.renderPresetControls();
+          });
+          const isConfirmingDelete = this._presetDeleteConfirmId === activeId;
           const removeBtn = this.presetControlsEl.createEl("button", {
             type: "button",
-            cls: "publish-preset-action remove"
+            text: isConfirmingDelete ? t9("\u786E\u8BA4\u5220\u9664") : "",
+            cls: `publish-preset-action remove${isConfirmingDelete ? " confirming" : ""}`
           });
-          removeBtn.title = t9("\u5220\u9664\u5F53\u524D\u9009\u4E2D\u9884\u8BBE");
+          removeBtn.title = isConfirmingDelete ? t9("\u518D\u6B21\u70B9\u51FB\u786E\u8BA4\u5220\u9664\u5F53\u524D\u9884\u8BBE") : t9("\u5220\u9664\u5F53\u524D\u9009\u4E2D\u9884\u8BBE");
           removeBtn.addEventListener("click", async () => {
             var _a;
+            if (this._presetDeleteConfirmId !== activeId) {
+              this._clearPresetDeleteConfirm();
+              this._presetDeleteConfirmId = activeId;
+              this._presetDeleteTimer = window.setTimeout(() => {
+                this._presetDeleteConfirmId = "";
+                this._presetDeleteTimer = null;
+                this.renderPresetControls();
+              }, 5e3);
+              this.renderPresetControls();
+              return;
+            }
+            this._clearPresetDeleteConfirm();
             const currentPresets = this.plugin.settings.publishPresets || [];
             const currentActiveId = this.plugin.settings.activePresetId;
             const newPresets = currentPresets.filter((p) => p.id !== currentActiveId);
@@ -1417,6 +1539,9 @@ ${tokenStr}` : tokenStr;
           cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === "telegraph" ? " active expanded" : ""}`
         });
         telegraphBtn.title = t9("\u70B9\u51FB\u4F7F\u7528 Telegraph \u65B9\u5F0F\u53D1\u9001");
+        if (this.tgSendMode === "telegraph") {
+          this._expandTelegraphBtn(telegraphBtn);
+        }
         const previewToggleBtn = tgBtnGroup.createEl("button", {
           type: "button",
           text: t9("\u9884\u89C8"),
@@ -1449,12 +1574,17 @@ ${tokenStr}` : tokenStr;
         }
         telegraphBtn.addEventListener("click", (e) => {
           if (this.tgSendMode === "telegraph") {
+            if (telegraphBtn.querySelector(".tg-telegraph-title-input")) return;
             const prefixEl = telegraphBtn.querySelector(".tg-telegraph-prefix");
             if (prefixEl && prefixEl.contains(e.target)) {
               this.tgSendMode = "plain";
               telegraphBtn.classList.remove("active", "expanded");
               this._collapseTelegraphBtn(telegraphBtn);
               return;
+            }
+            const titleEl = telegraphBtn.querySelector(".tg-telegraph-title");
+            if (titleEl && titleEl.contains(e.target)) {
+              this._editTelegraphTitle(telegraphBtn, titleEl);
             }
             return;
           }
@@ -1463,12 +1593,6 @@ ${tokenStr}` : tokenStr;
           const richBtn = tgLabelRow.querySelector(".tg-input-mode-btn:not(.tg-telegraph-btn):not(.tg-preview-btn)");
           if (richBtn) richBtn.classList.remove("active");
           this._expandTelegraphBtn(telegraphBtn);
-        });
-        telegraphBtn.addEventListener("dblclick", (e) => {
-          if (this.tgSendMode !== "telegraph") return;
-          const titleEl = telegraphBtn.querySelector(".tg-telegraph-title");
-          if (!titleEl || !titleEl.contains(e.target)) return;
-          this._editTelegraphTitle(telegraphBtn, titleEl);
         });
         if (channels.length === 0) {
           this.tgSectionEl.createDiv({
@@ -1527,8 +1651,8 @@ ${tokenStr}` : tokenStr;
         const prefix = btn.createSpan({ cls: "tg-telegraph-prefix", text: t9("Telegraph\uFF1A") });
         prefix.title = t9("\u70B9\u51FB\u6B64\u5904\u5173\u95ED Telegraph \u53D1\u9001");
         const titleSpan = btn.createSpan({ cls: "tg-telegraph-title", text: this.telegraphTitle });
-        titleSpan.title = t9("\u53CC\u51FB\u7F16\u8F91\u6807\u9898");
-        btn.title = t9("Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u53CC\u51FB\u6807\u9898\u7F16\u8F91");
+        titleSpan.title = t9("\u70B9\u51FB\u7F16\u8F91\u6807\u9898");
+        btn.title = t9("Telegraph \u6A21\u5F0F\uFF1A\u5355\u51FB\u524D\u7F00\u5173\u95ED\uFF0C\u5355\u51FB\u6807\u9898\u7F16\u8F91");
       }
       /**
        * 收起 Telegraph 按钮：恢复为 "Telegraph"
@@ -1584,6 +1708,10 @@ ${tokenStr}` : tokenStr;
         this._warningTimer = null;
         this._warningConfirmActive = false;
         this._warningKey = "";
+        if (this.warningBannerEl) {
+          this.warningBannerEl.empty();
+          this.warningBannerEl.addClass("hidden");
+        }
         this._resetSendButton();
       }
       _showAttachmentWarnings(warnings) {
@@ -1592,6 +1720,13 @@ ${tokenStr}` : tokenStr;
         if (this._warningTimer) window.clearTimeout(this._warningTimer);
         this._warningConfirmActive = true;
         this._warningKey = messages.join("\n");
+        if (this.warningBannerEl) {
+          this.warningBannerEl.empty();
+          for (const msg of messages) {
+            this.warningBannerEl.createDiv({ cls: "js-bridge-warning-item", text: `\u26A0\uFE0F ${msg}` });
+          }
+          this.warningBannerEl.removeClass("hidden");
+        }
         if (this.sendBtn) {
           this.sendBtn.textContent = messages.length === 1 ? `\u26A0\uFE0F ${messages[0]}` : t9("\u26A0\uFE0F {count} \u9879\u9884\u8B66\uFF0C\u786E\u8BA4\u53D1\u9001", { count: messages.length });
           this.sendBtn.title = messages.join("\n");
@@ -1755,9 +1890,22 @@ ${tokenStr}` : tokenStr;
             showLinkPreview: this.tgShowLinkPreview
           };
         }
+        const configs = {};
+        for (const adapterId of targetAdapters) {
+          if (adapterId === "mastodon") {
+            configs["mastodon"] = {
+              accounts: mstdAccountIds.map((id) => plugin.getMastodonAccount(id)).filter(Boolean)
+            };
+          } else {
+            configs[adapterId] = {
+              ...plugin.getAdapterConfig(adapterId),
+              ...targetConfigOverrides[adapterId] || {}
+            };
+          }
+        }
         let capabilityWarnings;
         try {
-          capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
+          capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload, configs);
         } catch (error) {
           new Notice7(t9("\u56FE\u7247\u9884\u68C0\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }), 1e4);
           await this._writeSendLog(this._buildLogEntryBase({
@@ -1782,23 +1930,6 @@ ${tokenStr}` : tokenStr;
         }
         let validation;
         try {
-          const configs = {};
-          for (const adapterId of targetAdapters) {
-            if (adapterId === "mastodon") {
-              const firstAcctId = mstdAccountIds[0];
-              const firstAcct = firstAcctId ? plugin.getMastodonAccount(firstAcctId) : null;
-              configs["mastodon"] = firstAcct ? {
-                serverUrl: firstAcct.serverUrl,
-                accessToken: firstAcct.accessToken,
-                visibility: firstAcct.visibility || "public"
-              } : {};
-            } else {
-              configs[adapterId] = {
-                ...plugin.getAdapterConfig(adapterId),
-                ...targetConfigOverrides[adapterId] || {}
-              };
-            }
-          }
           validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
           new Notice7(t9("\u53D1\u9001\u9884\u68C0\u5931\u8D25\uFF1A{error}", { error: error.message || String(error) }), 1e4);
@@ -1883,6 +2014,7 @@ ${tokenStr}` : tokenStr;
         this._objectUrls.clear();
         this.images = [];
         this._clearAttachmentWarningState();
+        this._clearPresetDeleteConfirm();
         if (this._sendKeyHandler) {
           this.modalEl.removeEventListener("keydown", this._sendKeyHandler);
           this._sendKeyHandler = null;
@@ -2050,9 +2182,9 @@ var require_settings_tab = __commonJS({
             this.plugin.settings.diaryPath = value.trim();
           });
         }));
-        new Setting6(containerEl).setName(t9("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219")).setDesc(t9("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0")).addText((text) => text.setPlaceholder(t9("YYYY-MM-DD \u65E5\u8BB0")).setValue(this.plugin.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0").onChange((value) => {
+        new Setting6(containerEl).setName(t9("\u65E5\u8BB0\u6587\u4EF6\u540D\u89C4\u5219")).setDesc(t9("\u652F\u6301 YYYY MM DD \u5360\u4F4D\u7B26\uFF0C\u4F8B\u5982 YYYY-MM-DD \u65E5\u8BB0")).addText((text) => text.setPlaceholder(t9("YYYY-MM-DD \u65E5\u8BB0")).setValue(this.plugin.settings.filenameRule || t9("YYYY-MM-DD \u65E5\u8BB0")).onChange((value) => {
           this._scheduleSettingsSave(() => {
-            this.plugin.settings.filenameRule = value.trim() || "YYYY-MM-DD \u65E5\u8BB0";
+            this.plugin.settings.filenameRule = value.trim() || t9("YYYY-MM-DD \u65E5\u8BB0");
           });
         }));
         new Setting6(containerEl).setName(t9("\u81EA\u52A8\u4E0A\u4F20\u672C\u5730\u56FE\u7247")).setDesc(t9("\u53D1\u9001\u65F6\u81EA\u52A8\u8BFB\u53D6\u5E76\u53D1\u9001 Obsidian Vault \u4E2D\u5F15\u7528\u7684\u672C\u5730\u56FE\u7247\u3002")).addToggle((toggle) => toggle.setValue(this.plugin.settings.autoUploadImages !== false).onChange(async (value) => {
@@ -2540,49 +2672,6 @@ var require_vault_path = __commonJS({
   }
 });
 
-// src/core/image-refs.js
-var require_image_refs = __commonJS({
-  "src/core/image-refs.js"(exports2, module2) {
-    "use strict";
-    function parseImageRefs2(markdown) {
-      const refs = [];
-      const wiki = /!\[\[([^\]]+)\]\]/g;
-      const md = /!\[[^\]]*\]\(([^)]+)\)/g;
-      const bare = /(^|\n)([^\n]+?\.(?:png|jpe?g|gif|webp|svg))(?=\n|$)/gi;
-      let m;
-      while ((m = wiki.exec(markdown)) !== null) {
-        const t9 = String(m[1] || "").split("|")[0].trim();
-        if (!t9) continue;
-        refs.push({ raw: m[0], target: t9, type: "wiki", index: m.index, end: m.index + m[0].length });
-      }
-      while ((m = md.exec(markdown)) !== null) {
-        const t9 = String(m[1] || "").trim().replace(/^<|>$/g, "");
-        if (!t9) continue;
-        try {
-          refs.push({ raw: m[0], target: decodeURIComponent(t9), type: "markdown", index: m.index, end: m.index + m[0].length });
-        } catch (e) {
-          refs.push({ raw: m[0], target: t9, type: "markdown", index: m.index, end: m.index + m[0].length });
-        }
-      }
-      while ((m = bare.exec(markdown)) !== null) {
-        const t9 = String(m[2] || "").trim();
-        if (!t9 || /[\[\]()]/.test(t9)) continue;
-        const idx = m.index + m[1].length;
-        refs.push({ raw: m[2], target: t9, type: "bare", index: idx, end: idx + m[2].length });
-      }
-      const codeRanges = [];
-      const fenceRe = /```[^\n]*[\s\S]*?```/g;
-      let fm;
-      while ((fm = fenceRe.exec(markdown)) !== null) {
-        codeRanges.push([fm.index, fm.index + fm[0].length]);
-      }
-      const filtered = codeRanges.length === 0 ? refs : refs.filter((ref) => !codeRanges.some(([s, e]) => ref.index >= s && ref.index < e));
-      return filtered.sort((a, b) => a.index - b.index);
-    }
-    module2.exports = { parseImageRefs: parseImageRefs2 };
-  }
-});
-
 // src/core/content.js
 var require_content = __commonJS({
   "src/core/content.js"(exports2, module2) {
@@ -2657,7 +2746,14 @@ var require_settings = __commonJS({
       }
       return target;
     }
-    module2.exports = { deepMergeSettings: deepMergeSettings2 };
+    function resolveInitialDiaryDefaults2(loadedData, effectiveLang) {
+      const isFreshInstall = !loadedData || typeof loadedData !== "object" || Object.keys(loadedData).length === 0;
+      if (isFreshInstall && effectiveLang === "en") {
+        return { diaryPath: "Journal", filenameRule: "YYYY-MM-DD Journal" };
+      }
+      return {};
+    }
+    module2.exports = { deepMergeSettings: deepMergeSettings2, resolveInitialDiaryDefaults: resolveInitialDiaryDefaults2 };
   }
 });
 
@@ -6116,10 +6212,22 @@ var require_telegram_markdown = __commonJS({
         return `![](tg://photo?id=${id})`;
       });
     }
+    function extractTelegramPlainText(content) {
+      return String(content || "").split(/@图片\d+/g).map((part) => part.trim()).filter(Boolean).join("\n\n");
+    }
+    function willTelegramPlainSplitCaption2(payload = {}) {
+      const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+      const hasImage = attachments.some((item) => (item == null ? void 0 : item.kind) === "image" && (item == null ? void 0 : item.filename));
+      if (!hasImage) return false;
+      const textPart = extractTelegramPlainText(payload.content);
+      return Array.from(textPart).length > CAPTION_LIMIT2;
+    }
     module2.exports = {
       convertToTelegramHtml: convertToTelegramHtml2,
       restoreImageTokens: restoreImageTokens2,
       extractQuotes,
+      extractTelegramPlainText,
+      willTelegramPlainSplitCaption: willTelegramPlainSplitCaption2,
       truncate: truncate2,
       textLength,
       MESSAGE_LIMIT: MESSAGE_LIMIT2,
@@ -6451,6 +6559,7 @@ __export(telegram_exports, {
   default: () => telegram_default,
   defaultConfig: () => defaultConfig,
   execute: () => execute2,
+  getPreSendWarnings: () => getPreSendWarnings,
   listChannels: () => listChannels,
   manifest: () => manifest2,
   renderSettings: () => renderSettings,
@@ -6821,7 +6930,7 @@ ${t9}` : t9;
     if (imageItems.length === 0) {
       return await sendTextMessage(botToken, chatId, textPart, config, requestUrlFn);
     }
-    const caption = richCharacterCount(textPart) <= 1024 ? textPart : "";
+    const caption = richCharacterCount(textPart) <= CAPTION_LIMIT ? textPart : "";
     let textToSendSeparately = caption ? "" : textPart;
     const sendImages = async (items, mediaCaption) => {
       if (items.length === 1) {
@@ -6897,6 +7006,11 @@ function buildTelegramSegmentsFromContent(content, attachments) {
   pushText(source.slice(cursor));
   return segments;
 }
+function resolveChannelTitle(config, channelId) {
+  const channels = Array.isArray(config == null ? void 0 : config.channels) ? config.channels : [];
+  const found = channels.find((ch) => String(ch == null ? void 0 : ch.id) === String(channelId));
+  return String((found == null ? void 0 : found.title) || "").trim();
+}
 async function ensureTelegraphToken(config, requestUrlFn, saveConfig) {
   if (config.telegraphAccessToken) return config.telegraphAccessToken;
   const account = await telegraph.createAccount("JournalSync", config.telegraphAuthorName || "", requestUrlFn);
@@ -6955,6 +7069,7 @@ async function executeTelegraphSend({ botToken, config, payload, requestUrl: req
   const linkText = `${finalTitle}
 ${pageUrl}`;
   const results = await Promise.all(targets.map(async (targetCh) => {
+    const channelTitle = resolveChannelTitle(config, targetCh);
     try {
       const response = await requestUrl2({
         url: `${TG_API_BASE}/bot${botToken}/sendMessage`,
@@ -6969,15 +7084,15 @@ ${pageUrl}`;
       });
       const data = response.json;
       if (!data || !data.ok) {
-        return { success: false, channelId: targetCh, error: (data == null ? void 0 : data.description) || t2("\u53D1\u9001\u5931\u8D25") };
+        return { success: false, channelId: targetCh, channelTitle, error: (data == null ? void 0 : data.description) || t2("\u53D1\u9001\u5931\u8D25") };
       }
-      return { success: true, channelId: targetCh };
+      return { success: true, channelId: targetCh, channelTitle };
     } catch (error) {
-      return { success: false, channelId: targetCh, error: error.message || String(error) };
+      return { success: false, channelId: targetCh, channelTitle, error: error.message || String(error) };
     }
   }));
   const allOk = results.every((r) => r.success);
-  const errors = results.filter((r) => !r.success).map((r) => `${r.channelId}: ${r.error || t2("Telegram \u672A\u77E5\u9519\u8BEF")}`).join(t2("\uFF1B"));
+  const errors = results.filter((r) => !r.success).map((r) => `${r.channelTitle || r.channelId}: ${r.error || t2("Telegram \u672A\u77E5\u9519\u8BEF")}`).join(t2("\uFF1B"));
   return {
     success: allOk,
     error: allOk ? void 0 : errors,
@@ -6993,6 +7108,12 @@ async function validate2({ payload, config }) {
     warnings.push(t2("Telegram \u9891\u9053\u672A\u9009\u62E9"));
   }
   return { warnings, errors };
+}
+function getPreSendWarnings({ payload = {}, config = {} } = {}) {
+  const tgSendMode = config.tgSendMode || "plain";
+  if (tgSendMode !== "plain") return [];
+  if (!willTelegramPlainSplitCaption(payload)) return [];
+  return [t2("Telegram \u8D85 {max} \u5B57\u5C06\u56FE\u6587\u5206\u5F00\uFF0C\u786E\u8BA4\u53D1\u9001", { max: CAPTION_LIMIT })];
 }
 async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, saveConfig }) {
   var _a;
@@ -7074,15 +7195,16 @@ async function execute2({ config = {}, payload = {}, requestUrl: requestUrl2, sa
   });
   const effectiveConfig = { showLinkPreview: config.showLinkPreview };
   const results = await Promise.all(channelIds.map(async (targetCh) => {
+    const channelTitle = resolveChannelTitle(config, targetCh);
     try {
       const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl2, isRich);
-      return { channelId: targetCh, ...res };
+      return { channelId: targetCh, channelTitle, ...res };
     } catch (error) {
-      return { success: false, channelId: targetCh, error: error.message || String(error) };
+      return { success: false, channelId: targetCh, channelTitle, error: error.message || String(error) };
     }
   }));
   const allOk = results.every((result) => result.success);
-  const errors = results.filter((result) => !result.success).map((result) => `${result.channelId}: ${result.error || result.message || t2("Telegram \u672A\u77E5\u9519\u8BEF")}`).join(t2("\uFF1B"));
+  const errors = results.filter((result) => !result.success).map((result) => `${result.channelTitle || result.channelId}: ${result.error || result.message || t2("Telegram \u672A\u77E5\u9519\u8BEF")}`).join(t2("\uFF1B"));
   return {
     success: allOk,
     error: allOk ? void 0 : errors,
@@ -7130,6 +7252,7 @@ function renderChannelSelection(containerEl, tgConfig, ctx) {
   }
 }
 function renderSettings(containerEl, ctx) {
+  var _a;
   let telegraphTokenInput = null;
   const tgConfig = ctx.plugin.getAdapterConfig("telegram") || {};
   new import_obsidian.Setting(containerEl).setName("Bot Token").setDesc(t2("\u4ECE @BotFather \u83B7\u53D6")).addText((text) => {
@@ -7139,13 +7262,18 @@ function renderSettings(containerEl, ctx) {
     });
   });
   new import_obsidian.Setting(containerEl).setName(t2("\u9891\u9053\u5217\u8868")).setDesc(buildChannelDesc(tgConfig)).addButton((btn) => btn.setButtonText(t2("\u83B7\u53D6\u9891\u9053\u5217\u8868")).onClick(async () => {
-    var _a;
+    var _a2;
     try {
       btn.setButtonText(t2("\u83B7\u53D6\u4E2D..."));
       btn.disabled = true;
-      const result = await ctx.plugin.adapterRegistry.get("telegram").runAction("discoverChannels", ctx.plugin.getAdapterConfig("telegram"), ctx.requestUrl);
-      const channels = ((_a = result.data) == null ? void 0 : _a.channels) || [];
-      await ctx.saveConfig({ channels, homeChannels: channels.map((channel) => String(channel.id)) });
+      const prevConfig = ctx.plugin.getAdapterConfig("telegram") || {};
+      const result = await ctx.plugin.adapterRegistry.get("telegram").runAction("discoverChannels", prevConfig, ctx.requestUrl);
+      const channels = ((_a2 = result.data) == null ? void 0 : _a2.channels) || [];
+      const prevChannels = Array.isArray(prevConfig.channels) ? prevConfig.channels : [];
+      const prevChannelIds = new Set(prevChannels.map((c) => String(c.id)));
+      const prevHomeSet = new Set(Array.isArray(prevConfig.homeChannels) ? prevConfig.homeChannels.map(String) : []);
+      const nextHomeChannels = prevChannels.length === 0 ? channels.map((ch) => String(ch.id)) : channels.map((ch) => String(ch.id)).filter((id) => prevHomeSet.has(id) || !prevChannelIds.has(id));
+      await ctx.saveConfig({ channels, homeChannels: nextHomeChannels });
       new import_obsidian.Notice(result.message || t2("\u83B7\u53D6\u6210\u529F"));
       ctx.refresh();
     } catch (error) {
@@ -7164,7 +7292,7 @@ function renderSettings(containerEl, ctx) {
       ctx.scheduleConfigSave({ telegraphAuthorName: value.trim() });
     });
   });
-  const sendScope = ctx.plugin.settings.sendScope || 2;
+  const sendScope = (_a = ctx.plugin.settings.sendScope) != null ? _a : 2;
   const maxTitleLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
   const titleLevelDesc = maxTitleLevel === 1 ? t2("\u5F53\u524D\u53D1\u9001\u5C42\u7EA7\u4E3A 1\uFF0C\u4EC5\u53EF\u4F7F\u7528\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u6807\u9898\u3002") : t2("\u9009\u62E9\u54EA\u4E00\u7EA7\u6807\u9898\u4F5C\u4E3A Telegraph \u9875\u9762\u6807\u9898\uFF081-{max}\uFF09\u3002\u6B63\u6587\u4E2D\u7684\u6807\u9898\u4F1A\u76F8\u5E94\u504F\u79FB\u3002\u7ED1\u5B9A\u53D1\u9001\u5C42\u7EA7\uFF08\u5F53\u524D: {scope}\uFF09\u3002", {
     max: maxTitleLevel,
@@ -7204,14 +7332,14 @@ function renderSettings(containerEl, ctx) {
       btn.disabled = false;
     }
   })).addButton((btn) => btn.setButtonText(t2("\u521B\u5EFA\u65B0\u8D26\u53F7")).onClick(async () => {
-    var _a;
+    var _a2;
     if (tgConfig.telegraphAccessToken) {
       if (!confirm(t2("\u5DF2\u6709\u8D26\u53F7\u8FDE\u63A5\uFF0C\u521B\u5EFA\u65B0\u8D26\u53F7\u540E\u5C06\u65E0\u6CD5\u7528\u65B0 token \u7F16\u8F91\u65E7\u9875\u9762\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F"))) return;
     }
     try {
       btn.setButtonText(t2("\u521B\u5EFA\u4E2D..."));
       btn.disabled = true;
-      const authorName = ((_a = ctx.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a.telegraphAuthorName) || "";
+      const authorName = ((_a2 = ctx.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a2.telegraphAuthorName) || "";
       const account = await telegraph.createAccount("JournalSync", authorName, ctx.requestUrl);
       await ctx.saveConfig({ telegraphAccessToken: account.access_token });
       new import_obsidian.Notice(t2("Telegraph \u8D26\u53F7\u521B\u5EFA\u6210\u529F"));
@@ -7223,8 +7351,8 @@ function renderSettings(containerEl, ctx) {
       btn.disabled = false;
     }
   })).addButton((btn) => btn.setButtonText(t2("\u590D\u5236 token")).setDisabled(!tgConfig.telegraphAccessToken).onClick(() => {
-    var _a;
-    const token = ((_a = ctx.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a.telegraphAccessToken) || "";
+    var _a2;
+    const token = ((_a2 = ctx.plugin.getAdapterConfig("telegram")) == null ? void 0 : _a2.telegraphAccessToken) || "";
     if (!token) {
       new import_obsidian.Notice(t2("\u6682\u65E0 token \u53EF\u590D\u5236"));
       return;
@@ -7236,7 +7364,7 @@ function renderSettings(containerEl, ctx) {
     });
   }));
 }
-var import_obsidian, t2, registerTranslations2, TG_API_BASE, convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT, telegraph, getMimeType, manifest2, MAX_TELEGRAM_IMAGES, defaultConfig, telegram_default;
+var import_obsidian, t2, registerTranslations2, TG_API_BASE, convertToTelegramHtml, restoreImageTokens, willTelegramPlainSplitCaption, truncate, MESSAGE_LIMIT, CAPTION_LIMIT, telegraph, getMimeType, manifest2, MAX_TELEGRAM_IMAGES, defaultConfig, telegram_default;
 var init_telegram = __esm({
   "src/adapters/telegram.js"() {
     import_obsidian = require("obsidian");
@@ -7305,10 +7433,11 @@ var init_telegram = __esm({
       "\u6682\u65E0 token \u53EF\u590D\u5236": "No token to copy",
       "Token \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F": "Token copied to clipboard",
       "\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236": "Copy failed; please copy manually",
-      "\u3001": ", "
+      "\u3001": ", ",
+      "Telegram \u8D85 {max} \u5B57\u5C06\u56FE\u6587\u5206\u5F00\uFF0C\u786E\u8BA4\u53D1\u9001": "Telegram: over {max} chars will split images & text, confirm to send"
     });
     TG_API_BASE = "https://api.telegram.org";
-    ({ convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT } = require_telegram_markdown());
+    ({ convertToTelegramHtml, restoreImageTokens, willTelegramPlainSplitCaption, truncate, MESSAGE_LIMIT, CAPTION_LIMIT } = require_telegram_markdown());
     telegraph = require_telegraph();
     ({ getMimeType } = require_mime());
     manifest2 = {
@@ -7365,7 +7494,7 @@ var init_telegram = __esm({
       telegraphAuthorName: "",
       telegraphTitleLevel: 1
     };
-    telegram_default = { manifest: manifest2, defaultConfig, renderSettings, execute: execute2, validate: validate2, listChannels, runAction: runAction2 };
+    telegram_default = { manifest: manifest2, defaultConfig, renderSettings, execute: execute2, validate: validate2, getPreSendWarnings, listChannels, runAction: runAction2 };
   }
 });
 
@@ -7457,13 +7586,25 @@ async function uploadImageToMastodon(arrayBuffer, filename, baseUrl, accessToken
   }
   return { id: result.id, error: "" };
 }
-async function validate3({ payload }) {
+async function validate3({ payload, config = {} }) {
   const warnings = [];
   const errors = [];
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   const images = attachments.filter((a) => a.kind === "image");
   if (!payload.plainText && images.length === 0) {
     errors.push(t3("\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A"));
+  }
+  if (Array.isArray(config == null ? void 0 : config.accounts)) {
+    for (const acct of config.accounts) {
+      if (!String((acct == null ? void 0 : acct.serverUrl) || "").trim() || !String((acct == null ? void 0 : acct.accessToken) || "").trim()) {
+        const name = (acct == null ? void 0 : acct.label) || String((acct == null ? void 0 : acct.serverUrl) || "").trim() || (acct == null ? void 0 : acct.id) || t3("\u672A\u914D\u7F6E");
+        errors.push(t3("Mastodon \u8D26\u53F7\u300C{name}\u300D\u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E", { name }));
+      }
+    }
+  } else if (config && (Object.prototype.hasOwnProperty.call(config, "serverUrl") || Object.prototype.hasOwnProperty.call(config, "accessToken"))) {
+    if (!String(config.serverUrl || "").trim() || !String(config.accessToken || "").trim()) {
+      errors.push(t3("Mastodon \u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E"));
+    }
   }
   return { warnings, errors };
 }
@@ -7701,7 +7842,8 @@ var init_mastodon = __esm({
       "\u8FDE\u63A5\u4E2D...": "Connecting...",
       "\u672A\u77E5": "Unknown",
       "Mastodon \u8FDE\u63A5\u6210\u529F\uFF08{display}\uFF09": "Mastodon connection successful ({display})",
-      "Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A{error}": "Mastodon connection failed: {error}"
+      "Mastodon \u8FDE\u63A5\u5931\u8D25\uFF1A{error}": "Mastodon connection failed: {error}",
+      "Mastodon \u8D26\u53F7\u300C{name}\u300D\u5B9E\u4F8B\u5730\u5740\u6216 Access Token \u672A\u914D\u7F6E": 'Mastodon account "{name}" is missing instance URL or Access Token'
     });
     manifest3 = {
       id: "mastodon",
@@ -7765,6 +7907,7 @@ __export(missky_exports, {
   validate: () => validate4
 });
 async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, requestUrl2) {
+  var _a, _b;
   const mimeType = getMimeType3(filename);
   const { boundary, body } = buildMultipartBody2({
     boundaryPrefix: "----MisskeyBoundary",
@@ -7781,10 +7924,19 @@ async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, req
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
-    return null;
+    let errMsg = "";
+    try {
+      errMsg = ((_b = (_a = response.json) == null ? void 0 : _a.error) == null ? void 0 : _b.message) || response.text || `HTTP ${response.status}`;
+    } catch (e) {
+      errMsg = `HTTP ${response.status}`;
+    }
+    return { id: null, error: errMsg };
   }
   const result = response.json || {};
-  return result.id || null;
+  if (!result.id) {
+    return { id: null, error: t4("Misskey \u672A\u8FD4\u56DE\u6587\u4EF6 ID") };
+  }
+  return { id: result.id, error: "" };
 }
 async function validate4({ payload }) {
   const warnings = [];
@@ -7818,17 +7970,29 @@ async function execute4({ config = {}, payload = {}, requestUrl: requestUrl2 }) 
       try {
         const buffer = typeof payload.readAttachment === "function" ? await payload.readAttachment(img.vaultPath) : null;
         if (!buffer) {
-          warnings.push(t4("\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}", { name: img.filename }));
-          continue;
+          return { success: false, error: t4("Misskey \u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{name}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", { name: img.filename }), warnings };
         }
-        const fileId = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl2);
-        if (fileId) {
-          fileIds.push(fileId);
-        } else {
-          warnings.push(t4("\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}", { name: img.filename }));
+        const uploadResult = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl2);
+        if (!uploadResult.id) {
+          return {
+            success: false,
+            error: t4("Misskey \u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A{name}{detail}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", {
+              name: img.filename,
+              detail: uploadResult.error ? t4("\uFF08{detail}\uFF09", { detail: uploadResult.error }) : ""
+            }),
+            warnings
+          };
         }
+        fileIds.push(uploadResult.id);
       } catch (error) {
-        warnings.push(t4("\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}", { name: img.filename }));
+        return {
+          success: false,
+          error: t4("Misskey \u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A{name}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002", {
+            name: img.filename,
+            error: (error == null ? void 0 : error.message) || String(error)
+          }),
+          warnings
+        };
       }
     }
     if (!textContent && fileIds.length === 0) {
@@ -7918,9 +8082,11 @@ var init_missky = __esm({
       "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A": "Content cannot be empty",
       "Misskey \u5B9E\u4F8B\u5730\u5740\u6216 API Token \u672A\u914D\u7F6E": "Misskey instance URL or API Token is not configured",
       "\u8D85\u8FC7 {count} \u5F20\u56FE\u7247\uFF0C\u53EA\u53D1\u9001\u524D {count} \u5F20": "Over {count} images, only sending the first {count}",
-      "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}": "Failed to read image, skipped: {name}",
-      "\u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}": "Failed to upload image, skipped: {name}",
-      "\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A{name}": "Failed to process image, skipped: {name}",
+      "\uFF08{detail}\uFF09": " ({detail})",
+      "Misskey \u672A\u8FD4\u56DE\u6587\u4EF6 ID": "Misskey did not return a file ID",
+      "Misskey \u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A{name}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Failed to read image: {name}; nothing was sent.",
+      "Misskey \u56FE\u7247\u4E0A\u4F20\u5931\u8D25\uFF1A{name}{detail}\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Image upload failed: {name}{detail}; nothing was sent.",
+      "Misskey \u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A{name}\uFF08{error}\uFF09\uFF1B\u672A\u53D1\u9001\u4EFB\u4F55\u5185\u5BB9\u3002": "Image processing failed: {name} ({error}); nothing was sent.",
       "Misskey \u9002\u914D\u5668\u4E0D\u652F\u6301\u64CD\u4F5C\uFF1A{action}": "Misskey adapter does not support action: {action}",
       "\u8BF7\u5148\u914D\u7F6E Misskey \u5B9E\u4F8B\u5730\u5740\u548C API Token": "Please configure the Misskey instance URL and API Token first",
       "\u672A\u77E5": "Unknown",
@@ -10277,10 +10443,11 @@ var {
 var { parseImageRefs } = require_image_refs();
 var { getSelectedOrBlockContent } = require_content();
 var { t: t8, setLanguage, registerTranslations: registerTranslations8 } = require_i18n();
-var { deepMergeSettings } = require_settings();
+var { deepMergeSettings, resolveInitialDiaryDefaults } = require_settings();
 var { buildRichDraftFromUploadedMarkdown } = require_rich_draft();
 registerTranslations8("en", {
   "Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55": "Journal Sync: New journal entry",
+  "YYYY-MM-DD \u65E5\u8BB0": "YYYY-MM-DD Journal",
   "\u8BFB\u53D6\u5931\u8D25": "Failed to read",
   "Vault \u4E2D\u672A\u627E\u5230\u8BE5\u6587\u4EF6": "File not found in the vault",
   "\u5DF2\u521B\u5EFA Journal Sync \u65E5\u8BB0\u8BB0\u5F55\u5757\u3002": "Created the Journal Sync journal entry.",
@@ -10348,7 +10515,12 @@ var JournalSyncPlugin = class extends Plugin {
     for (const adapter of ADAPTER_MODULES) {
       this.adapterRegistry.register(adapter);
     }
-    this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
+    const effectiveLang = this._resolveEffectiveLanguage(loadedData.uiLanguage || "auto");
+    const baseDefaults = {
+      ...buildDefaultSettings(this.adapterRegistry),
+      ...resolveInitialDiaryDefaults(loadedData, effectiveLang)
+    };
+    this.settings = deepMergeSettings(loadedData, baseDefaults);
     this._applyLanguage();
     this._migrateMastodonAccounts();
     if (JSON.stringify(this.settings) !== loadedSnapshot) {
@@ -10386,20 +10558,19 @@ var JournalSyncPlugin = class extends Plugin {
    * 语言变更后的 UI 刷新：settings-tab 语言下拉 onChange 调用本方法后自行重渲染设置页；
    * ribbon 悬浮提示在 onload 求值一次，由本方法在语言变化时直接刷新。
    */
-  _applyLanguage() {
-    var _a, _b, _c;
-    const choice = ((_a = this.settings) == null ? void 0 : _a.uiLanguage) || "auto";
-    let lang = "zh";
-    if (choice === "zh" || choice === "en") {
-      lang = choice;
-    } else {
-      try {
-        const appLang = (((_c = (_b = this.app) == null ? void 0 : _b.getLanguage) == null ? void 0 : _c.call(_b)) || "").toLowerCase();
-        lang = appLang.startsWith("zh") ? "zh" : "en";
-      } catch (e) {
-        lang = "en";
-      }
+  _resolveEffectiveLanguage(choice = "auto") {
+    var _a, _b;
+    if (choice === "zh" || choice === "en") return choice;
+    try {
+      const appLang = (((_b = (_a = this.app) == null ? void 0 : _a.getLanguage) == null ? void 0 : _b.call(_a)) || "").toLowerCase();
+      return appLang.startsWith("zh") ? "zh" : "en";
+    } catch (e) {
+      return "en";
     }
+  }
+  _applyLanguage() {
+    var _a;
+    const lang = this._resolveEffectiveLanguage(((_a = this.settings) == null ? void 0 : _a.uiLanguage) || "auto");
     setLanguage(lang);
     if (this.ribbonIconEl) {
       this.ribbonIconEl.setAttribute("aria-label", t8("Journal Sync: \u65B0\u5EFA\u65E5\u8BB0\u8BB0\u5F55"));
@@ -10563,7 +10734,7 @@ var JournalSyncPlugin = class extends Plugin {
   async createTodayDiaryEntry() {
     try {
       const diaryDir = normalizeVaultPath(this.settings.diaryPath || "");
-      const rule = this.settings.filenameRule || "YYYY-MM-DD \u65E5\u8BB0";
+      const rule = this.settings.filenameRule || t8("YYYY-MM-DD \u65E5\u8BB0");
       const now = /* @__PURE__ */ new Date();
       const filename = buildDiaryFilename(formatDate(now), rule);
       const diaryPath = diaryDir ? joinVaultPath(diaryDir, filename) : filename;

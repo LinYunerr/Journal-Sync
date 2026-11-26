@@ -33,4 +33,12 @@ function deepMergeSettings(target, source) {
     return target;
 }
 
-module.exports = { deepMergeSettings };
+function resolveInitialDiaryDefaults(loadedData, effectiveLang) {
+    const isFreshInstall = !loadedData || typeof loadedData !== 'object' || Object.keys(loadedData).length === 0;
+    if (isFreshInstall && effectiveLang === 'en') {
+        return { diaryPath: 'Journal', filenameRule: 'YYYY-MM-DD Journal' };
+    }
+    return {};
+}
+
+module.exports = { deepMergeSettings, resolveInitialDiaryDefaults };

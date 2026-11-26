@@ -27,7 +27,10 @@ registerTranslations('en', {
     '预设{index}': 'Preset {index}',
     '点击应用分组，双击重命名': 'Click to apply this preset; double-click to rename',
     '新增当前选择为预设分组': 'Save the current selection as a new preset',
+    '重命名当前选中预设': 'Rename the selected preset',
     '删除当前选中预设': 'Delete the selected preset',
+    '确认删除': 'Confirm delete',
+    '再次点击确认删除当前预设': 'Click again to confirm deleting the selected preset',
     'Telegram：': 'Telegram: ',
     'Mastodon：': 'Mastodon: ',
     'Telegraph：': 'Telegraph: ',
@@ -40,8 +43,8 @@ registerTranslations('en', {
     '当前为纯文本发送，点击切换为富文本': 'Plain-text mode; click to switch to rich text',
     '尚未获取频道列表，请先在插件设置中获取频道。': 'No channel list yet. Please fetch channels in the plugin settings first.',
     '点击此处关闭 Telegraph 发送': 'Click here to disable Telegraph sending',
-    '双击编辑标题': 'Double-click to edit the title',
-    'Telegraph 模式：单击前缀关闭，双击标题编辑': 'Telegraph mode: click the prefix to disable; double-click the title to edit',
+    '点击编辑标题': 'Click to edit the title',
+    'Telegraph 模式：单击前缀关闭，单击标题编辑': 'Telegraph mode: click the prefix to disable; click the title to edit',
     '⚠️ {count} 项预警，确认发送': '⚠️ {count} warning(s). Confirm to send',
     '发送日志保存失败：无法写入快照': 'Failed to save send log: cannot write snapshot',
     '发送日志保存失败：{error}': 'Failed to save send log: {error}',
@@ -64,6 +67,7 @@ registerTranslations('en', {
 
 const { buildPayload, getMimeType } = require('../core/payload');
 const { collectTargets, dispatchSends, buildDiagTargets, buildSummary } = require('../core/send-dispatcher');
+const { matchImageMentionTrigger, removeImageTokenFromText } = require('../core/image-refs');
 const sendLog = require('../core/send-log');
 
 function hasRemoteImageReference(content) {
@@ -101,6 +105,8 @@ class JournalSyncSendModal extends Modal {
         this.selectedMastodonAccounts = new Set();
 
         this.editingPresetId = '';
+        this._presetDeleteConfirmId = '';
+        this._presetDeleteTimer = null;
         this.images = [];
         this._objectUrls = new Set(); // 跟踪当前缩略图预览 URL，关闭时统一释放
         this._imageGridRenderId = 0; // 使过期的异步缩略图加载失效
@@ -278,7 +284,8 @@ class JournalSyncSendModal extends Modal {
 
         this.renderAllTargetSections();
 
-        // 4. 发送按钮
+        // 4. 预警横幅与发送按钮
+        this.warningBannerEl = contentEl.createDiv({ cls: 'js-bridge-warning-banner hidden' });
         const btnArea = contentEl.createDiv({ cls: 'js-bridge-btn-area' });
 
         this.sendBtn = btnArea.createEl('button', {
@@ -426,10 +433,10 @@ class JournalSyncSendModal extends Modal {
             }
 
             const textBefore = node.textContent.slice(0, range.startOffset);
-            const match = textBefore.match(/@(?:图|图片)?$/);
+            const matched = matchImageMentionTrigger(textBefore);
 
-            if (match) {
-                this.showMentionDropdown(mentionDropdown, richDiv, range, match[0]);
+            if (matched) {
+                this.showMentionDropdown(mentionDropdown, richDiv, range, matched);
             } else {
                 mentionDropdown.addClass('hidden');
             }
@@ -712,8 +719,7 @@ class JournalSyncSendModal extends Modal {
                 }
                 const [removedImage] = this.images.splice(index, 1);
                 if (removedImage) {
-                    const tokenPattern = new RegExp(removedImage.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-                    this.content = this.content.replace(tokenPattern, '').replace(/\n{3,}/g, '\n\n').trim();
+                    this.content = removeImageTokenFromText(this.content, removedImage.token);
                     this.editorEl?.querySelectorAll('.image-token-chip').forEach(chip => {
                         if (chip.getAttribute('data-token') === removedImage.token) chip.remove();
                     });
@@ -721,6 +727,7 @@ class JournalSyncSendModal extends Modal {
                         ...this.richDraft,
                         blocks: (this.richDraft.blocks || []).filter(block => block.imageId !== removedImage.id),
                         images: (this.richDraft.images || []).filter(image => {
+                            if (image.token && removedImage.token) return image.token !== removedImage.token;
                             return (image.vaultPath || image.filename) !== removedImage.vaultPath;
                         })
                     };
@@ -755,6 +762,12 @@ class JournalSyncSendModal extends Modal {
             document.removeEventListener('keydown', this._previewEscHandler, true);
             this._previewEscHandler = null;
         }
+    }
+
+    _clearPresetDeleteConfirm() {
+        if (this._presetDeleteTimer) window.clearTimeout(this._presetDeleteTimer);
+        this._presetDeleteTimer = null;
+        this._presetDeleteConfirmId = '';
     }
 
     renderPresetControls() {
@@ -801,6 +814,7 @@ class JournalSyncSendModal extends Modal {
 
             btn.addEventListener('click', async () => {
                 if (this.editingPresetId) return;
+                this._clearPresetDeleteConfirm();
                 this.plugin.settings.activePresetId = preset.id;
                 await this.plugin.saveSettings();
                 this.loadActivePresetSelection();
@@ -813,6 +827,7 @@ class JournalSyncSendModal extends Modal {
 
             btn.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
+                this._clearPresetDeleteConfirm();
                 this.editingPresetId = preset.id;
                 this.renderPresetControls();
             });
@@ -826,6 +841,7 @@ class JournalSyncSendModal extends Modal {
             });
             addBtn.title = t('新增当前选择为预设分组');
             addBtn.addEventListener('click', async () => {
+                this._clearPresetDeleteConfirm();
                 const newPreset = {
                     id: `preset-${Date.now()}`,
                     name: t('预设{index}', { index: presets.length + 1 }),
@@ -839,14 +855,39 @@ class JournalSyncSendModal extends Modal {
             });
         }
 
-        // - 删除
+        // 重命名 / 删除
         if (presets.length > 0 && activeId) {
+            const editBtn = this.presetControlsEl.createEl('button', {
+                type: 'button',
+                cls: 'publish-preset-action edit'
+            });
+            editBtn.title = t('重命名当前选中预设');
+            editBtn.addEventListener('click', () => {
+                this._clearPresetDeleteConfirm();
+                this.editingPresetId = activeId;
+                this.renderPresetControls();
+            });
+
+            const isConfirmingDelete = this._presetDeleteConfirmId === activeId;
             const removeBtn = this.presetControlsEl.createEl('button', {
                 type: 'button',
-                cls: 'publish-preset-action remove'
+                text: isConfirmingDelete ? t('确认删除') : '',
+                cls: `publish-preset-action remove${isConfirmingDelete ? ' confirming' : ''}`
             });
-            removeBtn.title = t('删除当前选中预设');
+            removeBtn.title = isConfirmingDelete ? t('再次点击确认删除当前预设') : t('删除当前选中预设');
             removeBtn.addEventListener('click', async () => {
+                if (this._presetDeleteConfirmId !== activeId) {
+                    this._clearPresetDeleteConfirm();
+                    this._presetDeleteConfirmId = activeId;
+                    this._presetDeleteTimer = window.setTimeout(() => {
+                        this._presetDeleteConfirmId = '';
+                        this._presetDeleteTimer = null;
+                        this.renderPresetControls();
+                    }, 5000);
+                    this.renderPresetControls();
+                    return;
+                }
+                this._clearPresetDeleteConfirm();
                 const currentPresets = this.plugin.settings.publishPresets || [];
                 const currentActiveId = this.plugin.settings.activePresetId;
                 const newPresets = currentPresets.filter(p => p.id !== currentActiveId);
@@ -978,6 +1019,9 @@ class JournalSyncSendModal extends Modal {
             cls: `tg-input-mode-btn tg-telegraph-btn${this.tgSendMode === 'telegraph' ? ' active expanded' : ''}`
         });
         telegraphBtn.title = t('点击使用 Telegraph 方式发送');
+        if (this.tgSendMode === 'telegraph') {
+            this._expandTelegraphBtn(telegraphBtn);
+        }
 
         // 网址预览开关：放在富文本左侧、Telegraph 右侧，样式与其它两个按钮一致。
         const previewToggleBtn = tgBtnGroup.createEl('button', {
@@ -1015,10 +1059,11 @@ class JournalSyncSendModal extends Modal {
             });
         }
 
-        // Telegraph 按钮交互：单击展开/激活，双击标题编辑，单击前缀关闭
+        // Telegraph 按钮交互：单击展开/激活，单击标题编辑，单击前缀关闭
         telegraphBtn.addEventListener('click', (e) => {
             // 如果已展开，检查点击区域
             if (this.tgSendMode === 'telegraph') {
+                if (telegraphBtn.querySelector('.tg-telegraph-title-input')) return;
                 // 点击的是前缀区域 → 关闭
                 const prefixEl = telegraphBtn.querySelector('.tg-telegraph-prefix');
                 if (prefixEl && prefixEl.contains(e.target)) {
@@ -1027,7 +1072,10 @@ class JournalSyncSendModal extends Modal {
                     this._collapseTelegraphBtn(telegraphBtn);
                     return;
                 }
-                // 点击标题区域不做操作（双击由 dblclick 处理）
+                const titleEl = telegraphBtn.querySelector('.tg-telegraph-title');
+                if (titleEl && titleEl.contains(e.target)) {
+                    this._editTelegraphTitle(telegraphBtn, titleEl);
+                }
                 return;
             }
 
@@ -1040,13 +1088,6 @@ class JournalSyncSendModal extends Modal {
 
             // 展开按钮：显示 "Telegraph：标题"
             this._expandTelegraphBtn(telegraphBtn);
-        });
-
-        telegraphBtn.addEventListener('dblclick', (e) => {
-            if (this.tgSendMode !== 'telegraph') return;
-            const titleEl = telegraphBtn.querySelector('.tg-telegraph-title');
-            if (!titleEl || !titleEl.contains(e.target)) return;
-            this._editTelegraphTitle(telegraphBtn, titleEl);
         });
 
         if (channels.length === 0) {
@@ -1116,8 +1157,8 @@ class JournalSyncSendModal extends Modal {
         const prefix = btn.createSpan({ cls: 'tg-telegraph-prefix', text: t('Telegraph：') });
         prefix.title = t('点击此处关闭 Telegraph 发送');
         const titleSpan = btn.createSpan({ cls: 'tg-telegraph-title', text: this.telegraphTitle });
-        titleSpan.title = t('双击编辑标题');
-        btn.title = t('Telegraph 模式：单击前缀关闭，双击标题编辑');
+        titleSpan.title = t('点击编辑标题');
+        btn.title = t('Telegraph 模式：单击前缀关闭，单击标题编辑');
     }
 
     /**
@@ -1180,6 +1221,10 @@ class JournalSyncSendModal extends Modal {
         this._warningTimer = null;
         this._warningConfirmActive = false;
         this._warningKey = '';
+        if (this.warningBannerEl) {
+            this.warningBannerEl.empty();
+            this.warningBannerEl.addClass('hidden');
+        }
         this._resetSendButton();
     }
 
@@ -1190,6 +1235,13 @@ class JournalSyncSendModal extends Modal {
         if (this._warningTimer) window.clearTimeout(this._warningTimer);
         this._warningConfirmActive = true;
         this._warningKey = messages.join('\n');
+        if (this.warningBannerEl) {
+            this.warningBannerEl.empty();
+            for (const msg of messages) {
+                this.warningBannerEl.createDiv({ cls: 'js-bridge-warning-item', text: `⚠️ ${msg}` });
+            }
+            this.warningBannerEl.removeClass('hidden');
+        }
         if (this.sendBtn) {
             this.sendBtn.textContent = messages.length === 1
                 ? `⚠️ ${messages[0]}`
@@ -1379,10 +1431,24 @@ class JournalSyncSendModal extends Modal {
             };
         }
 
-        // 按目标适配器的能力声明做统一图片预警；预警状态只保留 5 秒。
+        const configs = {};
+        for (const adapterId of targetAdapters) {
+            if (adapterId === 'mastodon') {
+                configs['mastodon'] = {
+                    accounts: mstdAccountIds.map(id => plugin.getMastodonAccount(id)).filter(Boolean)
+                };
+            } else {
+                configs[adapterId] = {
+                    ...plugin.getAdapterConfig(adapterId),
+                    ...(targetConfigOverrides[adapterId] || {})
+                };
+            }
+        }
+
+        // 按目标适配器的能力声明与适配器预警钩子做统一预检预警；预警状态只保留 5 秒。
         let capabilityWarnings;
         try {
-            capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload);
+            capabilityWarnings = await plugin.adapterRegistry.getAttachmentWarnings(targetAdapters, payload, configs);
         } catch (error) {
             new Notice(t('图片预检失败：{error}', { error: error.message || String(error) }), 10000);
             await this._writeSendLog(this._buildLogEntryBase({
@@ -1408,24 +1474,6 @@ class JournalSyncSendModal extends Modal {
         // 发布前执行所有目标适配器的预检。预检策略沿用各适配器现有声明，不在此处改写风险等级。
         let validation;
         try {
-            const configs = {};
-            for (const adapterId of targetAdapters) {
-                if (adapterId === 'mastodon') {
-                    // mastodon 多账号：传入第一个选中账号的配置形状，而非 { accounts: [] }
-                    const firstAcctId = mstdAccountIds[0];
-                    const firstAcct = firstAcctId ? plugin.getMastodonAccount(firstAcctId) : null;
-                    configs['mastodon'] = firstAcct ? {
-                        serverUrl: firstAcct.serverUrl,
-                        accessToken: firstAcct.accessToken,
-                        visibility: firstAcct.visibility || 'public'
-                    } : {};
-                } else {
-                    configs[adapterId] = {
-                        ...plugin.getAdapterConfig(adapterId),
-                        ...(targetConfigOverrides[adapterId] || {})
-                    };
-                }
-            }
             validation = await plugin.adapterRegistry.validateAll(targetAdapters, payload, configs);
         } catch (error) {
             new Notice(t('发送预检失败：{error}', { error: error.message || String(error) }), 10000);
@@ -1527,8 +1575,9 @@ class JournalSyncSendModal extends Modal {
         for (const url of this._objectUrls) URL.revokeObjectURL(url);
         this._objectUrls.clear();
         this.images = [];
-        // 附件警告确认态计时器与快捷键监听在关窗时统一清理，避免关窗后仍触发。
+        // 附件警告确认态计时器、预设删除确认态与快捷键监听在关窗时统一清理，避免关窗后仍触发。
         this._clearAttachmentWarningState();
+        this._clearPresetDeleteConfirm();
         if (this._sendKeyHandler) {
             this.modalEl.removeEventListener('keydown', this._sendKeyHandler);
             this._sendKeyHandler = null;

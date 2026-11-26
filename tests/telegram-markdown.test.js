@@ -7,6 +7,8 @@ const {
   convertToTelegramHtml,
   restoreImageTokens,
   extractQuotes,
+  extractTelegramPlainText,
+  willTelegramPlainSplitCaption,
   truncate,
   textLength,
   MESSAGE_LIMIT,
@@ -220,4 +222,42 @@ test('extractQuotes separates quotes from body', () => {
   assert.ok(!text.includes('引用'), `quote leaked into text: ${text}`);
   assert.equal(quotes.length, 1);
   assert.equal(quotes[0], '引用');
+});
+
+// ── 普通模式超 1024 字图文拆分判断 ───────────────
+
+test('willTelegramPlainSplitCaption returns false without image attachments', () => {
+  assert.equal(willTelegramPlainSplitCaption({
+    content: '字'.repeat(CAPTION_LIMIT + 50),
+    attachments: []
+  }), false);
+});
+
+test('willTelegramPlainSplitCaption respects exact CAPTION_LIMIT boundary with images', () => {
+  const attachments = [{ kind: 'image', filename: 'a.png' }];
+  assert.equal(willTelegramPlainSplitCaption({
+    content: '字'.repeat(CAPTION_LIMIT),
+    attachments
+  }), false);
+  assert.equal(willTelegramPlainSplitCaption({
+    content: '字'.repeat(CAPTION_LIMIT + 1),
+    attachments
+  }), true);
+});
+
+test('willTelegramPlainSplitCaption counts Unicode code points and excludes @图片N tokens', () => {
+  const attachments = [{ kind: 'image', filename: 'a.png' }];
+  const exactlyAtLimitWithTokens = `${'😀'.repeat(CAPTION_LIMIT)} @图片1`;
+  assert.equal(willTelegramPlainSplitCaption({
+    content: exactlyAtLimitWithTokens,
+    attachments
+  }), false);
+
+  const overLimitSplitAroundToken = `${'a'.repeat(512)}\n@图片1\n${'b'.repeat(511)}`;
+  // 分段合并时插入 '\n\n'（2 个字符）：512 + 2 + 511 = 1025 > 1024
+  assert.equal(extractTelegramPlainText(overLimitSplitAroundToken).length, 1025);
+  assert.equal(willTelegramPlainSplitCaption({
+    content: overLimitSplitAroundToken,
+    attachments
+  }), true);
 });

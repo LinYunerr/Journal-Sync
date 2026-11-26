@@ -39,12 +39,13 @@ const {
 const { parseImageRefs } = require('./core/image-refs');
 const { getSelectedOrBlockContent } = require('./core/content');
 const { t, setLanguage, registerTranslations } = require('./core/i18n');
-const { deepMergeSettings } = require('./core/settings');
+const { deepMergeSettings, resolveInitialDiaryDefaults } = require('./core/settings');
 const { buildRichDraftFromUploadedMarkdown } = require('./core/rich-draft');
 
 // 本文件用户可见文案的英文翻译（ribbon 提示、命令 Notice、图片读取错误）
 registerTranslations('en', {
   'Journal Sync: 新建日记记录': 'Journal Sync: New journal entry',
+  'YYYY-MM-DD 日记': 'YYYY-MM-DD Journal',
   '读取失败': 'Failed to read',
   'Vault 中未找到该文件': 'File not found in the vault',
   '已创建 Journal Sync 日记记录块。': 'Created the Journal Sync journal entry.',
@@ -137,7 +138,12 @@ class JournalSyncPlugin extends Plugin {
     }
 
     // 深度合并默认迁移设置（老用户 data.json 的已有值不受影响），再解析界面语言
-    this.settings = deepMergeSettings(loadedData, buildDefaultSettings(this.adapterRegistry));
+    const effectiveLang = this._resolveEffectiveLanguage(loadedData.uiLanguage || 'auto');
+    const baseDefaults = {
+      ...buildDefaultSettings(this.adapterRegistry),
+      ...resolveInitialDiaryDefaults(loadedData, effectiveLang)
+    };
+    this.settings = deepMergeSettings(loadedData, baseDefaults);
     // 解析界面语言：'auto' 跟随 Obsidian 应用语言，否则用用户指定值
     this._applyLanguage();
     // 迁移 Mastodon 单账号旧格式 → accounts 数组
@@ -187,20 +193,18 @@ class JournalSyncPlugin extends Plugin {
    * 语言变更后的 UI 刷新：settings-tab 语言下拉 onChange 调用本方法后自行重渲染设置页；
    * ribbon 悬浮提示在 onload 求值一次，由本方法在语言变化时直接刷新。
    */
-  _applyLanguage() {
-    const choice = this.settings?.uiLanguage || 'auto';
-    let lang = 'zh';
-    if (choice === 'zh' || choice === 'en') {
-      lang = choice;
-    } else {
-      // auto：Obsidian 应用语言以 zh 开头视为中文，其余默认英文
-      try {
-        const appLang = (this.app?.getLanguage?.() || '').toLowerCase();
-        lang = appLang.startsWith('zh') ? 'zh' : 'en';
-      } catch (e) {
-        lang = 'en';
-      }
+  _resolveEffectiveLanguage(choice = 'auto') {
+    if (choice === 'zh' || choice === 'en') return choice;
+    try {
+      const appLang = (this.app?.getLanguage?.() || '').toLowerCase();
+      return appLang.startsWith('zh') ? 'zh' : 'en';
+    } catch (e) {
+      return 'en';
     }
+  }
+
+  _applyLanguage() {
+    const lang = this._resolveEffectiveLanguage(this.settings?.uiLanguage || 'auto');
     setLanguage(lang);
     // ribbon 提示在 onload 求值一次，语言切换后在此刷新（Obsidian 用 aria-label 显示悬浮提示）
     if (this.ribbonIconEl) {
@@ -386,7 +390,7 @@ class JournalSyncPlugin extends Plugin {
   async createTodayDiaryEntry() {
     try {
       const diaryDir  = normalizeVaultPath(this.settings.diaryPath || '');
-      const rule      = this.settings.filenameRule || 'YYYY-MM-DD 日记';
+      const rule      = this.settings.filenameRule || t('YYYY-MM-DD 日记');
       const now       = new Date();
       const filename  = buildDiaryFilename(formatDate(now), rule);
       const diaryPath = diaryDir ? joinVaultPath(diaryDir, filename) : filename;

@@ -4,10 +4,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { buildPayload } = require('../src/core/payload');
-const { deepMergeSettings } = require('../src/core/settings');
+const { deepMergeSettings, resolveInitialDiaryDefaults } = require('../src/core/settings');
+const { matchImageMentionTrigger, removeImageTokenFromText } = require('../src/core/image-refs');
 const { buildDiaryFilename, buildDiaryHeading } = require('../src/core/diary');
 const { getMimeType } = require('../src/core/mime');
 const { buildMultipartBody } = require('../src/core/multipart');
+const AdapterRegistry = require('../src/core/adapter-registry');
 
 // ── payload：@图片N token 匹配 ──────────────────────────────
 
@@ -172,4 +174,82 @@ test('buildMultipartBody preserves text-field-before-file ordering', () => {
     const fileIdx = text.indexOf('name="file"');
     assert.ok(iIdx >= 0 && fileIdx >= 0 && iIdx < fileIdx);
     assert.ok(text.includes('name="i"\r\n\r\nTOKEN\r\n'));
+});
+
+// ── AdapterRegistry.getAttachmentWarnings ─────────────────
+
+test('getAttachmentWarnings combines capability warnings and adapter getPreSendWarnings with configs', async () => {
+    const registry = new AdapterRegistry();
+    let receivedConfig = null;
+    registry.register({
+        manifest: {
+            id: 'telegram',
+            name: 'Telegram',
+            capabilities: {
+                maxAttachments: 2,
+                warnOnAttachmentCount: true,
+                warnOnAttachmentSize: false
+            }
+        },
+        getPreSendWarnings({ payload, config }) {
+            receivedConfig = config;
+            if ((config.tgSendMode || 'plain') !== 'plain') return [];
+            return payload.attachments.length > 0 && payload.plainText.length > 1024
+                ? ['Telegram 超 1024 字将图文分开，确认发送']
+                : [];
+        }
+    });
+
+    const payload = {
+        plainText: 'a'.repeat(1025),
+        attachments: [
+            { kind: 'image', filename: '1.png' },
+            { kind: 'image', filename: '2.png' },
+            { kind: 'image', filename: '3.png' }
+        ]
+    };
+
+    const plainRes = await registry.getAttachmentWarnings(['telegram'], payload, {
+        telegram: { tgSendMode: 'plain' }
+    });
+    assert.deepEqual(receivedConfig, { tgSendMode: 'plain' });
+    assert.equal(plainRes.warnings.length, 2);
+    assert.equal(plainRes.perAdapter.telegram.length, 2);
+    assert.ok(plainRes.warnings.includes('Telegram 超 1024 字将图文分开，确认发送'));
+
+    const richRes = await registry.getAttachmentWarnings(['telegram'], payload, {
+        telegram: { tgSendMode: 'rich' }
+    });
+    assert.equal(richRes.warnings.length, 1);
+
+    const noConfigRes = await registry.getAttachmentWarnings(['telegram'], payload);
+    assert.deepEqual(receivedConfig, {});
+    assert.equal(noConfigRes.warnings.length, 2);
+});
+
+// ── image-refs：@图片 触发词与安全删除 ───────────────────
+
+test('matchImageMentionTrigger supports Chinese and English triggers', () => {
+    for (const sample of ['@', '@图', '@图片', '@i', '@im', '@img', '@ima', '@imag', '@image', '@IMG', '@Image']) {
+        assert.equal(matchImageMentionTrigger(`hello ${sample}`), sample);
+    }
+    for (const nonMatch of ['@foo', 'user@gmail.com', 'hello']) {
+        assert.equal(matchImageMentionTrigger(nonMatch), '');
+    }
+});
+
+test('removeImageTokenFromText removes @图片1 without corrupting @图片10', () => {
+    assert.equal(removeImageTokenFromText('首 @图片1 尾 @图片10', '@图片1'), '首  尾 @图片10');
+});
+
+// ── resolveInitialDiaryDefaults：首次英文安装默认值 ─────
+
+test('resolveInitialDiaryDefaults returns English defaults only for fresh English installs', () => {
+    assert.deepEqual(resolveInitialDiaryDefaults({}, 'en'), {
+        diaryPath: 'Journal',
+        filenameRule: 'YYYY-MM-DD Journal'
+    });
+    assert.deepEqual(resolveInitialDiaryDefaults({}, 'zh'), {});
+    assert.deepEqual(resolveInitialDiaryDefaults({ sendScope: 2 }, 'en'), {});
+    assert.deepEqual(resolveInitialDiaryDefaults({ diaryPath: '日记' }, 'en'), {});
 });

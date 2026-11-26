@@ -79,12 +79,13 @@ registerTranslations('en', {
     '暂无 token 可复制': 'No token to copy',
     'Token 已复制到剪贴板': 'Token copied to clipboard',
     '复制失败，请手动复制': 'Copy failed; please copy manually',
-    '、': ', '
+    '、': ', ',
+    'Telegram 超 {max} 字将图文分开，确认发送': 'Telegram: over {max} chars will split images & text, confirm to send'
 });
 
 const TG_API_BASE = 'https://api.telegram.org';
 
-const { convertToTelegramHtml, restoreImageTokens, truncate, MESSAGE_LIMIT, CAPTION_LIMIT } = require('../core/telegram-markdown');
+const { convertToTelegramHtml, restoreImageTokens, willTelegramPlainSplitCaption, truncate, MESSAGE_LIMIT, CAPTION_LIMIT } = require('../core/telegram-markdown');
 const telegraph = require('../core/telegraph');
 const { getMimeType } = require('../core/mime');
 
@@ -515,7 +516,7 @@ async function sendRichContent(botToken, chatId, segments, imageBuffers, config,
             return await sendTextMessage(botToken, chatId, textPart, config, requestUrlFn);
         }
 
-        const caption = richCharacterCount(textPart) <= 1024 ? textPart : '';
+        const caption = richCharacterCount(textPart) <= CAPTION_LIMIT ? textPart : '';
         let textToSendSeparately = caption ? '' : textPart;
 
         const sendImages = async (items, mediaCaption) => {
@@ -612,8 +613,14 @@ function buildTelegramSegmentsFromContent(content, attachments) {
 
 // ── Telegraph 编排（从 main.js 移入） ─────────
 
+function resolveChannelTitle(config, channelId) {
+    const channels = Array.isArray(config?.channels) ? config.channels : [];
+    const found = channels.find(ch => String(ch?.id) === String(channelId));
+    return String(found?.title || '').trim();
+}
+
 /**
- * 确保 Telegraph access_token 存在，无则自动创建账号
+ * 保证 Telegraph access_token 存在，无则自动创建账号
  */
 async function ensureTelegraphToken(config, requestUrlFn, saveConfig) {
     if (config.telegraphAccessToken) return config.telegraphAccessToken;
@@ -702,6 +709,7 @@ async function executeTelegraphSend({ botToken, config, payload, requestUrl, cha
     const linkText = `${finalTitle}\n${pageUrl}`;
 
     const results = await Promise.all(targets.map(async targetCh => {
+        const channelTitle = resolveChannelTitle(config, targetCh);
         try {
             const response = await requestUrl({
                 url: `${TG_API_BASE}/bot${botToken}/sendMessage`,
@@ -716,18 +724,18 @@ async function executeTelegraphSend({ botToken, config, payload, requestUrl, cha
             });
             const data = response.json;
             if (!data || !data.ok) {
-                return { success: false, channelId: targetCh, error: data?.description || t('发送失败') };
+                return { success: false, channelId: targetCh, channelTitle, error: data?.description || t('发送失败') };
             }
-            return { success: true, channelId: targetCh };
+            return { success: true, channelId: targetCh, channelTitle };
         } catch (error) {
-            return { success: false, channelId: targetCh, error: error.message || String(error) };
+            return { success: false, channelId: targetCh, channelTitle, error: error.message || String(error) };
         }
     }));
 
     const allOk = results.every(r => r.success);
     const errors = results
         .filter(r => !r.success)
-        .map(r => `${r.channelId}: ${r.error || t('Telegram 未知错误')}`)
+        .map(r => `${r.channelTitle || r.channelId}: ${r.error || t('Telegram 未知错误')}`)
         .join(t('；'));
 
     return {
@@ -753,6 +761,16 @@ export async function validate({ payload, config }) {
     }
 
     return { warnings, errors };
+}
+
+/**
+ * 发送前红字确认预警：仅普通模式 + 带图 + 正文超 1024 字时提醒图文将分开发送。
+ */
+export function getPreSendWarnings({ payload = {}, config = {} } = {}) {
+    const tgSendMode = config.tgSendMode || 'plain';
+    if (tgSendMode !== 'plain') return [];
+    if (!willTelegramPlainSplitCaption(payload)) return [];
+    return [t('Telegram 超 {max} 字将图文分开，确认发送', { max: CAPTION_LIMIT })];
 }
 
 // ── 统一执行接口 ──────────────────────────────
@@ -859,18 +877,19 @@ export async function execute({ config = {}, payload = {}, requestUrl, saveConfi
 
     const effectiveConfig = { showLinkPreview: config.showLinkPreview };
     const results = await Promise.all(channelIds.map(async targetCh => {
+        const channelTitle = resolveChannelTitle(config, targetCh);
         try {
             const res = await sendRichContent(botToken, targetCh, resolvedSegments, imageBuffers, effectiveConfig, requestUrl, isRich);
-            return { channelId: targetCh, ...res };
+            return { channelId: targetCh, channelTitle, ...res };
         } catch (error) {
-            return { success: false, channelId: targetCh, error: error.message || String(error) };
+            return { success: false, channelId: targetCh, channelTitle, error: error.message || String(error) };
         }
     }));
 
     const allOk = results.every(result => result.success);
     const errors = results
         .filter(result => !result.success)
-        .map(result => `${result.channelId}: ${result.error || result.message || t('Telegram 未知错误')}`)
+        .map(result => `${result.channelTitle || result.channelId}: ${result.error || result.message || t('Telegram 未知错误')}`)
         .join(t('；'));
 
     return {
@@ -957,9 +976,16 @@ export function renderSettings(containerEl, ctx) {
             try {
                 btn.setButtonText(t('获取中...'));
                 btn.disabled = true;
-                const result = await ctx.plugin.adapterRegistry.get('telegram').runAction('discoverChannels', ctx.plugin.getAdapterConfig('telegram'), ctx.requestUrl);
+                const prevConfig = ctx.plugin.getAdapterConfig('telegram') || {};
+                const result = await ctx.plugin.adapterRegistry.get('telegram').runAction('discoverChannels', prevConfig, ctx.requestUrl);
                 const channels = result.data?.channels || [];
-                await ctx.saveConfig({ channels, homeChannels: channels.map(channel => String(channel.id)) });
+                const prevChannels = Array.isArray(prevConfig.channels) ? prevConfig.channels : [];
+                const prevChannelIds = new Set(prevChannels.map(c => String(c.id)));
+                const prevHomeSet = new Set(Array.isArray(prevConfig.homeChannels) ? prevConfig.homeChannels.map(String) : []);
+                const nextHomeChannels = prevChannels.length === 0
+                    ? channels.map(ch => String(ch.id))
+                    : channels.map(ch => String(ch.id)).filter(id => prevHomeSet.has(id) || !prevChannelIds.has(id));
+                await ctx.saveConfig({ channels, homeChannels: nextHomeChannels });
                 new Notice(result.message || t('获取成功'));
                 ctx.refresh();
             } catch (error) {
@@ -990,7 +1016,7 @@ export function renderSettings(containerEl, ctx) {
         });
 
     // 标题层级绑定全局发送层级 sendScope：整页(0)可用 1-6 级，其余上限为发送层级（登记在案的跨适配器特例）。
-    const sendScope = ctx.plugin.settings.sendScope || 2;
+    const sendScope = ctx.plugin.settings.sendScope ?? 2;
     const maxTitleLevel = sendScope === 0 ? 6 : Math.min(6, sendScope);
     const titleLevelDesc = maxTitleLevel === 1
         ? t('当前发送层级为 1，仅可使用一级标题作为 Telegraph 标题。')
@@ -1083,4 +1109,4 @@ export function renderSettings(containerEl, ctx) {
             }));
 }
 
-export default { manifest, defaultConfig, renderSettings, execute, validate, listChannels, runAction };
+export default { manifest, defaultConfig, renderSettings, execute, validate, getPreSendWarnings, listChannels, runAction };

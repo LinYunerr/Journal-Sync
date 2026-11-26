@@ -252,10 +252,16 @@
   opacity: 1;
 }
 
-/* 标题部分：双击可编辑 */
+/* 标题部分：点击可编辑 */
 .tg-telegraph-title {
   cursor: text;
   font-weight: 600;
+}
+
+.tg-telegraph-title::after {
+  content: " ✎";
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 /* 标题编辑输入框 */
@@ -495,10 +501,27 @@
   font-weight: bold;
 }
 
+.publish-preset-action.edit::before {
+  content: "✎";
+  font-size: 13px;
+}
+
 .publish-preset-action.remove::before {
   content: "-";
   font-size: 17px;
   font-weight: bold;
+}
+
+.publish-preset-action.remove.confirming {
+  width: auto;
+  padding: 0 10px;
+  border-color: rgba(239, 68, 68, 0.6);
+  color: rgb(239, 68, 68);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.publish-preset-action.remove.confirming::before {
+  content: none;
 }
 
 .publish-preset-name-input {
@@ -769,6 +792,29 @@
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
 }
 
+/* ── 预警横幅（发送按钮上方可见列表） ────────── */
+.js-bridge-warning-banner {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--text-error, #dc2626);
+  font-size: 12px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.js-bridge-warning-banner.hidden {
+  display: none;
+}
+
+.js-bridge-warning-item {
+  word-break: break-word;
+}
+
 /* ── 发送按钮与结果 ────────────────────────── */
 .primary-btn {
   border: none;
@@ -1014,4 +1060,51 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (max-width: 600px) {
+  .js-bridge-send-modal {
+    padding: 12px;
+  }
+
+  .tg-channel-label-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .tg-btn-group {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
+  .tg-telegraph-btn.expanded {
+    max-width: 100%;
+  }
+
+  .target-list,
+  .tg-channel-list,
+  .mstd-account-list {
+    grid-template-columns: 1fr;
+  }
+
+  .publish-preset-btn,
+  .publish-preset-action,
+  .tg-input-mode-btn,
+  .js-bridge-log-restore-btn {
+    min-height: 32px;
+  }
+
+  .publish-preset-action:not(.confirming) {
+    min-width: 32px;
+  }
+
+  .js-bridge-log-entry {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .js-bridge-log-restore-btn {
+    align-self: flex-end;
+  }
 }

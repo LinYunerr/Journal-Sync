@@ -20,9 +20,11 @@ registerTranslations('en', {
     '内容不能为空': 'Content cannot be empty',
     'Misskey 实例地址或 API Token 未配置': 'Misskey instance URL or API Token is not configured',
     '超过 {count} 张图片，只发送前 {count} 张': 'Over {count} images, only sending the first {count}',
-    '图片读取失败，已跳过：{name}': 'Failed to read image, skipped: {name}',
-    '图片上传失败，已跳过：{name}': 'Failed to upload image, skipped: {name}',
-    '图片处理失败，已跳过：{name}': 'Failed to process image, skipped: {name}',
+    '（{detail}）': ' ({detail})',
+    'Misskey 未返回文件 ID': 'Misskey did not return a file ID',
+    'Misskey 图片读取失败：{name}；未发送任何内容。': 'Failed to read image: {name}; nothing was sent.',
+    'Misskey 图片上传失败：{name}{detail}；未发送任何内容。': 'Image upload failed: {name}{detail}; nothing was sent.',
+    'Misskey 图片处理失败：{name}（{error}）；未发送任何内容。': 'Image processing failed: {name} ({error}); nothing was sent.',
     'Misskey 适配器不支持操作：{action}': 'Misskey adapter does not support action: {action}',
     '请先配置 Misskey 实例地址和 API Token': 'Please configure the Misskey instance URL and API Token first',
     '未知': 'Unknown',
@@ -108,10 +110,15 @@ async function uploadImageToMissky(arrayBuffer, filename, baseUrl, apiToken, req
     });
 
     if (response.status < 200 || response.status >= 300) {
-        return null;
+        let errMsg = '';
+        try { errMsg = response.json?.error?.message || response.text || `HTTP ${response.status}`; } catch { errMsg = `HTTP ${response.status}`; }
+        return { id: null, error: errMsg };
     }
     const result = response.json || {};
-    return result.id || null;
+    if (!result.id) {
+        return { id: null, error: t('Misskey 未返回文件 ID') };
+    }
+    return { id: result.id, error: '' };
 }
 
 /**
@@ -169,17 +176,29 @@ export async function execute({ config = {}, payload = {}, requestUrl }) {
                     ? await payload.readAttachment(img.vaultPath)
                     : null;
                 if (!buffer) {
-                    warnings.push(t('图片读取失败，已跳过：{name}', { name: img.filename }));
-                    continue;
+                    return { success: false, error: t('Misskey 图片读取失败：{name}；未发送任何内容。', { name: img.filename }), warnings };
                 }
-                const fileId = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl);
-                if (fileId) {
-                    fileIds.push(fileId);
-                } else {
-                    warnings.push(t('图片上传失败，已跳过：{name}', { name: img.filename }));
+                const uploadResult = await uploadImageToMissky(buffer, img.filename, baseUrl, apiToken, requestUrl);
+                if (!uploadResult.id) {
+                    return {
+                        success: false,
+                        error: t('Misskey 图片上传失败：{name}{detail}；未发送任何内容。', {
+                            name: img.filename,
+                            detail: uploadResult.error ? t('（{detail}）', { detail: uploadResult.error }) : ''
+                        }),
+                        warnings
+                    };
                 }
+                fileIds.push(uploadResult.id);
             } catch (error) {
-                warnings.push(t('图片处理失败，已跳过：{name}', { name: img.filename }));
+                return {
+                    success: false,
+                    error: t('Misskey 图片处理失败：{name}（{error}）；未发送任何内容。', {
+                        name: img.filename,
+                        error: error?.message || String(error)
+                    }),
+                    warnings
+                };
             }
         }
 

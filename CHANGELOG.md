@@ -4,6 +4,41 @@ All notable changes to Journal Sync are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.10-beta.1] - 2026-11-27
+
+### Added
+
+- **Telegram 超 1024 字图文分开确认预警**：普通模式带图且正文超过 1024 字时，发送前在发布按钮上触发 5 秒确认预警，提醒图文将分开发送。
+- **预设与移动端操作增强**：发送面板新增预设重命名按钮与 5 秒两次点击确认删除；发送按钮上方新增可见预警横幅，不再只依赖鼠标悬停提示；优化窄屏与移动端响应式排版。
+- **英文输入与初始默认放宽**：编辑器 `@` 图片联想菜单支持英文前缀（`@i`/`@img`/`@image`）；仅全新安装且界面为英文时，默认日记路径与文件名规则使用英文（`Journal` / `YYYY-MM-DD Journal`），不影响已有用户设置。
+- **Telegram >1024-char split pre-send warning**：plain mode with images and text over 1024 chars triggers a 5-second confirm warning before publishing.
+- **Preset & mobile UX improvements**：added a preset rename button and 5-second two-click delete confirmation, a visible warning banner above the publish button, and responsive mobile layout improvements.
+- **English triggers & initial defaults**：editor image mention dropdown now accepts English prefixes (`@i`/`@img`/`@image`); fresh installs in English default to `Journal` / `YYYY-MM-DD Journal` without changing existing users' settings.
+
+### Changed
+
+- **Telegram 频道名展示与日志补全**：结果通知与发送日志改为展示截断后的频道名称（最多 12 字加 `…`）而非数字 ID，同时补充记录未到达单频道投递的 Telegram 整体失败。
+- **Telegraph 标题单击编辑**：展开后的 Telegraph 标题改为单击即可编辑（替代原先仅支持双击）。
+- **设置页标签自动换行**：设置页平台标签超出宽度时自动换行，不再横向滚动。
+- **发布工作流支持测试版（Pre-release）**：当版本 tag 包含 `-`（如 `1.0.10-beta.1`）时，GitHub Release 自动标记为 Pre-release。
+- **Telegram channel names in results & send log**：result notices and send logs now display truncated channel titles (up to 12 chars + `…`) instead of numeric IDs, and log pre-channel Telegram failures.
+- **Single-click Telegraph title editing**：expanded Telegraph titles can now be edited with a single click/tap instead of double-click.
+- **Settings tabs wrap**：platform tabs in settings now wrap cleanly instead of scrolling horizontally.
+- **Pre-release CI support**：release workflow automatically marks hyphenated tags (e.g. `1.0.10-beta.1`) as GitHub Pre-releases.
+
+### Fixed
+
+- **Misskey 单目标原子性**：任一图片读取或上传失败时立即中止本次发送，不再跳过图片发出残缺笔记。
+- **从日志恢复 Telegraph 按钮状态**：重新编辑 Telegraph 发送记录时，按钮正确展开显示标题，可正常编辑或退出。
+- **多图删除 `@图片1` 误伤 `@图片10`**：删除图片缩略图时按完整编号精确移除，不再破坏更大编号的图片标记。
+- **Telegram 设置两处修复**：全局发送范围选「整个页面」时 Telegraph 标题层级恢复可选 1–6 级；刷新频道列表时保留原有默认频道的勾选状态。
+- **Mastodon 多账号发前预检**：多账号勾选时预检覆盖全部选中账号，不再只检查第一个账号。
+- **Misskey single-target atomicity**：aborts the Misskey post if any image fails to read or upload instead of skipping failed images.
+- **Telegraph restore from send log**：restoring a Telegraph record now expands the button properly so the title can be edited or exited.
+- **Safe image token removal**：deleting `@图片1` from the thumbnail grid no longer corrupts `@图片10`.
+- **Telegram settings fixes**：Telegraph title level now allows H1–H6 when send scope is Whole Page (`0`), and refreshing channels preserves existing default channel selections.
+- **Mastodon multi-account pre-send validation**：pre-send validation now checks every selected Mastodon account.
+
 ## [1.0.9] - 2026-09-08
 
 ### Added
